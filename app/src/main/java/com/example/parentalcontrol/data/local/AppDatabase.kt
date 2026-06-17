@@ -1,0 +1,301 @@
+package com.example.parentalcontrol.data.local
+
+import androidx.room.*
+import kotlinx.coroutines.flow.Flow
+import java.util.UUID
+
+// =============================================================================
+// T03 — Persistencia local con Room (fuente de verdad offline)
+// =============================================================================
+
+@Entity(tableName = "policy")
+data class PolicyEntity(
+    @PrimaryKey val device_id: String,
+    val version: Long,
+    val category_assignments: Map<String, String>
+)
+
+@Entity(tableName = "app_policies")
+data class AppPolicyEntity(
+    @PrimaryKey val package_name: String,
+    val device_id: String,
+    val state: String,
+    val daily_limit_minutes: Int?,
+    val allowed_windows: List<WindowEntity>,
+    val category: String?
+)
+
+data class WindowEntity(
+    val days: List<String>,
+    val from: String,
+    val to: String
+)
+
+@Entity(tableName = "grants")
+data class GrantEntity(
+    @PrimaryKey val id: String,
+    val device_id: String,
+    val request_id: String?,
+    val scope: String,
+    val minutes: Int,
+    val source: String,
+    val granted_at: String,
+    val expires_at: String
+)
+
+@Entity(tableName = "usage_today", primaryKeys = ["package_name", "server_date"])
+data class UsageTodayEntity(
+    val package_name: String,
+    val server_date: String,
+    val usage_minutes: Int
+)
+
+@Entity(tableName = "outbox")
+data class OutboxEntity(
+    @PrimaryKey val id: UUID = UUID.randomUUID(),
+    val tipo: String,
+    val payload_json: String,
+    val dedup_key: String?,
+    val intentos: Int = 0,
+    val created_at: String,
+    val server_date: String
+)
+
+@Entity(tableName = "time_requests")
+data class TimeRequestEntity(
+    @PrimaryKey val request_id: String,
+    val device_id: String,
+    val package_name: String?,
+    val minutes_requested: Int,
+    val reason: String?,
+    val status: String,
+    val created_at: String,
+    val responded_at: String?,
+    val parent_response: String?
+)
+
+@Entity(tableName = "behavioral_events")
+data class BehavioralEventEntity(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val event_type: String,
+    val event_version: Int = 1,
+    val device_id: String,
+    val client_ts: String,
+    val props: String,
+    val synced: Boolean = false,
+    val created_at: String
+)
+
+// =============================================================================
+// DAOs
+// =============================================================================
+
+@Dao
+interface PolicyDao {
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertPolicy(policy: PolicyEntity)
+
+    @Query("SELECT * FROM policy WHERE device_id = :deviceId")
+    fun getPolicyFlow(deviceId: String): Flow<PolicyEntity?>
+
+    @Query("SELECT version FROM policy WHERE device_id = :deviceId")
+    suspend fun getLocalVersion(deviceId: String): Long?
+
+    @Transaction
+    suspend fun upsertPolicyIfNewer(policy: PolicyEntity): Boolean {
+        val localVersion = getLocalVersion(policy.device_id)
+        return if (localVersion == null || policy.version > localVersion) {
+            insertPolicy(policy)
+            true
+        } else {
+            false
+        }
+    }
+
+    @Query("DELETE FROM policy WHERE device_id = :deviceId")
+    suspend fun deletePolicy(deviceId: String)
+}
+
+@Dao
+interface AppPolicyDao {
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertAppPolicy(appPolicy: AppPolicyEntity)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertAppPolicies(appPolicies: List<AppPolicyEntity>)
+
+    @Query("SELECT * FROM app_policies WHERE package_name = :packageName")
+    suspend fun getAppPolicy(packageName: String): AppPolicyEntity?
+
+    @Query("SELECT * FROM app_policies WHERE device_id = :deviceId")
+    fun getAppPoliciesForDeviceFlow(deviceId: String): Flow<List<AppPolicyEntity>>
+
+    @Query("SELECT * FROM app_policies")
+    fun getAllAppPoliciesFlow(): Flow<List<AppPolicyEntity>>
+
+    @Query("DELETE FROM app_policies WHERE device_id = :deviceId")
+    suspend fun deleteAppPoliciesForDevice(deviceId: String)
+}
+
+@Dao
+interface GrantDao {
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertGrant(grant: GrantEntity)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertGrants(grants: List<GrantEntity>)
+
+    @Query("SELECT * FROM grants WHERE device_id = :deviceId")
+    fun getGrantsForDeviceFlow(deviceId: String): Flow<List<GrantEntity>>
+
+    @Query("SELECT * FROM grants WHERE device_id = :deviceId AND scope = :scope")
+    fun getGrantsForScopeFlow(deviceId: String, scope: String): Flow<List<GrantEntity>>
+
+    @Query("SELECT * FROM grants WHERE scope = :scope")
+    fun getGrantsForScope(scope: String): Flow<List<GrantEntity>>
+
+    @Query("SELECT * FROM grants WHERE device_id = :deviceId AND expires_at > :now")
+    fun getActiveGrantsFlow(deviceId: String, now: String): Flow<List<GrantEntity>>
+
+    @Query("DELETE FROM grants WHERE device_id = :deviceId")
+    suspend fun deleteGrantsForDevice(deviceId: String)
+
+    @Query("DELETE FROM grants WHERE expires_at < :now")
+    suspend fun deleteExpiredGrants(now: String)
+}
+
+@Dao
+interface UsageDao {
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertUsage(usage: UsageTodayEntity)
+
+    @Query("SELECT * FROM usage_today WHERE package_name = :packageName AND server_date = :serverDate")
+    suspend fun getUsage(packageName: String, serverDate: String): UsageTodayEntity?
+
+    @Query("SELECT * FROM usage_today WHERE server_date = :serverDate")
+    fun getUsageForDateFlow(serverDate: String): Flow<List<UsageTodayEntity>>
+
+    @Query("SELECT SUM(usage_minutes) FROM usage_today WHERE server_date = :serverDate")
+    fun getGlobalUsageFlow(serverDate: String): Flow<Int?>
+
+    @Query("""
+        SELECT SUM(u.usage_minutes)
+        FROM usage_today u
+        INNER JOIN app_policies a ON u.package_name = a.package_name
+        WHERE u.server_date = :serverDate
+          AND a.category = :category
+          AND a.state != 'ALWAYS_ALLOWED'
+    """)
+    fun getCategoryUsageFlow(serverDate: String, category: String): Flow<Int?>
+
+    @Query("SELECT usage_minutes FROM usage_today WHERE package_name = :packageName AND server_date = :serverDate")
+    fun getUsageForPackageFlow(packageName: String, serverDate: String): Flow<Int?>
+
+    @Transaction
+    suspend fun incrementUsage(packageName: String, serverDate: String, deltaMinutes: Int) {
+        val existing = getUsage(packageName, serverDate)
+        if (existing != null) {
+            upsertUsage(existing.copy(usage_minutes = existing.usage_minutes + deltaMinutes))
+        } else {
+            upsertUsage(UsageTodayEntity(package_name = packageName, server_date = serverDate, usage_minutes = deltaMinutes))
+        }
+    }
+
+    @Query("DELETE FROM usage_today WHERE server_date < :cutoffDate")
+    suspend fun deleteOldUsage(cutoffDate: String)
+}
+
+@Dao
+interface OutboxDao {
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertOutboxItem(item: OutboxEntity)
+
+    @Query("SELECT * FROM outbox WHERE dedup_key = :dedupKey AND dedup_key IS NOT NULL LIMIT 1")
+    suspend fun findByDedupKey(dedupKey: String): OutboxEntity?
+
+    @Query("SELECT * FROM outbox WHERE intentos < :maxAttempts ORDER BY created_at ASC LIMIT :limit")
+    suspend fun getPendingItems(maxAttempts: Int, limit: Int): List<OutboxEntity>
+
+    @Query("UPDATE outbox SET intentos = intentos + 1 WHERE id = :id")
+    suspend fun incrementAttempts(id: UUID)
+
+    @Query("DELETE FROM outbox WHERE id = :id")
+    suspend fun deleteItem(id: UUID)
+
+    @Query("DELETE FROM outbox WHERE intentos >= :maxAttempts")
+    suspend fun deleteFailedItems(maxAttempts: Int)
+
+    @Query("SELECT COUNT(*) FROM outbox")
+    fun getPendingCountFlow(): Flow<Int>
+}
+
+@Dao
+interface TimeRequestDao {
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertRequest(request: TimeRequestEntity)
+
+    @Query("SELECT * FROM time_requests WHERE request_id = :requestId")
+    suspend fun getRequestById(requestId: String): TimeRequestEntity?
+
+    @Query("SELECT * FROM time_requests WHERE device_id = :deviceId ORDER BY created_at DESC")
+    fun getRequestsForDeviceFlow(deviceId: String): Flow<List<TimeRequestEntity>>
+
+    @Query("SELECT * FROM time_requests WHERE status = 'PENDING' ORDER BY created_at DESC")
+    fun getPendingRequestsFlow(): Flow<List<TimeRequestEntity>>
+
+    @Query("UPDATE time_requests SET status = :status, responded_at = :respondedAt WHERE request_id = :requestId")
+    suspend fun updateRequestStatus(requestId: String, status: String, respondedAt: String)
+
+    @Query("DELETE FROM time_requests WHERE created_at < :cutoff")
+    suspend fun deleteOldRequests(cutoff: String)
+}
+
+// =============================================================================
+// Database
+// =============================================================================
+
+@Database(
+    entities = [
+        PolicyEntity::class,
+        AppPolicyEntity::class,
+        GrantEntity::class,
+        UsageTodayEntity::class,
+        OutboxEntity::class,
+        TimeRequestEntity::class,
+        BehavioralEventEntity::class
+    ],
+    version = 4,
+    exportSchema = true
+)
+@TypeConverters(Converters::class)
+abstract class AppDatabase : RoomDatabase() {
+
+    abstract fun policyDao(): PolicyDao
+    abstract fun appPolicyDao(): AppPolicyDao
+    abstract fun grantDao(): GrantDao
+    abstract fun usageDao(): UsageDao
+    abstract fun outboxDao(): OutboxDao
+    abstract fun timeRequestDao(): TimeRequestDao
+    abstract fun behavioralEventDao(): BehavioralEventDao
+
+    companion object {
+        const val DATABASE_NAME = "parental_control.db"
+
+        @Volatile
+        private var INSTANCE: AppDatabase? = null
+
+        fun getInstance(context: android.content.Context): AppDatabase {
+            return INSTANCE ?: synchronized(this) {
+                val instance = androidx.room.Room.databaseBuilder(
+                    context.applicationContext,
+                    AppDatabase::class.java,
+                    DATABASE_NAME
+                )
+                    .addMigrations()
+                    .build()
+                INSTANCE = instance
+                instance
+            }
+        }
+    }
+}

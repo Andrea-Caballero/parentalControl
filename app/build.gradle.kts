@@ -1,3 +1,5 @@
+import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
@@ -11,12 +13,12 @@ plugins {
 
 android {
     namespace = "com.example.parentalcontrol"
-    compileSdk = 35
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "com.example.parentalcontrol"
         minSdk = 26
-        targetSdk = 35
+        targetSdk = 36
         versionCode = 1
         versionName = "1.0"
         testInstrumentationRunner = "com.example.parentalcontrol.MyHiltTestRunner"
@@ -24,11 +26,6 @@ android {
 
     buildFeatures {
         compose = true
-    }
-
-    @Suppress("DEPRECATION")
-    kotlinOptions {
-        jvmTarget = "17"
     }
 
     compileOptions {
@@ -80,6 +77,8 @@ dependencies {
     implementation(libs.compose.ui.graphics)
     implementation(libs.compose.foundation)
     implementation(libs.compose.material3)
+    implementation(libs.compose.material.icons.core)
+    implementation(libs.compose.material.icons.extended)
     implementation(libs.compose.ui.tooling.preview)
     debugImplementation(libs.compose.ui.tooling)
 
@@ -178,4 +177,22 @@ detekt {
 // Configure JVM target for detekt
 tasks.withType<io.gitlab.arturbosch.detekt.Detekt>().configureEach {
     jvmTarget = "17"
+}
+
+// LINT - Android Static Analysis
+// =============================================================================
+// Baseline captures pre-existing issues (FcmPushService misconfiguration
+// in AndroidManifest.xml:105 — already failing on master, unrelated to PR 1).
+android {
+    lint {
+        baseline = file("config/lint/lint-baseline.xml")
+    }
+}
+
+// Kotlin 2.3+ requires the new compilerOptions DSL; the old `kotlinOptions` block
+// is now a hard error (previously a suppressable deprecation warning).
+kotlin {
+    compilerOptions {
+        jvmTarget.set(JvmTarget.JVM_17)
+    }
 }

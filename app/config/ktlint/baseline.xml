@@ -1613,8 +1613,8 @@
 	</file>
 	<file name="src/main/java/com/example/parentalcontrol/viewmodel/ParentViewModel.kt">
 		<error line="3" column="1" source="import-ordering" />
-		<error line="18" column="1" source="no-trailing-spaces" />
-		<error line="18" column="3" source="no-trailing-spaces" />
+		<error line="19" column="1" source="no-trailing-spaces" />
+		<error line="19" column="3" source="no-trailing-spaces" />
 	</file>
 	<file name="src/main/java/com/example/parentalcontrol/viewmodel/TimeExtraViewModel.kt">
 		<error line="8" column="1" source="no-unused-imports" />

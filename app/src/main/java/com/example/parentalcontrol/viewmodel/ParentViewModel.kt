@@ -3,6 +3,7 @@ package com.example.parentalcontrol.viewmodel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.parentalcontrol.data.repository.ParentRepository
+import com.example.parentalcontrol.domain.model.ApprovalResult
 import com.example.parentalcontrol.domain.model.ChildDevice
 import com.example.parentalcontrol.domain.model.PolicyTemplate
 import com.example.parentalcontrol.domain.model.TimeRequest
@@ -50,6 +51,14 @@ class ParentViewModel @Inject constructor(private val repository: ParentReposito
     private val _error = MutableStateFlow<String?>(null)
     val error: StateFlow<String?> = _error.asStateFlow()
 
+    // Result of the most recent approval call. PR 4 of
+    // openspec/changes/wire-pairing-and-approval-end-to-end exposes the
+    // ApprovalResult (grant_id, minutes, expires_at) returned by the
+    // approve-request edge function so the UI can show a confirmation
+    // banner with the granted minutes.
+    private val _approvalResult = MutableStateFlow<ApprovalResult?>(null)
+    val approvalResult: StateFlow<ApprovalResult?> = _approvalResult.asStateFlow()
+
     // Código de emparejamiento generado
     private val _pairingCode = MutableStateFlow<PairingCodeResult?>(null)
     val pairingCode: StateFlow<PairingCodeResult?> = _pairingCode.asStateFlow()
@@ -91,7 +100,19 @@ class ParentViewModel @Inject constructor(private val repository: ParentReposito
     fun loadPendingRequests() {
         viewModelScope.launch {
             try {
-                _pendingRequests.value = repository.getPendingRequests()
+                // PR 4 of openspec/changes/wire-pairing-and-approval-end-to-end
+                // wires the repository to a real REST query that returns
+                // Result<List<TimeRequest>>; map success/failure into the
+                // existing StateFlows so the RequestCard UI keeps rendering
+                // unchanged.
+                val result = repository.getPendingRequests()
+                val list = result.getOrNull()
+                if (list != null) {
+                    _pendingRequests.value = list
+                } else {
+                    _error.value = "Error cargando solicitudes: " +
+                        (result.exceptionOrNull()?.message ?: "Unknown error")
+                }
             } catch (e: Exception) {
                 _error.value = "Error cargando solicitudes: ${e.message}"
             }
@@ -112,9 +133,21 @@ class ParentViewModel @Inject constructor(private val repository: ParentReposito
         viewModelScope.launch {
             _isLoading.value = true
             try {
-                repository.approveRequest(requestId, minutes, response)
-                loadPendingRequests()
-                loadDevices() // Refresh para ver versión actualizada
+                // PR 4 of openspec/changes/wire-pairing-and-approval-end-to-end
+                // handles the Result<ApprovalResult> returned by the new
+                // edge-function call. On success we surface the ApprovalResult
+                // (grant_id, minutes, expires_at) via _approvalResult so the
+                // parent UI can show a confirmation banner.
+                val result = repository.approveRequest(requestId, minutes, response)
+                val approval = result.getOrNull()
+                if (approval != null) {
+                    _approvalResult.value = approval
+                    loadPendingRequests()
+                    loadDevices() // Refresh para ver versión actualizada
+                } else {
+                    _error.value = "Error aprobando solicitud: " +
+                        (result.exceptionOrNull()?.message ?: "Unknown error")
+                }
             } catch (e: Exception) {
                 _error.value = "Error aprobando solicitud: ${e.message}"
             } finally {
@@ -127,8 +160,17 @@ class ParentViewModel @Inject constructor(private val repository: ParentReposito
         viewModelScope.launch {
             _isLoading.value = true
             try {
-                repository.denyRequest(requestId, reason)
-                loadPendingRequests()
+                // PR 4 of openspec/changes/wire-pairing-and-approval-end-to-end
+                // handles the Result<Boolean> returned by the new
+                // edge-function call. On success we reload the pending list
+                // so the RequestCard disappears.
+                val result = repository.denyRequest(requestId, reason)
+                if (result.isSuccess) {
+                    loadPendingRequests()
+                } else {
+                    _error.value = "Error denegando solicitud: " +
+                        (result.exceptionOrNull()?.message ?: "Unknown error")
+                }
             } catch (e: Exception) {
                 _error.value = "Error denegando solicitud: ${e.message}"
             } finally {

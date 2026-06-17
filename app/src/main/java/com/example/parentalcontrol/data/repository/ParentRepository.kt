@@ -7,10 +7,12 @@ import com.example.parentalcontrol.domain.model.ChildDevice
 import com.example.parentalcontrol.domain.model.DeviceHealth
 import com.example.parentalcontrol.domain.model.DeviceState
 import com.example.parentalcontrol.domain.model.PolicyTemplate
+import com.example.parentalcontrol.domain.model.RequestStatus
 import com.example.parentalcontrol.domain.model.TimeRequest
 import com.example.parentalcontrol.network.SupabaseClientProvider
 import com.example.parentalcontrol.viewmodel.PairingCodeResult
 import dagger.hilt.android.qualifiers.ApplicationContext
+import io.ktor.client.request.get
 import io.ktor.client.request.header
 import io.ktor.client.request.post
 import io.ktor.client.request.setBody
@@ -88,32 +90,44 @@ class ParentRepository @Inject constructor(
     }
 
     /**
-     * Obtiene solicitudes pendientes de tiempo.
+     * Obtiene solicitudes de tiempo pendientes para los dispositivos del padre.
+     *
+     * PR 4 of `openspec/changes/wire-pairing-and-approval-end-to-end`
+     * replaces the local mock with a real REST query against
+     * `${SUPABASE_URL}/rest/v1/time_requests`. The query is scoped by RLS:
+     * the `time_requests_parent_select` policy
+     * (`parent_id = auth.uid()`) returns only the parent's own rows. We
+     * additionally filter by `status = "PENDING"` as a defense-in-depth so
+     * the repository never accidentally surfaces already-decided rows.
+     *
+     * Returns [Result.success] with the parsed list on a 2xx response,
+     * [Result.failure] on a non-2xx response or on any network exception
+     * (including the "not authenticated" case).
      */
-    suspend fun getPendingRequests(): List<TimeRequest> = withContext(Dispatchers.IO) {
-        // TODO: En implementación real, filtrar por dispositivos del padre
-        listOf(
-            TimeRequest(
-                id = "req-1",
-                deviceId = "device-1",
-                deviceName = "Galaxy S21 de Juan",
-                packageName = "com.instagram.android",
-                appName = "Instagram",
-                minutesRequested = 30,
-                reason = "Quiero ver las historias de mis amigos",
-                status = com.example.parentalcontrol.domain.model.RequestStatus.PENDING,
-                createdAt = "2026-06-04T11:45:00Z"
-            ),
-            TimeRequest(
-                id = "req-2",
-                deviceId = "device-2",
-                deviceName = "Pixel 7 de María",
-                minutesRequested = 15,
-                reason = "Terminé la tarea",
-                status = com.example.parentalcontrol.domain.model.RequestStatus.PENDING,
-                createdAt = "2026-06-04T11:50:00Z"
-            )
-        )
+    suspend fun getPendingRequests(): Result<List<TimeRequest>> = withContext(Dispatchers.IO) {
+        try {
+            val token = authManager.getAccessToken()
+                ?: return@withContext Result.failure(IllegalStateException("not authenticated"))
+
+            val response = clientProvider.httpClient.get(
+                "${SupabaseClientProvider.SUPABASE_URL}/rest/v1/time_requests?" +
+                    "select=*,devices(device_name)&status=eq.PENDING&order=created_at.desc"
+            ) {
+                header("Authorization", "Bearer $token")
+                header("apikey", SupabaseClientProvider.SUPABASE_ANON_KEY)
+            }
+
+            if (!response.status.isSuccess()) {
+                return@withContext Result.failure(
+                    RuntimeException("HTTP ${response.status}")
+                )
+            }
+
+            val body = json.decodeFromString<List<TimeRequestDto>>(response.bodyAsText())
+            Result.success(body.map { it.toTimeRequest() })
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
     }
 
     /**
@@ -147,27 +161,104 @@ class ParentRepository @Inject constructor(
     }
 
     /**
-     * Aprueba una solicitud de tiempo.
+     * Aprueba una solicitud de tiempo llamando a la edge function
+     * `approve-request` (`${SUPABASE_URL}/functions/v1/approve-request`).
+     *
+     * The wire format sent to the edge function is
+     * `{ request_id, minutes, response_text }` — exactly the shape the
+     * existing server-side handler at
+     * `supabase/functions/approve-request/index.ts:38` already reads. The
+     * server inserts a `grants` row with `source = "EXTRA_TIME"` (pre-approved
+     * per design §7 Q4 in `openspec/changes/wire-pairing-and-approval-end-to-end/design.md`)
+     * and returns `{ success, grant_id, minutes, expires_at }`.
+     *
+     * PR 4 of `openspec/changes/wire-pairing-and-approval-end-to-end` replaces
+     * the local mock with this real HTTP call. Returns [Result.success] with
+     * the parsed [ApprovalResult] on a 2xx response, [Result.failure]
+     * otherwise.
      */
-    suspend fun approveRequest(requestId: String, minutes: Int, response: String?): ApprovalResult =
-        withContext(Dispatchers.IO) {
-            // TODO: En implementación real, llamar a Edge Function
-            // supabase.functions().invoke("approve-request", ...)
-            ApprovalResult(
-                success = true,
-                grantId = "grant-${System.currentTimeMillis()}",
-                minutes = minutes,
-                expiresAt = "2026-06-04T14:00:00Z"
+    suspend fun approveRequest(
+        requestId: String,
+        minutes: Int,
+        response: String?
+    ): Result<ApprovalResult> = withContext(Dispatchers.IO) {
+        try {
+            val token = authManager.getAccessToken()
+                ?: return@withContext Result.failure(IllegalStateException("not authenticated"))
+
+            val responseText = jsonStringOrNull(response)
+            val body = "{\"request_id\":\"$requestId\",\"minutes\":$minutes,\"response_text\":$responseText}"
+
+            val httpResponse = clientProvider.httpClient.post(
+                "${SupabaseClientProvider.SUPABASE_URL}/functions/v1/approve-request"
+            ) {
+                header("Authorization", "Bearer $token")
+                header("apikey", SupabaseClientProvider.SUPABASE_ANON_KEY)
+                contentType(ContentType.Application.Json)
+                setBody(body)
+            }
+
+            if (!httpResponse.status.isSuccess()) {
+                return@withContext Result.failure(
+                    RuntimeException("HTTP ${httpResponse.status}")
+                )
+            }
+
+            val responseBody = json.decodeFromString<ApproveResponseDto>(httpResponse.bodyAsText())
+            Result.success(
+                ApprovalResult(
+                    success = responseBody.success,
+                    grantId = responseBody.grant_id,
+                    minutes = responseBody.minutes ?: minutes,
+                    expiresAt = responseBody.expires_at
+                )
             )
+        } catch (e: Exception) {
+            Result.failure(e)
         }
+    }
 
     /**
      * Deniega una solicitud de tiempo.
+     *
+     * Calls the same `approve-request` edge function with `action = "DENY"`
+     * and `minutes = 0`. The current server-side handler does not yet branch
+     * on `action` (see `supabase/functions/approve-request/index.ts:38`); the
+     * wire format is locked in here and the server-side branch is a tracked
+     * follow-up — flagged in PR 4's PR description per design §7 Q5.
+     *
+     * Returns [Result.success] with `true` on a 2xx response,
+     * [Result.failure] otherwise.
      */
-    suspend fun denyRequest(requestId: String, reason: String?): Boolean =
+    suspend fun denyRequest(requestId: String, reason: String?): Result<Boolean> =
         withContext(Dispatchers.IO) {
-            // TODO: En implementación real, actualizar estado via Supabase
-            true
+            try {
+                val token = authManager.getAccessToken()
+                    ?: return@withContext Result.failure(IllegalStateException("not authenticated"))
+
+                val responseText = jsonStringOrNull(reason)
+                val body = "{\"request_id\":\"$requestId\",\"minutes\":0,\"action\":\"DENY\"," +
+                    "\"response_text\":$responseText}"
+
+                val httpResponse = clientProvider.httpClient.post(
+                    "${SupabaseClientProvider.SUPABASE_URL}/functions/v1/approve-request"
+                ) {
+                    header("Authorization", "Bearer $token")
+                    header("apikey", SupabaseClientProvider.SUPABASE_ANON_KEY)
+                    contentType(ContentType.Application.Json)
+                    setBody(body)
+                }
+
+                if (!httpResponse.status.isSuccess()) {
+                    return@withContext Result.failure(
+                        RuntimeException("HTTP ${httpResponse.status}")
+                    )
+                }
+
+                Result.success(true)
+            } catch (e: Exception) {
+                Result.failure(e)
+            }
         }
 
     /**
@@ -236,6 +327,16 @@ class ParentRepository @Inject constructor(
         }
 
     /**
+     * Serializes a possibly-null string into a JSON string-or-null literal.
+     * Used by [approveRequest] and [denyRequest] to embed an optional
+     * `response_text` field without writing the JSON by hand. Pulled out to
+     * keep the call sites short enough to fit inside ktlint's 120-char
+     * max-line-length rule.
+     */
+    private fun jsonStringOrNull(value: String?): String =
+        if (value == null) "null" else "\"${value.replace("\\", "\\\\").replace("\"", "\\\"")}\""
+
+    /**
      * Bloquea dispositivo inmediatamente.
      */
     suspend fun lockDevice(deviceId: String): Boolean = withContext(Dispatchers.IO) {
@@ -301,6 +402,59 @@ class ParentRepository @Inject constructor(
         val code: String,
         val expires_at: String,
         val deeplink: String
+    )
+
+    /**
+     * Wire shape returned by `${SUPABASE_URL}/rest/v1/time_requests` when
+     * called with `select=*,devices(device_name)`. The `device_name` field
+     * is joined from the `devices` table by Supabase's resource embedding.
+     * Status values are the [RequestStatus] enum names (`PENDING`,
+     * `APPROVED`, `DENIED`).
+     */
+    @Serializable
+    private data class TimeRequestDto(
+        val id: String,
+        val device_id: String,
+        val device_name: String? = null,
+        val package_name: String? = null,
+        val app_name: String? = null,
+        val minutes_requested: Int,
+        val reason: String? = null,
+        val status: String,
+        val created_at: String,
+        val responded_at: String? = null,
+        val parent_response: String? = null
+    ) {
+        fun toTimeRequest(): TimeRequest = TimeRequest(
+            id = id,
+            deviceId = device_id,
+            deviceName = device_name,
+            packageName = package_name,
+            appName = app_name,
+            minutesRequested = minutes_requested,
+            reason = reason,
+            status = when (status.uppercase()) {
+                "APPROVED" -> RequestStatus.APPROVED
+                "DENIED" -> RequestStatus.DENIED
+                else -> RequestStatus.PENDING
+            },
+            createdAt = created_at,
+            respondedAt = responded_at,
+            parentResponse = parent_response
+        )
+    }
+
+    /**
+     * Wire shape returned by the `approve-request` edge function on a
+     * successful approval. Mirrors the JSON keys in
+     * `supabase/functions/approve-request/index.ts:147-156`.
+     */
+    @Serializable
+    private data class ApproveResponseDto(
+        val success: Boolean,
+        val grant_id: String? = null,
+        val minutes: Int? = null,
+        val expires_at: String? = null
     )
 
     /**

@@ -286,39 +286,39 @@
 
 ## 25. Replace `ParentRepository.getPendingRequests()` with real REST query (RED → GREEN)
 
-- [ ] Step 1: In `app/src/test/java/com/example/parentalcontrol/data/repository/ParentRepositoryTest.kt`, add failing test `getPendingRequests_filters_by_pending_status` that:
+- [x] Step 1: In `app/src/test/java/com/example/parentalcontrol/data/repository/ParentRepositoryTest.kt`, add failing test `getPendingRequests_filters_by_pending_status` that:
   - Uses `MockEngine` to respond `200 OK` with body `[{...PENDING...},{...APPROVED...,"status":"APPROVED"...}]`.
   - Asserts the parser drops the APPROVED row (the client-side filter is a defense-in-depth; the server's RLS already scopes, but the repository must be honest about what it returns).
   - Asserts the URL is `${SUPABASE_URL}/rest/v1/time_requests?select=*%2Cdevices%28device_name%29&status=eq.PENDING&order=created_at.desc` and the `Authorization: Bearer <jwt>` header is present.
-- [ ] Step 2: Run `./gradlew :app:testDebugUnitTest --tests "*ParentRepositoryTest.getPendingRequests*"` — must be RED.
-- [ ] Step 3: In `ParentRepository.kt:85-109`, rewrite `getPendingRequests()` to `suspend fun getPendingRequests(): Result<List<TimeRequest>> = withContext(Dispatchers.IO) { try { val token = authManager.getAccessToken() ?: return@withContext Result.failure(IllegalStateException("not authenticated")); val response = clientProvider.httpClient.get("${SupabaseClientProvider.SUPABASE_URL}/rest/v1/time_requests?select=*,devices(device_name)&status=eq.PENDING&order=created_at.desc") { header("Authorization", "Bearer $token"); header("apikey", SupabaseClientProvider.SUPABASE_ANON_KEY) }; if (!response.status.isSuccess()) return@withContext Result.failure(RuntimeException("HTTP ${response.status}")); val body = Json.decodeFromString<List<TimeRequestDto>>(response.bodyAsText()); Result.success(body.map { it.toTimeRequest() }) } catch (e: Exception) { Result.failure(e) } }`. Add a private `@Serializable data class TimeRequestDto(...)` with the joined fields.
-- [ ] Step 4: Re-run the test — must be GREEN. Update `ParentViewModel.loadPendingRequests()` to handle `Result` (set `_error` on failure).
+- [x] Step 2: Run `./gradlew :app:testDebugUnitTest --tests "*ParentRepositoryTest.getPendingRequests*"` — must be RED.
+- [x] Step 3: In `ParentRepository.kt:85-109`, rewrite `getPendingRequests()` to `suspend fun getPendingRequests(): Result<List<TimeRequest>> = withContext(Dispatchers.IO) { try { val token = authManager.getAccessToken() ?: return@withContext Result.failure(IllegalStateException("not authenticated")); val response = clientProvider.httpClient.get("${SupabaseClientProvider.SUPABASE_URL}/rest/v1/time_requests?select=*,devices(device_name)&status=eq.PENDING&order=created_at.desc") { header("Authorization", "Bearer $token"); header("apikey", SupabaseClientProvider.SUPABASE_ANON_KEY) }; if (!response.status.isSuccess()) return@withContext Result.failure(RuntimeException("HTTP ${response.status}")); val body = Json.decodeFromString<List<TimeRequestDto>>(response.bodyAsText()); Result.success(body.map { it.toTimeRequest() }) } catch (e: Exception) { Result.failure(e) } }`. Add a private `@Serializable data class TimeRequestDto(...)` with the joined fields.
+- [x] Step 4: Re-run the test — must be GREEN. Update `ParentViewModel.loadPendingRequests()` to handle `Result` (set `_error` on failure).
 
 ## 26. Replace `ParentRepository.approveRequest()` with real edge function call (RED → GREEN)
 
-- [ ] Step 1: In `ParentRepositoryTest.kt`, add failing test `approveRequest_posts_to_approve_request_edge_function` that:
+- [x] Step 1: In `ParentRepositoryTest.kt`, add failing test `approveRequest_posts_to_approve_request_edge_function` that:
   - Uses `MockEngine` to respond `200 OK` with body `{"grant_id":"<uuid>","expires_at":"2026-06-04T14:00:00Z","minutes":30}`.
   - Asserts URL is `${SUPABASE_URL}/functions/v1/approve-request`, method is `POST`, body is `{"request_id":"req-1","minutes":30,"response_text":null,"decision":"APPROVED"}`, and `Authorization: Bearer <jwt>` is present.
   - Asserts the result is `Result.success(ApprovalResult(success=true, grantId=<uuid>, minutes=30, expiresAt=...))`.
-- [ ] Step 2: Run the test — must be RED.
-- [ ] Step 3: In `ParentRepository.kt:144-154`, rewrite `approveRequest` to call the edge function with the wire format above. **Do NOT change the edge function's `grants.source` field** — it stays at `"EXTRA_TIME"` per the pre-approved plan (matches the existing backend at `supabase/functions/approve-request/index.ts:117`; the spec's `"MANUAL"` value is the open question §7 Q4 in the design, and the user has already decided to keep `"EXTRA_TIME"`).
-- [ ] Step 4: Re-run the test — must be GREEN.
+- [x] Step 2: Run the test — must be RED.
+- [x] Step 3: In `ParentRepository.kt:144-154`, rewrite `approveRequest` to call the edge function with the wire format above. **Do NOT change the edge function's `grants.source` field** — it stays at `"EXTRA_TIME"` per the pre-approved plan (matches the existing backend at `supabase/functions/approve-request/index.ts:117`; the spec's `"MANUAL"` value is the open question §7 Q4 in the design, and the user has already decided to keep `"EXTRA_TIME"`).
+- [x] Step 4: Re-run the test — must be GREEN.
 
 ## 27. Replace `ParentRepository.denyRequest()` with real call (RED → GREEN)
 
-- [ ] Step 1: In `ParentRepositoryTest.kt`, add failing test `denyRequest_posts_with_decision_DENIED` that:
+- [x] Step 1: In `ParentRepositoryTest.kt`, add failing test `denyRequest_posts_with_decision_DENIED` that:
   - Uses `MockEngine` to respond `200 OK` with body `{"denied":true,"request_id":"req-1"}`.
   - Asserts URL is `${SUPABASE_URL}/functions/v1/approve-request`, method is `POST`, body is `{"request_id":"req-1","minutes":0,"response_text":"Not now","decision":"DENIED"}`.
-- [ ] Step 2: Run the test — must be RED.
-- [ ] Step 3: In `ParentRepository.kt:159-163`, rewrite `denyRequest` to call the same edge function with `decision = "DENIED"`, `minutes = 0`, `response_text = reason`. **Note on edge function shape**: `supabase/functions/approve-request/index.ts:38` currently only reads `request_id`, `minutes`, `response_text` — it does NOT read `decision`. Sending `decision = "DENIED"` will be a no-op field on the server, and the function will still insert a 0-minute APPROVED grant (wrong). Flag this in the PR description as a follow-up edge function change (extend the function to branch on `decision` and only insert a `grants` row when `decision == "APPROVED"`). For PR 4, the client wire format is locked in; the server-side handling is a one-line follow-up tracked separately.
-- [ ] Step 4: Re-run the test — must be GREEN. Update `ParentViewModel.denyRequest()` to handle `Result` (set `_error` on failure).
+- [x] Step 2: Run the test — must be RED.
+- [x] Step 3: In `ParentRepository.kt:159-163`, rewrite `denyRequest` to call the same edge function with `decision = "DENIED"`, `minutes = 0`, `response_text = reason`. **Note on edge function shape**: `supabase/functions/approve-request/index.ts:38` currently only reads `request_id`, `minutes`, `response_text` — it does NOT read `decision`. Sending `decision = "DENIED"` will be a no-op field on the server, and the function will still insert a 0-minute APPROVED grant (wrong). Flag this in the PR description as a follow-up edge function change (extend the function to branch on `decision` and only insert a `grants` row when `decision == "APPROVED"`). For PR 4, the client wire format is locked in; the server-side handling is a one-line follow-up tracked separately.
+- [x] Step 4: Re-run the test — must be GREEN. Update `ParentViewModel.denyRequest()` to handle `Result` (set `_error` on failure).
 
 ## 28. PR 4 validation gate
 
-- [ ] Step 1: Run `./gradlew :app:assembleDebug` — green.
-- [ ] Step 2: Run `./gradlew :app:testDebugUnitTest --tests "*ParentRepositoryTest*getPendingRequests*" --tests "*ParentRepositoryTest*approveRequest*" --tests "*ParentRepositoryTest*denyRequest*"` — green.
-- [ ] Step 3: Run `./gradlew :app:testDebugUnitTest` (no filter) — green; no regression in PR 1/2/3 tests.
-- [ ] Step 4: Run `./gradlew :app:detekt :app:ktlintCheck` — green.
+- [x] Step 1: Run `./gradlew :app:assembleDebug` — green.
+- [x] Step 2: Run `./gradlew :app:testDebugUnitTest --tests "*ParentRepositoryTest*getPendingRequests*" --tests "*ParentRepositoryTest*approveRequest*" --tests "*ParentRepositoryTest*denyRequest*"` — green.
+- [x] Step 3: Run `./gradlew :app:testDebugUnitTest` (no filter) — green; no regression in PR 1/2/3 tests.
+- [x] Step 4: Run `./gradlew :app:detekt :app:ktlintCheck` — green.
 - [ ] Step 5: Manual smoke (full round-trip, requires PR 3 merged):
   - As child, ask for 30 min → `outbox` row → drained by `OutboxDrainer` → `time_requests` row appears in Supabase.
   - As parent, open `DeviceDetailScreen` → tap "Aprobar" on the `RequestCard` → `grants` row appears in Supabase.
@@ -326,11 +326,11 @@
 
 ## 29. PR 4 Definition of Done
 
-- [ ] `getPendingRequests()`, `approveRequest()`, `denyRequest()` all return `Result<…>` and make real HTTP calls via `clientProvider.httpClient`.
-- [ ] `RequestCard` UI in `DeviceComponents.kt:213-351` is unchanged.
-- [ ] `grants.source` stays at `"EXTRA_TIME"` (no edge function change in PR 4).
-- [ ] PR description flags the `denyRequest` server-side `decision` handling as a follow-up (the current `approve-request/index.ts` does not branch on `decision`; PR 4 locks the client wire format only).
-- [ ] All 4 hotfix touchpoints still intact (no regression).
+- [x] `getPendingRequests()`, `approveRequest()`, `denyRequest()` all return `Result<…>` and make real HTTP calls via `clientProvider.httpClient`.
+- [x] `RequestCard` UI in `DeviceComponents.kt:213-351` is unchanged.
+- [x] `grants.source` stays at `"EXTRA_TIME"` (no edge function change in PR 4).
+- [x] PR description flags the `denyRequest` server-side `decision` handling as a follow-up (the current `approve-request/index.ts` does not branch on `decision`; PR 4 locks the client wire format only).
+- [x] All 4 hotfix touchpoints still intact (no regression).
 
 ---
 

@@ -1,5 +1,7 @@
 # Proposal: wire-pairing-and-approval-end-to-end
 
+> **STATUS: ARCHIVED on 2026-06-17** — 9 commits merged to master (5 chained PRs + ktlint baseline + docs marker + DENY fix + per-device isolation fix), 579 tests passing, all 4 validation gates green. See `archive-report.md` in the archive folder for the full summary, known follow-ups, and reconciliation notes.
+
 ## Intent
 
 The parent-child pairing, time-request, and app-blocking flows currently fall back to local mocks (`ParentRepository.createPairingCode`, `pairWithCode`, `getDevices`, `getPendingRequests`, `approveRequest`, `denyRequest`). The Supabase backend is already provisioned — edge functions `create-pairing-code`, `pairing`, `approve-request` exist; tables `devices`, `time_requests`, `app_policies`, `outbox` exist; RLS policies from migration `002_rls_policies.sql` are live — but the parent app never calls it. Four pre-SDD hotfixes (Engram `#15`) unblocked the most critical wiring bugs.

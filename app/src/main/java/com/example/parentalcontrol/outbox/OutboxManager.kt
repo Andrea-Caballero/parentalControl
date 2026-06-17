@@ -9,18 +9,19 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import java.time.Instant
 import java.util.UUID
 
 /**
  * Manager para la outbox de solicitudes offline.
- * 
+ *
  * Encola solicitudes cuando no hay conexión y las sincroniza cuando se recupera.
  */
 class OutboxManager private constructor(context: Context) {
 
     companion object {
         private const val TAG = "OutboxManager"
-        
+
         private const val MAX_RETRIES = 3
 
         @Volatile
@@ -60,7 +61,7 @@ class OutboxManager private constructor(context: Context) {
                 tipo = "time_request",
                 payload_json = payload,
                 dedup_key = dedupKey,
-                created_at = java.time.Instant.now().toString(),
+                created_at = Instant.now().toString(),
                 server_date = java.time.LocalDate.now(java.time.ZoneOffset.UTC).toString()
             )
 
@@ -82,24 +83,64 @@ class OutboxManager private constructor(context: Context) {
             val jsonPayload = payload.entries.joinToString(",") { (k, v) ->
                 "\"$k\": ${if (v is String) "\"$v\"" else v}"
             }
-            
+
             val dedupKey = "${eventType}_${System.currentTimeMillis()}"
-            
+
             val outboxItem = OutboxEntity(
                 tipo = eventType,
                 payload_json = "{ $jsonPayload }",
                 dedup_key = dedupKey,
-                created_at = java.time.Instant.now().toString(),
+                created_at = Instant.now().toString(),
                 server_date = java.time.LocalDate.now(java.time.ZoneOffset.UTC).toString()
             )
-            
+
             outboxDao.insertOutboxItem(outboxItem)
-            
+
             Log.d(TAG, "Event enqueued: $eventType")
             true
         } catch (e: Exception) {
             Log.e(TAG, "Error enqueueing event: ${e.message}")
             false
+        }
+    }
+
+    /**
+     * Returns the list of pending outbox rows (processed = 0) that are still
+     * under the retry budget, ordered by `created_at` ASC. Used by
+     * [com.example.parentalcontrol.workers.OutboxDrainer] to drive the drain.
+     */
+    suspend fun getPendingItems(
+        maxAttempts: Int = MAX_RETRIES,
+        limit: Int = 50
+    ): List<OutboxEntity> {
+        return try {
+            outboxDao.getPendingItems(maxAttempts, limit)
+        } catch (e: Exception) {
+            Log.e(TAG, "Error reading pending items: ${e.message}")
+            emptyList()
+        }
+    }
+
+    /**
+     * Marks the given outbox row as processed and stamps the timestamp. Used
+     * by the drainer on Success and PermanentFailure branches.
+     */
+    suspend fun markProcessed(id: UUID, processedAt: String) {
+        try {
+            outboxDao.markProcessed(id, processedAt)
+        } catch (e: Exception) {
+            Log.e(TAG, "Error marking item processed: ${e.message}")
+        }
+    }
+
+    /**
+     * Increments the retries counter for a transient-failure outbox row.
+     */
+    suspend fun incrementRetries(id: UUID) {
+        try {
+            outboxDao.incrementRetries(id)
+        } catch (e: Exception) {
+            Log.e(TAG, "Error incrementing retries: ${e.message}")
         }
     }
 

@@ -113,7 +113,7 @@ class LocalDataSource(
     suspend fun drainOutbox(maxAttempts: Int = 3, batchSize: Int = 50): List<OutboxEntity> {
         val items = outboxDao.getPendingItems(maxAttempts, batchSize)
         items.forEach { item ->
-            outboxDao.incrementAttempts(item.id)
+            outboxDao.incrementRetries(item.id)
         }
         return items
     }

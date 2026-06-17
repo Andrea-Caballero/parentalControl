@@ -237,9 +237,9 @@ class AppDatabaseTest {
         outboxDao.insertOutboxItem(item)
         val inserted = outboxDao.getPendingItems(3, 50).first()
 
-        outboxDao.incrementAttempts(inserted.id)
+        outboxDao.incrementRetries(inserted.id)
         val afterIncrement = outboxDao.getPendingItems(3, 50).first()
-        assertEquals(1, afterIncrement.intentos)
+        assertEquals(1, afterIncrement.retries)
     }
 
     @Test
@@ -249,7 +249,7 @@ class AppDatabaseTest {
             tipo = "usage_log",
             payload_json = """{"pkg":"com.example.app"}""",
             dedup_key = null,
-            intentos = 3,
+            retries = 3,
             created_at = "2026-06-15T10:00:00Z",
             server_date = serverDate
         )

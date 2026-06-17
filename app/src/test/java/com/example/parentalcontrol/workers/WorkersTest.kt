@@ -21,7 +21,7 @@ class WorkersTest {
 
     @Test
     fun `outbox worker constants are defined`() {
-        assertEquals("outbox_upload_work", OutboxUploadWorker.WORK_NAME)
+        assertEquals("outbox_drain_periodic", OutboxDrainer.WORK_NAME)
     }
 
     @Test
@@ -131,13 +131,13 @@ class WorkerChainingTest {
         val sequence = listOf(
             SyncWorker.WORK_NAME,
             HeartbeatWorker.WORK_NAME,
-            OutboxUploadWorker.WORK_NAME
+            OutboxDrainer.WORK_NAME
         )
-        
+
         assertEquals(3, sequence.size)
         assertEquals(SyncWorker.WORK_NAME, sequence[0])
         assertEquals(HeartbeatWorker.WORK_NAME, sequence[1])
-        assertEquals(OutboxUploadWorker.WORK_NAME, sequence[2])
+        assertEquals(OutboxDrainer.WORK_NAME, sequence[2])
     }
 
     @Test
@@ -182,18 +182,18 @@ class WorkSchedulerTest {
     fun `work names are unique`() {
         val names = setOf(
             HeartbeatWorker.WORK_NAME,
-            OutboxUploadWorker.WORK_NAME,
+            OutboxDrainer.WORK_NAME,
             ReconciliationWorker.WORK_NAME,
             SyncWorker.WORK_NAME
         )
-        
+
         assertEquals(4, names.size)
     }
 
     @Test
     fun `all workers have tags`() {
         assertEquals("heartbeat_work", HeartbeatWorker.WORK_NAME)
-        assertEquals("outbox_upload_work", OutboxUploadWorker.WORK_NAME)
+        assertEquals("outbox_drain_periodic", OutboxDrainer.WORK_NAME)
         assertEquals("reconciliation_work", ReconciliationWorker.WORK_NAME)
         assertEquals("sync_work", SyncWorker.WORK_NAME)
     }

@@ -1,6 +1,8 @@
 package com.example.parentalcontrol.data.local
 
 import androidx.room.*
+import androidx.room.migration.Migration
+import androidx.sqlite.db.SupportSQLiteDatabase
 import kotlinx.coroutines.flow.Flow
 import java.util.UUID
 
@@ -56,9 +58,11 @@ data class OutboxEntity(
     val tipo: String,
     val payload_json: String,
     val dedup_key: String?,
-    val intentos: Int = 0,
+    val retries: Int = 0,
     val created_at: String,
-    val server_date: String
+    val server_date: String,
+    val processed: Boolean = false,
+    val processed_at: String? = null
 )
 
 @Entity(tableName = "time_requests")
@@ -178,14 +182,16 @@ interface UsageDao {
     @Query("SELECT SUM(usage_minutes) FROM usage_today WHERE server_date = :serverDate")
     fun getGlobalUsageFlow(serverDate: String): Flow<Int?>
 
-    @Query("""
+    @Query(
+        """
         SELECT SUM(u.usage_minutes)
         FROM usage_today u
         INNER JOIN app_policies a ON u.package_name = a.package_name
         WHERE u.server_date = :serverDate
           AND a.category = :category
           AND a.state != 'ALWAYS_ALLOWED'
-    """)
+        """
+    )
     fun getCategoryUsageFlow(serverDate: String, category: String): Flow<Int?>
 
     @Query("SELECT usage_minutes FROM usage_today WHERE package_name = :packageName AND server_date = :serverDate")
@@ -197,7 +203,13 @@ interface UsageDao {
         if (existing != null) {
             upsertUsage(existing.copy(usage_minutes = existing.usage_minutes + deltaMinutes))
         } else {
-            upsertUsage(UsageTodayEntity(package_name = packageName, server_date = serverDate, usage_minutes = deltaMinutes))
+            upsertUsage(
+                UsageTodayEntity(
+                    package_name = packageName,
+                    server_date = serverDate,
+                    usage_minutes = deltaMinutes
+                )
+            )
         }
     }
 
@@ -213,16 +225,22 @@ interface OutboxDao {
     @Query("SELECT * FROM outbox WHERE dedup_key = :dedupKey AND dedup_key IS NOT NULL LIMIT 1")
     suspend fun findByDedupKey(dedupKey: String): OutboxEntity?
 
-    @Query("SELECT * FROM outbox WHERE intentos < :maxAttempts ORDER BY created_at ASC LIMIT :limit")
+    @Query("SELECT * FROM outbox WHERE processed = 0 AND retries < :maxAttempts ORDER BY created_at ASC LIMIT :limit")
     suspend fun getPendingItems(maxAttempts: Int, limit: Int): List<OutboxEntity>
 
-    @Query("UPDATE outbox SET intentos = intentos + 1 WHERE id = :id")
-    suspend fun incrementAttempts(id: UUID)
+    @Query("UPDATE outbox SET retries = retries + 1 WHERE id = :id")
+    suspend fun incrementRetries(id: UUID)
+
+    @Query("UPDATE outbox SET processed = 1, processed_at = :processedAt WHERE id = :id")
+    suspend fun markProcessed(id: UUID, processedAt: String)
+
+    @Query("DELETE FROM outbox WHERE processed = 1 AND processed_at < :cutoff")
+    suspend fun deleteProcessedOlderThan(cutoff: String)
 
     @Query("DELETE FROM outbox WHERE id = :id")
     suspend fun deleteItem(id: UUID)
 
-    @Query("DELETE FROM outbox WHERE intentos >= :maxAttempts")
+    @Query("DELETE FROM outbox WHERE retries >= :maxAttempts")
     suspend fun deleteFailedItems(maxAttempts: Int)
 
     @Query("SELECT COUNT(*) FROM outbox")
@@ -264,7 +282,7 @@ interface TimeRequestDao {
         TimeRequestEntity::class,
         BehavioralEventEntity::class
     ],
-    version = 4,
+    version = 5,
     exportSchema = true
 )
 @TypeConverters(Converters::class)
@@ -281,6 +299,21 @@ abstract class AppDatabase : RoomDatabase() {
     companion object {
         const val DATABASE_NAME = "parental_control.db"
 
+        /**
+         * Migration v4 -> v5 on the `outbox` table.
+         *
+         * - Adds `processed INTEGER NOT NULL DEFAULT 0`
+         * - Adds `processed_at TEXT` (nullable)
+         * - Renames `intentos` -> `retries` (value carried forward)
+         */
+        val MIGRATION_4_5: Migration = object : Migration(4, 5) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE outbox ADD COLUMN processed INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE outbox ADD COLUMN processed_at TEXT")
+                db.execSQL("ALTER TABLE outbox RENAME COLUMN intentos TO retries")
+            }
+        }
+
         @Volatile
         private var INSTANCE: AppDatabase? = null
 
@@ -291,7 +324,7 @@ abstract class AppDatabase : RoomDatabase() {
                     AppDatabase::class.java,
                     DATABASE_NAME
                 )
-                    .addMigrations()
+                    .addMigrations(MIGRATION_4_5)
                     .build()
                 INSTANCE = instance
                 instance

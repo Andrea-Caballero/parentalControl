@@ -11,11 +11,13 @@ import com.example.parentalcontrol.workers.WorkerInitializer
 
 /**
  * Receiver para re-armar los servicios tras boot o actualización.
- * 
+ *
  * Responsabilidades:
  * 1. Reiniciar el UsageTrackingService (T06)
  * 2. Reconciliar uso con UsageStats (T07)
  * 3. Encolar sincronización inicial (T18/T20)
+ * 4. PR 3: agendar el [com.example.parentalcontrol.workers.OutboxDrainer]
+ *    periódico para que el drain de la outbox sobreviva al reinicio.
  */
 class BootReceiver : BroadcastReceiver() {
 
@@ -27,7 +29,7 @@ class BootReceiver : BroadcastReceiver() {
 
     override fun onReceive(context: Context, intent: Intent) {
         Log.d(TAG, "Recibido broadcast: ${intent.action}")
-        
+
         when (intent.action) {
             ACTION_BOOT_COMPLETED -> {
                 onBootCompleted(context)
@@ -40,21 +42,26 @@ class BootReceiver : BroadcastReceiver() {
 
     private fun onBootCompleted(context: Context) {
         Log.d(TAG, "Boot completado, inicializando servicios")
-        
+
         // 1. Iniciar UsageTrackingService si no está corriendo
         if (!isUsageServiceRunning(context)) {
             startUsageTrackingService(context)
         }
-        
-        // 2. Inicializar todos los workers (T20)
+
+        // 2. PR 3: schedule the OutboxDrainer explicitly so the periodic drain
+        //    survives the boot. KEEP + a unique work name ensures we do not
+        //    replace an already-scheduled instance.
+        WorkScheduler.scheduleOutboxDrainer(context)
+
+        // 3. Inicializar todos los workers restantes (T20)
         WorkerInitializer.initialize(context, isAfterBoot = true)
-        
+
         Log.d(TAG, "Inicialización post-boot completada")
     }
 
     private fun onPackageReplaced(context: Context) {
         Log.d(TAG, "Package reemplazado, reinicializando")
-        
+
         // Similar a boot pero también fuerza sync
         onBootCompleted(context)
     }
@@ -62,9 +69,9 @@ class BootReceiver : BroadcastReceiver() {
     private fun isUsageServiceRunning(context: Context): Boolean {
         return try {
             val activityManager = context.getSystemService(Context.ACTIVITY_SERVICE) as android.app.ActivityManager
-            
-            activityManager.getRunningServices(Integer.MAX_VALUE).any { 
-                it.service.className == UsageTrackingService::class.java.name 
+
+            activityManager.getRunningServices(Integer.MAX_VALUE).any {
+                it.service.className == UsageTrackingService::class.java.name
             }
         } catch (e: Exception) {
             Log.w(TAG, "Error verificando servicio: ${e.message}")
@@ -74,9 +81,9 @@ class BootReceiver : BroadcastReceiver() {
 
     private fun startUsageTrackingService(context: Context) {
         Log.d(TAG, "Iniciando UsageTrackingService")
-        
+
         val serviceIntent = Intent(context, UsageTrackingService::class.java)
-        
+
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 context.startForegroundService(serviceIntent)
@@ -103,7 +110,7 @@ class LockScreenReceiver : BroadcastReceiver() {
 
     override fun onReceive(context: Context, intent: Intent) {
         Log.d(TAG, "Broadcast de lock: ${intent.action}")
-        
+
         when (intent.action) {
             ACTION_DEVICE_UNLOCKED -> {
                 // Device desbloqueado, puede ser buen momento para sync
@@ -114,7 +121,7 @@ class LockScreenReceiver : BroadcastReceiver() {
 
     private fun onDeviceUnlocked(context: Context) {
         Log.d(TAG, "Device desbloqueado, verificando sync pendiente")
-        
+
         // Verificar si hay sync pendiente y ejecutarlo
         WorkScheduler.triggerSyncNow(context)
     }

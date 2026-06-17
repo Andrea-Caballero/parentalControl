@@ -13,7 +13,7 @@ object WorkScheduler {
         Log.d(TAG, "Programando todos los workers periódicos")
 
         scheduleHeartbeat(context)
-        scheduleOutboxUpload(context)
+        scheduleOutboxDrainer(context)
         scheduleReconciliation(context)
 
         Log.d(TAG, "Todos los workers periódicos programados")
@@ -46,12 +46,12 @@ object WorkScheduler {
         Log.d(TAG, "Heartbeat programado")
     }
 
-    fun scheduleOutboxUpload(context: Context) {
+    fun scheduleOutboxDrainer(context: Context) {
         val constraints = Constraints.Builder()
             .setRequiredNetworkType(NetworkType.CONNECTED)
             .build()
 
-        val workRequest = PeriodicWorkRequestBuilder<OutboxUploadWorker>(
+        val workRequest = PeriodicWorkRequestBuilder<OutboxDrainer>(
             15, TimeUnit.MINUTES,
             5, TimeUnit.MINUTES
         )
@@ -61,17 +61,17 @@ object WorkScheduler {
                 WorkRequest.MIN_BACKOFF_MILLIS,
                 TimeUnit.MILLISECONDS
             )
-            .addTag(OutboxUploadWorker.WORK_NAME)
+            .addTag(OutboxDrainer.WORK_TAG)
             .build()
 
         WorkManager.getInstance(context)
             .enqueueUniquePeriodicWork(
-                OutboxUploadWorker.WORK_NAME,
+                OutboxDrainer.WORK_NAME,
                 ExistingPeriodicWorkPolicy.KEEP,
                 workRequest
             )
 
-        Log.d(TAG, "Outbox upload programado")
+        Log.d(TAG, "Outbox drainer programado")
     }
 
     fun scheduleReconciliation(context: Context) {
@@ -117,7 +117,7 @@ object WorkScheduler {
             .setConstraints(constraints)
             .build()
 
-        val outboxRequest = OneTimeWorkRequestBuilder<OutboxUploadWorker>()
+        val outboxRequest = OneTimeWorkRequestBuilder<OutboxDrainer>()
             .setConstraints(constraints)
             .build()
 

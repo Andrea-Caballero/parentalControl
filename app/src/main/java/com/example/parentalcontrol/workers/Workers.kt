@@ -73,55 +73,6 @@ class HeartbeatWorker @AssistedInject constructor(
 }
 
 @HiltWorker
-class OutboxUploadWorker @AssistedInject constructor(
-    @Assisted context: Context,
-    @Assisted workerParams: WorkerParameters,
-    private val syncManager: SyncManager
-) : CoroutineWorker(context, workerParams) {
-
-    companion object {
-        private const val TAG = "OutboxUploadWorker"
-        const val WORK_NAME = "outbox_upload_work"
-        private const val INTERVAL_MINUTES = 15L
-        private const val FLEX_MINUTES = 5L
-    }
-
-    override suspend fun doWork(): Result = withContext(Dispatchers.IO) {
-        Log.d(TAG, "Ejecutando upload de outbox")
-
-        return@withContext try {
-            val result = syncManager.drainOutbox()
-
-            when (result) {
-                is SyncResult.Success -> {
-                    Log.d(TAG, "Outbox vaciada exitosamente")
-                    Result.success()
-                }
-                is SyncResult.PartialSuccess -> {
-                    Log.w(TAG, "Outbox parcialmente enviada: ${result.failedItems} fallidos")
-                    if (runAttemptCount < 3) {
-                        Result.retry()
-                    } else {
-                        Result.success()
-                    }
-                }
-                is SyncResult.Offline -> {
-                    Log.d(TAG, "Offline, reintentando...")
-                    Result.retry()
-                }
-                is SyncResult.Error -> {
-                    Log.e(TAG, "Error en outbox: ${result.message}")
-                    Result.retry()
-                }
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "Excepción en outbox upload: ${e.message}")
-            Result.retry()
-        }
-    }
-}
-
-@HiltWorker
 class ReconciliationWorker @AssistedInject constructor(
     @Assisted context: Context,
     @Assisted workerParams: WorkerParameters,

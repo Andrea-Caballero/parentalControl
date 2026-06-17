@@ -34,6 +34,22 @@ sealed class SyncResult {
     data object Offline : SyncResult()
 }
 
+/**
+ * Result of a single outbox-item send attempt.
+ *
+ * - [Success]: the receiver accepted the row.
+ * - [RetryableFailure]: a transient error (5xx, 408, 429, IOException). The
+ *   row is still in the outbox and will be retried on the next drain cycle.
+ * - [PermanentFailure]: a non-recoverable error (4xx other than 408/429).
+ *   The caller decides whether to mark the row processed (so the worker does
+ *   not loop forever) or to keep it pending for a manual fix-up.
+ */
+sealed class OutboxSendResult {
+    data object Success : OutboxSendResult()
+    data class RetryableFailure(val cause: Throwable) : OutboxSendResult()
+    data class PermanentFailure(val statusCode: Int) : OutboxSendResult()
+}
+
 enum class SyncStatus {
     IDLE,
     SYNCING,
@@ -100,7 +116,17 @@ class SyncManager private constructor(
     private var syncJob: Job? = null
     private var periodicSyncJob: Job? = null
 
-    private var httpClient: HttpClient? = null
+    /**
+     * The Ktor HTTP client used to talk to Supabase. Public so the
+     * [com.example.parentalcontrol.workers.OutboxDrainer] can guard against
+     * a not-yet-initialized client and return `Result.retry()` instead of
+     * silently no-op'ing the send.
+     *
+     * The `setHttpClient` accessor is auto-generated from this property;
+     * callers that previously used the explicit setter should now write to
+     * the property directly (`syncManager.httpClient = client`).
+     */
+    var httpClient: HttpClient? = null
 
     init {
         scope.launch { updatePendingCount() }
@@ -220,12 +246,20 @@ class SyncManager private constructor(
             if (pendingItems.isEmpty()) break
 
             for (item in pendingItems) {
-                val result = sendOutboxItem(item, accessToken)
-                if (result) {
-                    database.outboxDao().deleteItem(item.id)
-                } else {
-                    database.outboxDao().incrementAttempts(item.id)
-                    failedCount++
+                when (sendOutboxItem(item, accessToken)) {
+                    is OutboxSendResult.Success ->
+                        database.outboxDao().deleteItem(item.id)
+                    is OutboxSendResult.RetryableFailure -> {
+                        database.outboxDao().incrementRetries(item.id)
+                        failedCount++
+                    }
+                    is OutboxSendResult.PermanentFailure -> {
+                        // Legacy drain path: leave the row in place and count
+                        // it as a failure. The new [OutboxDrainer] worker is
+                        // the canonical path that marks permanent failures as
+                        // processed (PR 3).
+                        failedCount++
+                    }
                 }
             }
         }
@@ -278,7 +312,7 @@ class SyncManager private constructor(
                 enforcementLevel?.let { put("enforcement_level", it) }
                 put("client_ts", java.time.Instant.now().toString())
             }
-            
+
             val response = httpClient?.post("${SupabaseClientProvider.SUPABASE_URL}/functions/v1/heartbeat") {
                 header("Authorization", "Bearer $accessToken")
                 header("apikey", SupabaseClientProvider.SUPABASE_ANON_KEY)
@@ -294,10 +328,6 @@ class SyncManager private constructor(
 
     fun getServerTime(): Long {
         return System.currentTimeMillis() / 1000 + _serverTimeOffset.value
-    }
-
-    fun setHttpClient(client: HttpClient) {
-        httpClient = client
     }
 
     private suspend fun applyPolicy(response: PolicyPullResponse, deviceId: String) {
@@ -324,28 +354,53 @@ class SyncManager private constructor(
         }
     }
 
-    private suspend fun sendOutboxItem(item: OutboxEntity, accessToken: String): Boolean {
+    /**
+     * Sends a single outbox row to Supabase. Returns a structured result so
+     * callers (notably [com.example.parentalcontrol.workers.OutboxDrainer])
+     * can branch on retryable vs permanent failure.
+     *
+     * **Null [httpClient] contract**: if the client has not been initialized
+     * (e.g., the app is starting up and `setHttpClient` has not been called
+     * yet), this method returns [OutboxSendResult.RetryableFailure] wrapping
+     * an [IllegalStateException] so the worker can map it to
+     * `Result.retry()`. It does NOT silently no-op (the previous
+     * implementation returned `false`, which looked like a real failure but
+     * was indistinguishable from a network drop).
+     */
+    suspend fun sendOutboxItem(item: OutboxEntity, accessToken: String? = null): OutboxSendResult {
+        val client = httpClient
+        if (client == null) {
+            return OutboxSendResult.RetryableFailure(
+                IllegalStateException("httpClient not initialized")
+            )
+        }
+
         val endpoint = when (item.tipo) {
             "USAGE_LOG" -> "/rest/v1/usage_logs"
             "DEVICE_ALERT" -> "/rest/v1/device_alerts"
             "BEHAVIORAL_EVENT" -> "/rest/v1/behavioral_events"
             "TIME_REQUEST" -> "/rest/v1/time_requests"
             "HEARTBEAT" -> "/functions/v1/heartbeat"
-            else -> return false
+            else -> return OutboxSendResult.PermanentFailure(statusCode = 0)
         }
+
+        val token = accessToken ?: authManager.getAccessToken()
+            ?: return OutboxSendResult.RetryableFailure(
+                IllegalStateException("no access token")
+            )
 
         return try {
             val isFunction = endpoint.startsWith("/functions")
 
             val response = if (isFunction) {
-                httpClient?.post("${SupabaseClientProvider.SUPABASE_URL}$endpoint") {
-                    header("Authorization", "Bearer $accessToken")
+                client.post("${SupabaseClientProvider.SUPABASE_URL}$endpoint") {
+                    header("Authorization", "Bearer $token")
                     header("Content-Type", "application/json")
                     setBody(item.payload_json)
                 }
             } else {
-                httpClient?.post("${SupabaseClientProvider.SUPABASE_URL}$endpoint") {
-                    header("Authorization", "Bearer $accessToken")
+                client.post("${SupabaseClientProvider.SUPABASE_URL}$endpoint") {
+                    header("Authorization", "Bearer $token")
                     header("apikey", SupabaseClientProvider.SUPABASE_ANON_KEY)
                     header("Content-Type", "application/json")
                     header("Prefer", "return=minimal")
@@ -353,11 +408,27 @@ class SyncManager private constructor(
                 }
             }
 
-            response?.status?.isSuccess() == true ||
-            response?.status == HttpStatusCode.Conflict
+            classifyResponse(response.status)
+        } catch (e: java.io.IOException) {
+            OutboxSendResult.RetryableFailure(e)
         } catch (e: Exception) {
-            false
+            OutboxSendResult.RetryableFailure(e)
         }
+    }
+
+    private fun classifyResponse(status: HttpStatusCode): OutboxSendResult = when {
+        status.isSuccess() || status == HttpStatusCode.Conflict -> OutboxSendResult.Success
+        status == HttpStatusCode.RequestTimeout || status == HttpStatusCode.TooManyRequests ->
+            OutboxSendResult.RetryableFailure(
+                IllegalStateException("HTTP $status")
+            )
+        status.value in 400..499 ->
+            OutboxSendResult.PermanentFailure(statusCode = status.value)
+        else ->
+            // 5xx and anything else not in the 2xx/4xx buckets above.
+            OutboxSendResult.RetryableFailure(
+                IllegalStateException("HTTP $status")
+            )
     }
 
     private suspend fun refreshFcmTokenIfNeeded() {

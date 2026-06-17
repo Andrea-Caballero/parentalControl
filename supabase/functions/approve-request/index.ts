@@ -1,5 +1,7 @@
 // T15: Approve Request - Edge Function
-// Aprueba time_request, crea grant idempotente, sube versión, envía FCM
+// Aprueba o rechaza un time_request:
+//   - action: "APPROVE" (default, backward compat) -> crea grant, FCM POLICY_UPDATED
+//   - action: "DENY"                              -> marca DENIED, sin grant, FCM REQUEST_DENIED
 
 import { serve } from "https://deno.land/std@0.177.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
@@ -7,15 +9,21 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
 };
 
-serve(async (req) => {
+/**
+ * Handle an incoming request to the edge function. Exported so the
+ * accompanying `index_test.ts` can drive it with a synthetic Request and
+ * assert on the returned Response.
+ */
+export async function handleRequest(req: Request): Promise<Response> {
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
   }
 
   try {
-    // Solo padres pueden aprobar
+    // Solo padres pueden aprobar/rechazar
     const authHeader = req.headers.get("Authorization");
     if (!authHeader) {
       return new Response(
@@ -35,11 +43,31 @@ serve(async (req) => {
       );
     }
 
-    const { request_id, minutes, response_text } = await req.json();
+    // action: "APPROVE" | "DENY" (acepta alias "decision" también)
+    const {
+      request_id,
+      minutes,
+      response_text,
+      action,
+      decision,
+    } = await req.json();
 
-    if (!request_id || !minutes) {
+    // Normalizar a upper case. Default = APPROVE (backward compat).
+    const effectiveAction = String(action ?? decision ?? "APPROVE")
+      .trim()
+      .toUpperCase();
+
+    if (!request_id) {
       return new Response(
-        JSON.stringify({ error: "request_id y minutes son requeridos" }),
+        JSON.stringify({ error: "request_id es requerido" }),
+        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
+    // minutes solo es requerido para APPROVE
+    if (effectiveAction !== "DENY" && !minutes) {
+      return new Response(
+        JSON.stringify({ error: "minutes es requerido para APPROVE" }),
         { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
@@ -71,7 +99,58 @@ serve(async (req) => {
       );
     }
 
-    // 2. Verificar que no está ya aprobada (idempotencia)
+    // 2. Branch DENY
+    if (effectiveAction === "DENY") {
+      // Idempotencia: si ya está DENIED, devolver éxito sin re-procesar.
+      if (timeRequest.status === "DENIED") {
+        return new Response(
+          JSON.stringify({
+            success: true,
+            decision: "DENIED",
+            idempotent: true,
+          }),
+          { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+
+      // Si ya fue APPROVED no se puede revertir a DENIED (semánticamente confuso
+      // y bloquearía inconsistencias con grants ya entregados).
+      if (timeRequest.status === "APPROVED") {
+        return new Response(
+          JSON.stringify({ error: "Solicitud ya aprobada, no se puede denegar" }),
+          { status: 409, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+
+      // Actualizar estado a DENIED
+      const { error: updateError } = await supabaseAdmin
+        .from("time_requests")
+        .update({
+          status: "DENIED",
+          parent_response: response_text || null,
+          responded_at: new Date().toISOString(),
+        })
+        .eq("id", request_id);
+
+      if (updateError) {
+        throw new Error(`Error actualizando solicitud: ${updateError.message}`);
+      }
+
+      // FCM al dispositivo del niño
+      await sendFcmToDevice(supabaseAdmin, timeRequest.device_id, {
+        type: "REQUEST_DENIED",
+        request_id: request_id,
+        response_text: response_text || null,
+      });
+
+      return new Response(
+        JSON.stringify({ success: true, decision: "DENIED" }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
+    // 3. Branch APPROVE (legacy behavior)
+    // Verificar que no está ya aprobada (idempotencia)
     if (timeRequest.status === "APPROVED") {
       // Ya fue aprobada, buscar grant existente
       const { data: existingGrant } = await supabaseAdmin
@@ -92,7 +171,7 @@ serve(async (req) => {
       );
     }
 
-    // 3. Actualizar estado de la solicitud
+    // 4. Actualizar estado de la solicitud
     await supabaseAdmin
       .from("time_requests")
       .update({
@@ -102,7 +181,7 @@ serve(async (req) => {
       })
       .eq("id", request_id);
 
-    // 4. Crear grant (idempotente por request_id único)
+    // 5. Crear grant (idempotente por request_id único)
     const expiresAt = new Date();
     expiresAt.setMinutes(expiresAt.getMinutes() + minutes);
 
@@ -125,17 +204,17 @@ serve(async (req) => {
       throw new Error(`Error creando grant: ${grantError.message}`);
     }
 
-    // 5. Bump de versión (trigger automático en grants)
+    // 6. Bump de versión (trigger automático en grants)
     // El trigger AFTER INSERT en grants ya llama a bump_policy_version
 
-    // 6. Obtener versión actualizada
+    // 7. Obtener versión actualizada
     const { data: device } = await supabaseAdmin
       .from("devices")
       .select("policy_version")
       .eq("id", timeRequest.device_id)
       .single();
 
-    // 7. Enviar FCM al dispositivo
+    // 8. Enviar FCM al dispositivo
     await sendFcmToDevice(supabaseAdmin, timeRequest.device_id, {
       type: "POLICY_UPDATED",
       grant_id: grant.id,
@@ -155,16 +234,23 @@ serve(async (req) => {
       { headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   } catch (error) {
-    console.error("Approve request error:", error);
+    const message = error instanceof Error ? error.message : String(error);
+    console.error("Approve request error:", message);
     return new Response(
-      JSON.stringify({ error: error.message }),
+      JSON.stringify({ error: message }),
       { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   }
-});
+}
+
+// Loose alias for the Supabase client so the helper is callable from any
+// client instance (the strict ReturnType of createClient doesn't unify across
+// the multiple overloads we use in this file).
+// deno-lint-ignore no-explicit-any
+type SupabaseClient = any;
 
 async function sendFcmToDevice(
-  supabase: ReturnType<typeof createClient>,
+  supabase: SupabaseClient,
   deviceId: string,
   payload: Record<string, unknown>
 ): Promise<void> {
@@ -177,7 +263,8 @@ async function sendFcmToDevice(
     .limit(1)
     .single();
 
-  if (!tokenRecord) {
+  const record = tokenRecord as { token?: string } | null;
+  if (!record?.token) {
     console.log("No FCM token for device:", deviceId);
     return;
   }
@@ -193,7 +280,7 @@ async function sendFcmToDevice(
         Authorization: `key=${serverKey}`,
       },
       body: JSON.stringify({
-        to: tokenRecord.token,
+        to: record.token,
         priority: "high",
         data: payload,
       }),
@@ -201,4 +288,8 @@ async function sendFcmToDevice(
   } catch (e) {
     console.error("FCM send error:", e);
   }
+}
+
+if (import.meta.main) {
+  serve(handleRequest);
 }

@@ -1,25 +1,72 @@
 package com.example.parentalcontrol.ui.parent.screens
 
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.*
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Home
+import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.Notifications
+import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Warning
+import androidx.compose.material3.Badge
+import androidx.compose.material3.BadgedBox
+import androidx.compose.material3.Button
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Tab
+import androidx.compose.material3.TabRow
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.TopAppBar
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
 import com.example.parentalcontrol.domain.model.ChildDevice
 import com.example.parentalcontrol.domain.model.TimeRequest
 import com.example.parentalcontrol.ui.parent.components.DeviceCard
 import com.example.parentalcontrol.ui.parent.components.PairingBottomSheet
 import com.example.parentalcontrol.ui.parent.components.RequestCard
+import com.example.parentalcontrol.viewmodel.DeviceListUiState
 import com.example.parentalcontrol.viewmodel.ParentViewModel
 
 /**
  * Pantalla principal del padre.
  * Muestra dispositivos y solicitudes pendientes.
+ *
+ * PR 2 of `openspec/changes/wire-pairing-and-approval-end-to-end` wires
+ * the Devices tab to the new `DeviceListUiState` sealed UI state
+ * (`Loading` / `Success` / `Empty` / `Error`) so the dashboard can render
+ * a retry banner when the `get-devices-for-parent` call fails and an
+ * empty-state CTA when no devices are paired.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -29,6 +76,7 @@ fun DashboardScreen(
     onNavigateToRequests: () -> Unit = {}
 ) {
     val devices by viewModel.devices.collectAsState()
+    val deviceListState by viewModel.deviceListState.collectAsState()
     val pendingRequests by viewModel.pendingRequests.collectAsState()
     val isLoading by viewModel.isLoading.collectAsState()
     val error by viewModel.error.collectAsState()
@@ -41,7 +89,6 @@ fun DashboardScreen(
             TopAppBar(
                 title = { Text("Control Parental") },
                 actions = {
-                    // Notificación de solicitudes pendientes
                     BadgedBox(
                         badge = {
                             if (pendingRequests.isNotEmpty()) {
@@ -65,7 +112,6 @@ fun DashboardScreen(
                 .fillMaxSize()
                 .padding(padding)
         ) {
-            // Tabs
             TabRow(selectedTabIndex = selectedTab) {
                 Tab(
                     selected = selectedTab == 0,
@@ -94,10 +140,12 @@ fun DashboardScreen(
             when (selectedTab) {
                 0 -> DevicesTab(
                     devices = devices,
-                    isLoading = isLoading,
+                    listState = deviceListState,
                     onDeviceClick = onNavigateToDevice,
                     onLockDevice = { viewModel.lockDevice(it) },
-                    onUnlockDevice = { viewModel.unlockDevice(it) }
+                    onUnlockDevice = { viewModel.unlockDevice(it) },
+                    onRetry = { viewModel.loadDevices() },
+                    onClearError = { viewModel.clearError() }
                 )
                 1 -> RequestsTab(
                     requests = pendingRequests,
@@ -108,7 +156,6 @@ fun DashboardScreen(
             }
         }
 
-        // Bottom sheet de emparejamiento
         if (showPairingSheet) {
             PairingBottomSheet(
                 viewModel = viewModel,
@@ -128,38 +175,77 @@ fun DashboardScreen(
 @Composable
 private fun DevicesTab(
     devices: List<ChildDevice>,
-    isLoading: Boolean,
+    listState: DeviceListUiState,
+    onDeviceClick: (String) -> Unit,
+    onLockDevice: (String) -> Unit,
+    onUnlockDevice: (String) -> Unit,
+    onRetry: () -> Unit,
+    onClearError: () -> Unit
+) {
+    when (listState) {
+        DeviceListUiState.Loading -> {
+            if (devices.isEmpty()) {
+                Box(
+                    modifier = Modifier.fillMaxSize(),
+                    contentAlignment = Alignment.Center
+                ) {
+                    CircularProgressIndicator()
+                }
+            } else {
+                // Keep previously-loaded items on screen during a refresh
+                // rather than blanking them out.
+                DeviceList(
+                    list = devices,
+                    onDeviceClick = onDeviceClick,
+                    onLockDevice = onLockDevice,
+                    onUnlockDevice = onUnlockDevice
+                )
+            }
+        }
+        DeviceListUiState.Empty -> {
+            EmptyState(
+                icon = Icons.Default.Person,
+                title = "Sin dispositivos",
+                subtitle = "Empareja un dispositivo para comenzar"
+            )
+        }
+        is DeviceListUiState.Error -> {
+            ErrorBanner(
+                message = listState.message,
+                onRetry = onRetry,
+                onDismiss = onClearError
+            )
+        }
+        is DeviceListUiState.Success -> {
+            DeviceList(
+                list = listState.items,
+                onDeviceClick = onDeviceClick,
+                onLockDevice = onLockDevice,
+                onUnlockDevice = onUnlockDevice
+            )
+        }
+    }
+}
+
+@Composable
+private fun DeviceList(
+    list: List<ChildDevice>,
     onDeviceClick: (String) -> Unit,
     onLockDevice: (String) -> Unit,
     onUnlockDevice: (String) -> Unit
 ) {
-    if (isLoading && devices.isEmpty()) {
-        Box(
-            modifier = Modifier.fillMaxSize(),
-            contentAlignment = Alignment.Center
-        ) {
-            CircularProgressIndicator()
-        }
-    } else if (devices.isEmpty()) {
-        EmptyState(
-            icon = Icons.Default.Person,
-            title = "Sin dispositivos",
-            subtitle = "Empareja un dispositivo para comenzar"
-        )
-    } else {
-        LazyColumn(
-            modifier = Modifier.fillMaxSize(),
-            contentPadding = PaddingValues(16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
-            items(devices) { device ->
-                DeviceCard(
-                    device = device,
-                    onClick = { onDeviceClick(device.id) },
-                    onLock = { onLockDevice(device.id) },
-                    onUnlock = { onUnlockDevice(device.id) }
-                )
-            }
+    LazyColumn(
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(16.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        items(list) { device ->
+            DeviceCard(
+                device = device,
+                onClick = { onDeviceClick(device.id) },
+                onLock = { onLockDevice(device.id) },
+                onUnlock = { onUnlockDevice(device.id) }
+            )
         }
     }
 }
@@ -203,7 +289,7 @@ private fun RequestsTab(
 
 @Composable
 private fun EmptyState(
-    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    icon: ImageVector,
     title: String,
     subtitle: String
 ) {
@@ -230,6 +316,62 @@ private fun EmptyState(
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.outline
             )
+        }
+    }
+}
+
+/**
+ * Inline error banner with a Retry action. Used by the Devices tab when
+ * the `get-devices-for-parent` call fails — per `parent-device-list/spec.md`
+ * "Loading and error states have dedicated UI".
+ */
+@Composable
+private fun ErrorBanner(
+    message: String,
+    onRetry: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(16.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Card(
+            colors = CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.errorContainer,
+                contentColor = MaterialTheme.colorScheme.onErrorContainer
+            )
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Default.Warning, contentDescription = null)
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        "Error cargando dispositivos",
+                        style = MaterialTheme.typography.titleMedium
+                    )
+                }
+                Text(
+                    message,
+                    style = MaterialTheme.typography.bodyMedium
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(onClick = onRetry) {
+                        Icon(Icons.Default.Refresh, contentDescription = null)
+                        Spacer(Modifier.width(4.dp))
+                        Text("Reintentar")
+                    }
+                    TextButton(onClick = onDismiss) {
+                        Text("Cerrar")
+                    }
+                }
+            }
         }
     }
 }

@@ -2,6 +2,7 @@ package com.example.parentalcontrol.data.repository
 
 import android.content.Context
 import com.example.parentalcontrol.auth.DeviceAuthManager
+import com.example.parentalcontrol.domain.model.DeviceState
 import com.example.parentalcontrol.network.SupabaseClientProvider
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.mock.MockEngine
@@ -91,6 +92,19 @@ class ParentRepositoryTest {
         private const val PAIRING_RESPONSE_BODY =
             """{"code":"ABCDEFGH","expires_at":"2026-06-04T12:10:00Z","deeplink":""" +
                 """"parentalcontrol://pair?code=ABCDEFGH"}"""
+
+        private const val DEVICES_RESPONSE_BODY = """[
+            {
+                "id":"dev-1",
+                "device_name":"Galaxy S21",
+                "device_model":"SM-G991B",
+                "os_version":"34",
+                "app_version":"1.0.0",
+                "device_state":"ACTIVE",
+                "policy_version":5,
+                "last_seen_at":"2026-06-04T12:00:00Z"
+            }
+        ]"""
     }
 
     private fun requestBodyText(req: HttpRequestData): String {
@@ -172,5 +186,64 @@ class ParentRepositoryTest {
         assertTrue("Body should contain device_name, got: $body", body.contains("\"device_name\":\"GalaxyTab\""))
         assertTrue("Body should contain age_band, got: $body", body.contains("\"age_band\":\"13-17\""))
         assertTrue("Body should contain ttl_minutes, got: $body", body.contains("\"ttl_minutes\":15"))
+    }
+
+    /**
+     * PR 2 task #12 of `wire-pairing-and-approval-end-to-end`.
+     * Replaces the SharedPreferences/hardcoded mock in [ParentRepository.getDevices]
+     * with a real HTTP call to the `get-devices-for-parent` edge function.
+     */
+    @Test
+    fun getDevices_calls_get_devices_for_parent_with_jwt() = runTest {
+        val devicesCaptured = mutableListOf<HttpRequestData>()
+        val devicesEngine = MockEngine { request ->
+            devicesCaptured.add(request)
+            respond(
+                content = ByteReadChannel(DEVICES_RESPONSE_BODY),
+                status = HttpStatusCode.OK,
+                headers = headersOf(HttpHeaders.ContentType, "application/json")
+            )
+        }
+        val devicesClient = HttpClient(devicesEngine) {
+            install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
+        }
+        every { clientProvider.httpClient } returns devicesClient
+
+        try {
+            val result = repository.getDevices()
+
+            assertTrue(
+                "Expected Result.success, got $result",
+                result.isSuccess
+            )
+            val devices = result.getOrNull()
+            assertNotNull("devices should not be null", devices)
+            assertEquals(1, devices!!.size)
+
+            val device = devices.first()
+            assertEquals("dev-1", device.id)
+            assertEquals("Galaxy S21", device.name)
+            assertEquals("SM-G991B", device.model)
+            assertEquals("1.0.0", device.appVersion)
+            assertEquals(5, device.policyVersion)
+            assertEquals(DeviceState.ACTIVE, device.state)
+            assertEquals("2026-06-04T12:00:00Z", device.lastSeenAt)
+
+            // Verify the wire request: POST /functions/v1/get-devices-for-parent with Bearer token
+            assertEquals(1, devicesCaptured.size)
+            val req = devicesCaptured.first()
+            val url = req.url.toString()
+            assertTrue(
+                "URL should contain /functions/v1/get-devices-for-parent, got $url",
+                url.contains("/functions/v1/get-devices-for-parent")
+            )
+            assertEquals("Bearer test-jwt-token", req.headers[HttpHeaders.Authorization])
+            assertEquals(
+                SupabaseClientProvider.SUPABASE_ANON_KEY,
+                req.headers["apikey"]
+            )
+        } finally {
+            devicesClient.close()
+        }
     }
 }

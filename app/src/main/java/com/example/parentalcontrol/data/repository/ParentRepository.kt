@@ -48,33 +48,43 @@ class ParentRepository @Inject constructor(
 
     /**
      * Obtiene los dispositivos hijos del padre.
-     * PR 1 keeps the existing local-mock fallback because the
-     * `get-devices-for-parent` edge function is delivered in PR 2; once
-     * PR 2 lands, this method rewrites to call the new function.
+     *
+     * PR 2 of `openspec/changes/wire-pairing-and-approval-end-to-end`
+     * replaces the local mock with a real HTTP call to the
+     * `get-devices-for-parent` edge function. The edge function uses the
+     * ANON key with the caller's JWT — the RLS policy `devices_parent_select`
+     * (`parent_id = auth.uid()`) scopes the rows. We do not need to pass
+     * `parent_id` from the client because RLS is the security boundary.
+     *
+     * Returns [Result.success] with the parsed list on a 2xx response,
+     * [Result.failure] on a non-2xx response or on any network exception
+     * (including the "not authenticated" case).
      */
-    suspend fun getDevices(): List<ChildDevice> = withContext(Dispatchers.IO) {
-        listOf(
-            ChildDevice(
-                id = "device-1",
-                name = "Galaxy S21 de Juan",
-                model = "SM-G991B",
-                appVersion = "1.0.0",
-                policyVersion = 5,
-                state = DeviceState.ACTIVE,
-                lastSeenAt = "2026-06-04T12:00:00Z",
-                isOnline = true
-            ),
-            ChildDevice(
-                id = "device-2",
-                name = "Pixel 7 de María",
-                model = "Pixel 7",
-                appVersion = "1.0.0",
-                policyVersion = 3,
-                state = DeviceState.LOCKED,
-                lastSeenAt = "2026-06-04T11:30:00Z",
-                isOnline = false
-            )
-        )
+    suspend fun getDevices(): Result<List<ChildDevice>> = withContext(Dispatchers.IO) {
+        try {
+            val token = authManager.getAccessToken()
+                ?: return@withContext Result.failure(IllegalStateException("not authenticated"))
+
+            val response = clientProvider.httpClient.post(
+                "${SupabaseClientProvider.SUPABASE_URL}/functions/v1/get-devices-for-parent"
+            ) {
+                header("Authorization", "Bearer $token")
+                header("apikey", SupabaseClientProvider.SUPABASE_ANON_KEY)
+                contentType(ContentType.Application.Json)
+                setBody("{}")
+            }
+
+            if (!response.status.isSuccess()) {
+                return@withContext Result.failure(
+                    RuntimeException("HTTP ${response.status}")
+                )
+            }
+
+            val body = json.decodeFromString<List<DeviceDto>>(response.bodyAsText())
+            Result.success(body.map { it.toChildDevice() })
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
     }
 
     /**
@@ -292,4 +302,47 @@ class ParentRepository @Inject constructor(
         val expires_at: String,
         val deeplink: String
     )
+
+    /**
+     * Wire shape returned by the `get-devices-for-parent` edge function
+     * (Supabase REST row). Mirrors the columns selected in
+     * `supabase/functions/get-devices-for-parent/index.ts`. The `device_state`
+     * column is stored as the Postgres enum (string) and maps to
+     * [DeviceState] via [toChildDevice].
+     */
+    @Serializable
+    private data class DeviceDto(
+        val id: String,
+        val device_name: String,
+        val device_model: String? = null,
+        val os_version: String? = null,
+        val app_version: String = "1.0.0",
+        val device_state: String = "ACTIVE",
+        val policy_version: Int = 1,
+        val last_seen_at: String
+    ) {
+        fun toChildDevice(): ChildDevice = ChildDevice(
+            id = id,
+            name = device_name,
+            model = device_model,
+            appVersion = app_version,
+            policyVersion = policy_version,
+            state = when (device_state.uppercase()) {
+                "LOCKED" -> DeviceState.LOCKED
+                "DOWNTIME" -> DeviceState.DOWNTIME
+                else -> DeviceState.ACTIVE
+            },
+            lastSeenAt = last_seen_at,
+            // Devices are considered "online" if their last heartbeat is
+            // within the past 5 minutes. The edge function returns the ISO
+            // timestamp from `devices.last_seen_at` (default NOW()). Use a
+            // forgiving ISO parser so a malformed value degrades to offline
+            // instead of crashing the dashboard.
+            isOnline = runCatching {
+                val instant = java.time.Instant.parse(last_seen_at)
+                val ageMs = System.currentTimeMillis() - instant.toEpochMilli()
+                ageMs in 0..(5 * 60 * 1000L)
+            }.getOrDefault(false)
+        )
+    }
 }

@@ -21,7 +21,16 @@ import javax.inject.Inject
 @HiltViewModel
 class ParentViewModel @Inject constructor(private val repository: ParentRepository) : ViewModel() {
 
-    // Estado de dispositivos
+    // Estado de dispositivos — sealed UI state for the four render branches
+    // (Loading / Success / Empty / Error). PR 2 of
+    // openspec/changes/wire-pairing-and-approval-end-to-end replaces the
+    // simple `List<ChildDevice>` flow with a typed UI state so the
+    // DashboardScreen can render loading, error, empty, and success states.
+    private val _deviceListState = MutableStateFlow<DeviceListUiState>(DeviceListUiState.Loading)
+    val deviceListState: StateFlow<DeviceListUiState> = _deviceListState.asStateFlow()
+
+    // Legacy alias — pre-PR 2 callers used `devices`. Kept so existing tests
+    // and any UI that hasn't migrated still compile.
     private val _devices = MutableStateFlow<List<ChildDevice>>(emptyList())
     val devices: StateFlow<List<ChildDevice>> = _devices.asStateFlow()
 
@@ -54,10 +63,25 @@ class ParentViewModel @Inject constructor(private val repository: ParentReposito
         viewModelScope.launch {
             _isLoading.value = true
             _error.value = null
+            _deviceListState.value = DeviceListUiState.Loading
             try {
-                _devices.value = repository.getDevices()
+                val result = repository.getDevices()
+                val list = result.getOrNull()
+                if (list != null) {
+                    _devices.value = list
+                    _deviceListState.value = if (list.isEmpty()) {
+                        DeviceListUiState.Empty
+                    } else {
+                        DeviceListUiState.Success(list)
+                    }
+                } else {
+                    val msg = result.exceptionOrNull()?.message ?: "Unknown error"
+                    _error.value = "Error cargando dispositivos: $msg"
+                    _deviceListState.value = DeviceListUiState.Error(msg)
+                }
             } catch (e: Exception) {
                 _error.value = "Error cargando dispositivos: ${e.message}"
+                _deviceListState.value = DeviceListUiState.Error(e.message ?: "Unknown error")
             } finally {
                 _isLoading.value = false
             }
@@ -194,3 +218,20 @@ data class PairingCodeResult(
     val expiresAt: String,
     val deeplink: String
 )
+
+/**
+ * Sealed UI state for the parent dashboard's device list (PR 2 of
+ * `openspec/changes/wire-pairing-and-approval-end-to-end`). The four states
+ * correspond to the four render branches in `DashboardScreen`:
+ * - [Loading]: the network call is in flight; show a centered spinner.
+ * - [Success]: the call returned a non-empty list; render `DeviceCard`s.
+ * - [Empty]: the call returned an empty list; show the "Pair a new device"
+ *   CTA (per `parent-device-list/spec.md`).
+ * - [Error]: the call failed; show the error banner with a Retry action.
+ */
+sealed interface DeviceListUiState {
+    object Loading : DeviceListUiState
+    data class Success(val items: List<ChildDevice>) : DeviceListUiState
+    object Empty : DeviceListUiState
+    data class Error(val message: String) : DeviceListUiState
+}

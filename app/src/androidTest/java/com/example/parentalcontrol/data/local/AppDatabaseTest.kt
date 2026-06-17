@@ -280,13 +280,13 @@ class AppDatabaseTest {
         val deviceId = "device-1"
 
         appPolicyDao.upsertAppPolicy(
-            AppPolicyEntity("com.game1", deviceId, "LIMITED", 60, emptyList(), "games")
+            AppPolicyEntity(deviceId, "com.game1", "LIMITED", 60, emptyList(), "games")
         )
         appPolicyDao.upsertAppPolicy(
-            AppPolicyEntity("com.game2", deviceId, "LIMITED", 60, emptyList(), "games")
+            AppPolicyEntity(deviceId, "com.game2", "LIMITED", 60, emptyList(), "games")
         )
         appPolicyDao.upsertAppPolicy(
-            AppPolicyEntity("com.social", deviceId, "ALLOWED", null, emptyList(), "social")
+            AppPolicyEntity(deviceId, "com.social", "ALLOWED", null, emptyList(), "social")
         )
 
         usageDao.upsertUsage(UsageTodayEntity("com.game1", serverDate, 20))
@@ -303,10 +303,10 @@ class AppDatabaseTest {
         val deviceId = "device-1"
 
         appPolicyDao.upsertAppPolicy(
-            AppPolicyEntity("com.game1", deviceId, "ALWAYS_ALLOWED", null, emptyList(), "games")
+            AppPolicyEntity(deviceId, "com.game1", "ALWAYS_ALLOWED", null, emptyList(), "games")
         )
         appPolicyDao.upsertAppPolicy(
-            AppPolicyEntity("com.game2", deviceId, "LIMITED", 60, emptyList(), "games")
+            AppPolicyEntity(deviceId, "com.game2", "LIMITED", 60, emptyList(), "games")
         )
 
         usageDao.upsertUsage(UsageTodayEntity("com.game1", serverDate, 100))

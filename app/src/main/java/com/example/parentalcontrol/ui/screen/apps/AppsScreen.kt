@@ -44,11 +44,14 @@ import androidx.core.graphics.drawable.toBitmapOrNull
  * PR 5 of `openspec/changes/wire-pairing-and-approval-end-to-end` (task #31,
  * `app-block-policy` spec). The list of apps comes from
  * [AppsViewModel.loadInstalledApps]; per-app toggling is handled by
- * [AppsViewModel.toggleBlock].
+ * [AppsViewModel.toggleBlock]. The screen binds [viewModel] to [deviceId]
+ * so every DAO read/write targets the right child device — see the spec
+ * scenario "AppsScreen honors the incoming device id".
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AppsScreen(
+    deviceId: String,
     viewModel: AppsViewModel,
     onBack: () -> Unit
 ) {
@@ -56,6 +59,11 @@ fun AppsScreen(
     val blocked by viewModel.blockedPackages.collectAsState()
     val isLoading by viewModel.isLoading.collectAsState()
 
+    // Bind the device id first so the device-scoped flow is queried with
+    // the right id when loadBlockedPackages() runs.
+    LaunchedEffect(deviceId) {
+        viewModel.setDeviceId(deviceId)
+    }
     LaunchedEffect(Unit) {
         viewModel.loadInstalledApps()
         viewModel.loadBlockedPackages()

@@ -128,6 +128,7 @@ fun DashboardScreen(
         }
         is NavTarget.Apps -> {
             AppsScreen(
+                deviceId = target.deviceId,
                 viewModel = appsVm,
                 onBack = { navTarget = NavTarget.DeviceDetail(target.deviceId) }
             )

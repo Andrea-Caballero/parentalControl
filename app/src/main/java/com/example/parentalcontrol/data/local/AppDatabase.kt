@@ -17,10 +17,10 @@ data class PolicyEntity(
     val category_assignments: Map<String, String>
 )
 
-@Entity(tableName = "app_policies")
+@Entity(tableName = "app_policies", primaryKeys = ["device_id", "package_name"])
 data class AppPolicyEntity(
-    @PrimaryKey val package_name: String,
     val device_id: String,
+    val package_name: String,
     val state: String,
     val daily_limit_minutes: Int?,
     val allowed_windows: List<WindowEntity>,
@@ -282,7 +282,7 @@ interface TimeRequestDao {
         TimeRequestEntity::class,
         BehavioralEventEntity::class
     ],
-    version = 5,
+    version = 6,
     exportSchema = true
 )
 @TypeConverters(Converters::class)
@@ -314,6 +314,39 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        /**
+         * Migration v5 -> v6 on the `app_policies` table.
+         *
+         * - Changes primary key from `package_name` alone to composite
+         *   `(device_id, package_name)` so the same package may have distinct
+         *   policy rows per child device.
+         * - SQLite does not support `ALTER TABLE ... DROP PRIMARY KEY`, so
+         *   the table is recreated and its rows are copied across.
+         */
+        val MIGRATION_5_6: Migration = object : Migration(5, 6) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE TABLE app_policies_new (" +
+                        "device_id TEXT NOT NULL, " +
+                        "package_name TEXT NOT NULL, " +
+                        "state TEXT NOT NULL, " +
+                        "daily_limit_minutes INTEGER, " +
+                        "allowed_windows TEXT NOT NULL, " +
+                        "category TEXT, " +
+                        "PRIMARY KEY (device_id, package_name))"
+                )
+                db.execSQL(
+                    "INSERT INTO app_policies_new (device_id, package_name, state, " +
+                        "daily_limit_minutes, allowed_windows, category) " +
+                        "SELECT device_id, package_name, state, daily_limit_minutes, " +
+                        "allowed_windows, category " +
+                        "FROM app_policies"
+                )
+                db.execSQL("DROP TABLE app_policies")
+                db.execSQL("ALTER TABLE app_policies_new RENAME TO app_policies")
+            }
+        }
+
         @Volatile
         private var INSTANCE: AppDatabase? = null
 
@@ -324,7 +357,7 @@ abstract class AppDatabase : RoomDatabase() {
                     AppDatabase::class.java,
                     DATABASE_NAME
                 )
-                    .addMigrations(MIGRATION_4_5)
+                    .addMigrations(MIGRATION_4_5, MIGRATION_5_6)
                     .build()
                 INSTANCE = instance
                 instance

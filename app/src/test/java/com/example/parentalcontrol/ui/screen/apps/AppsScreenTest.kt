@@ -23,6 +23,7 @@ import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.setMain
 import kotlinx.coroutines.withTimeout
 import org.junit.After
+import org.junit.Assert.assertEquals
 import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
@@ -68,7 +69,7 @@ class AppsScreenTest {
 
         appPolicyDao = mockk(relaxed = false)
         policiesFlow = MutableStateFlow(emptyList())
-        every { appPolicyDao.getAllAppPoliciesFlow() } returns policiesFlow
+        every { appPolicyDao.getAppPoliciesForDeviceFlow("dev-A") } returns policiesFlow
         coEvery { appPolicyDao.upsertAppPolicy(any()) } returns Unit
 
         viewModel = AppsViewModel(context, appPolicyDao)
@@ -104,6 +105,40 @@ class AppsScreenTest {
         every { packageManager.queryIntentActivities(any<Intent>(), any<Int>()) } returns apps
     }
 
+    /**
+     * `AppsScreen` MUST bind the ViewModel to the supplied `deviceId` so
+     * that the device-scoped DAO query and every `toggleBlock` write
+     * target the right child device. Regression coverage for the
+     * `app-block-policy` spec scenario "AppsScreen honors the incoming
+     * device id".
+     */
+    @Test
+    fun apps_screen_binds_device_id_to_viewmodel() = runBlocking {
+        val customDeviceId = "child-tablet-9"
+        val customFlow = MutableStateFlow<List<AppPolicyEntity>>(emptyList())
+        val customDao = mockk<AppPolicyDao>(relaxed = false)
+        every { customDao.getAppPoliciesForDeviceFlow(customDeviceId) } returns customFlow
+        coEvery { customDao.upsertAppPolicy(any()) } returns Unit
+        val screenVm = AppsViewModel(context, customDao)
+
+        composeTestRule.setContent {
+            ParentalControlTheme {
+                AppsScreen(
+                    deviceId = customDeviceId,
+                    viewModel = screenVm,
+                    onBack = {}
+                )
+            }
+        }
+        composeTestRule.waitForIdle()
+
+        assertEquals(
+            "AppsScreen must bind the supplied deviceId onto its ViewModel",
+            customDeviceId,
+            screenVm.deviceId()
+        )
+    }
+
     @Test
     fun apps_screen_shows_list_of_apps() {
         runBlocking {
@@ -118,6 +153,7 @@ class AppsScreenTest {
             composeTestRule.setContent {
                 ParentalControlTheme {
                     AppsScreen(
+                        deviceId = "dev-A",
                         viewModel = viewModel,
                         onBack = {}
                     )
@@ -151,6 +187,7 @@ class AppsScreenTest {
             composeTestRule.setContent {
                 ParentalControlTheme {
                     AppsScreen(
+                        deviceId = "dev-A",
                         viewModel = viewModel,
                         onBack = {}
                     )

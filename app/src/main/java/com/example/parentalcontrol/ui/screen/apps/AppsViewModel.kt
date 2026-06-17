@@ -24,12 +24,13 @@ import javax.inject.Inject
  * installed on the reference device and toggle a per-app `app_policies`
  * row between `ALLOWED` and `BLOCKED`.
  *
- * NOTE on per-device isolation: the spec defines the data model as
- * `(device_id, package_name)` keyed. Today the [AppPolicyDao.upsertAppPolicy]
- * upserts on `package_name` alone with `OnConflictStrategy.REPLACE`, and the
- * design uses `"default"` as a placeholder device id. The per-device
- * enforcement is a follow-up — see task #30 step 3 of
- * `openspec/changes/wire-pairing-and-approval-end-to-end/tasks.md`.
+ * The ViewModel is scoped to a single [deviceId] (set by the caller via
+ * [setDeviceId] — typically `DeviceDetailScreen` when the parent taps
+ * "Add to block list"). All DAO reads and writes use this device id, so
+ * toggling an app for one child never affects another child's policy for
+ * the same package. We use a setter (rather than a constructor parameter)
+ * because Hilt's `@HiltViewModel` graph can't inject a per-screen `String`
+ * value without assisted-injection boilerplate.
  */
 @HiltViewModel
 class AppsViewModel @Inject constructor(
@@ -45,6 +46,29 @@ class AppsViewModel @Inject constructor(
 
     private val _isLoading = MutableStateFlow(false)
     val isLoading: StateFlow<Boolean> = _isLoading.asStateFlow()
+
+    /**
+     * Device id this ViewModel is scoped to. Starts as [UNKNOWN_DEVICE_ID]
+     * because Hilt injects the VM before the screen knows which device
+     * the parent is currently viewing. The screen MUST call [setDeviceId]
+     * before [loadBlockedPackages] / [toggleBlock] to make every DAO call
+     * device-scoped.
+     */
+    private var deviceId: String = UNKNOWN_DEVICE_ID
+
+    /** Returns the device id this ViewModel is currently scoped to. */
+    fun deviceId(): String = deviceId
+
+    /**
+     * Binds this ViewModel to a specific child [id]. Idempotent: callers
+     * may invoke this every recomposition. The screen must call this
+     * before [loadBlockedPackages] so the device-scoped flow is queried
+     * with the right id.
+     */
+    fun setDeviceId(id: String) {
+        if (id == deviceId) return
+        deviceId = id
+    }
 
     /**
      * Reads every launchable activity from [Context.getPackageManager] and
@@ -73,13 +97,14 @@ class AppsViewModel @Inject constructor(
     }
 
     /**
-     * Observes [AppPolicyDao.getAllAppPoliciesFlow] and exposes the set of
-     * package names whose `state = "BLOCKED"`. Refreshes automatically when
-     * the DAO emits.
+     * Observes [AppPolicyDao.getAppPoliciesForDeviceFlow] for this ViewModel's
+     * [deviceId] and exposes the set of package names whose `state = "BLOCKED"`.
+     * Refreshes automatically when the DAO emits. Per-device scoping
+     * guarantees that policies for sibling devices never leak into this UI.
      */
     fun loadBlockedPackages() {
         viewModelScope.launch(Dispatchers.IO) {
-            appPolicyDao.getAllAppPoliciesFlow().collectLatest { policies ->
+            appPolicyDao.getAppPoliciesForDeviceFlow(deviceId).collectLatest { policies ->
                 _blockedPackages.value = policies
                     .filter { it.state == "BLOCKED" }
                     .map { it.package_name }
@@ -89,11 +114,10 @@ class AppsViewModel @Inject constructor(
     }
 
     /**
-     * Toggles the block state for [packageName]. Performs an optimistic
-     * update on [_blockedPackages] and persists via [appPolicyDao.upsertAppPolicy].
-     * Rolls the optimistic update back if the DAO throws.
-     *
-     * Uses `"default"` as the device_id placeholder — see class-level kdoc.
+     * Toggles the block state for [packageName] on this ViewModel's
+     * [deviceId]. Performs an optimistic update on [_blockedPackages] and
+     * persists via [appPolicyDao.upsertAppPolicy]. Rolls the optimistic
+     * update back if the DAO throws.
      */
     fun toggleBlock(packageName: String, block: Boolean) {
         val previous = _blockedPackages.value
@@ -104,8 +128,8 @@ class AppsViewModel @Inject constructor(
             try {
                 appPolicyDao.upsertAppPolicy(
                     AppPolicyEntity(
+                        device_id = deviceId,
                         package_name = packageName,
-                        device_id = DEFAULT_DEVICE_ID,
                         state = if (block) "BLOCKED" else "ALLOWED",
                         daily_limit_minutes = null,
                         allowed_windows = emptyList(),
@@ -121,10 +145,13 @@ class AppsViewModel @Inject constructor(
 
     companion object {
         /**
-         * Placeholder device id used until the per-device key on
-         * [AppPolicyEntity] lands — see class-level kdoc.
+         * Sentinel value used by Hilt's default `AppsViewModel` factory
+         * when no explicit device id is provided by the caller. The screen
+         * MUST call [setDeviceId] with the real device id from
+         * [com.example.parentalcontrol.ui.parent.screens.DashboardScreen]'s
+         * `NavTarget.Apps(deviceId)` before reading or writing policies.
          */
-        const val DEFAULT_DEVICE_ID: String = "default"
+        const val UNKNOWN_DEVICE_ID: String = "unknown"
     }
 }
 

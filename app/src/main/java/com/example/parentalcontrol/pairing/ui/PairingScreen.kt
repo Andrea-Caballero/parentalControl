@@ -45,9 +45,18 @@ import java.util.concurrent.Executors
 fun PairingScreen(
     viewModel: PairingViewModel,
     onPairingComplete: () -> Unit,
-    onCancel: () -> Unit
+    onCancel: () -> Unit,
+    prefilledCode: String? = null
 ) {
     val uiState by viewModel.uiState.collectAsState()
+
+    // Pre-fill the manual entry text field from a deeplink, and auto-advance
+    // to the manual-entry state. Triggered once per `prefilledCode` value.
+    LaunchedEffect(prefilledCode) {
+        val code = prefilledCode?.takeIf { it.isNotBlank() } ?: return@LaunchedEffect
+        viewModel.updateManualCode(code)
+        viewModel.startManualPairing()
+    }
     
     LaunchedEffect(Unit) {
         viewModel.navigationEvents.collect { event ->

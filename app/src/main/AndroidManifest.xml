@@ -40,6 +40,18 @@
         <category android:name="android.intent.category.LAUNCHER" />
       </intent-filter>
 
+      <!-- PR 1: deeplink for child-side pairing — `parentalcontrol://pair?code=…` -->
+      <intent-filter>
+        <action android:name="android.intent.action.VIEW" />
+
+        <category android:name="android.intent.category.DEFAULT" />
+        <category android:name="android.intent.category.BROWSABLE" />
+
+        <data
+            android:scheme="parentalcontrol"
+            android:host="pair" />
+      </intent-filter>
+
     </activity>
 
       <service

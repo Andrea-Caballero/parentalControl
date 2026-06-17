@@ -1,5 +1,6 @@
 package com.example.parentalcontrol.ui.parent.components
 
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
@@ -7,12 +8,14 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.example.parentalcontrol.domain.model.ChildDevice
 import com.example.parentalcontrol.domain.model.DeviceState
 import com.example.parentalcontrol.domain.model.TimeRequest
 import com.example.parentalcontrol.viewmodel.ParentViewModel
+import io.github.alexzhirkevich.qrose.rememberQrCodePainter
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -357,14 +360,15 @@ fun RequestCard(
 @Composable
 fun PairingBottomSheet(
     viewModel: ParentViewModel,
-    onDismiss: () -> Unit
+    onDismiss: () -> Unit,
+    initialStep: Int = 1
 ) {
     val pairingCode by viewModel.pairingCode.collectAsState()
     val isLoading by viewModel.isLoading.collectAsState()
 
     var deviceName by remember { mutableStateOf("") }
     var selectedAgeBand by remember { mutableStateOf("7-12") }
-    var step by remember { mutableIntStateOf(1) }
+    var step by remember { mutableIntStateOf(initialStep) }
 
     val ageBands = listOf(
         "0-6" to "0-6 años",
@@ -477,11 +481,13 @@ fun PairingBottomSheet(
                                 modifier = Modifier.padding(16.dp),
                                 horizontalAlignment = Alignment.CenterHorizontally
                             ) {
-                                Icon(
-                                    Icons.Default.Person,
-                                    contentDescription = null,
-                                    modifier = Modifier.size(100.dp),
-                                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                val qrPainter = rememberQrCodePainter(data = code.deeplink)
+                                Image(
+                                    painter = qrPainter,
+                                    contentDescription = "Pairing QR",
+                                    modifier = Modifier
+                                        .size(240.dp)
+                                        .testTag("pairing_qr")
                                 )
                                 Spacer(modifier = Modifier.height(8.dp))
                                 Text(

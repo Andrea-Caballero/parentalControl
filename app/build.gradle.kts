@@ -54,6 +54,13 @@ android {
             isMinifyEnabled = false
         }
     }
+
+    testOptions {
+        unitTests {
+            isReturnDefaultValues = true
+            isIncludeAndroidResources = true
+        }
+    }
 }
 
 ksp {
@@ -75,6 +82,13 @@ dependencies {
     implementation(libs.compose.material3)
     implementation(libs.compose.ui.tooling.preview)
     debugImplementation(libs.compose.ui.tooling)
+
+    // QR
+    implementation(libs.qrcode) {
+        // qrose:1.0.0 pulls both qrose-core-android and qrose-android transitively;
+        // exclude the core variant — qrose-android already bundles it.
+        exclude(group = "io.github.alexzhirkevich", module = "qrose-core-android")
+    }
 
     // Navigation
     implementation(libs.navigation.compose)
@@ -136,6 +150,7 @@ dependencies {
     testImplementation(libs.room.testing)
     testImplementation(libs.work.testing)
     testImplementation(libs.ktor.client.mock)
+    testImplementation(libs.compose.ui.test.junit4)
     androidTestImplementation(libs.ktor.client.mock)
     androidTestImplementation(libs.androidx.test.core)
     androidTestImplementation(libs.androidx.test.runner)

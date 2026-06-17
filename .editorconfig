@@ -55,6 +55,7 @@ insert_final_newline = false
 
 [*.{kt,kts}]
 ktlint_standard_imports_layout = disabled
+ktlint_standard_import-ordering = disabled
 
 [*.{kt,kts}]
 ij_kotlin_packages_to_use_import_on_demand = unset

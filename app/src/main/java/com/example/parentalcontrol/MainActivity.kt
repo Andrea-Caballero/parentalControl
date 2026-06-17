@@ -1,5 +1,6 @@
 package com.example.parentalcontrol
 
+import android.content.Intent
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -23,9 +24,17 @@ import dagger.hilt.android.AndroidEntryPoint
 @AndroidEntryPoint
 class MainActivity : ComponentActivity() {
 
+    /**
+     * Hoisted state for the deeplink-prefilled pairing code. Updated by
+     * [handlePairingDeeplink] from `onCreate` and `onNewIntent`; consumed by
+     * the `PairingScreen` composable via the `prefilledCode` parameter.
+     */
+    private val prefilledPairingCode = mutableStateOf<String?>(null)
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        handlePairingDeeplink(intent)
 
         val authManager = DeviceAuthManager.getInstance(this)
         val isPaired = authManager.isPaired()
@@ -52,7 +61,8 @@ class MainActivity : ComponentActivity() {
                                 PairingScreen(
                                     viewModel = pairingViewModel,
                                     onPairingComplete = { restartActivity() },
-                                    onCancel = { selectedMode = null }
+                                    onCancel = { selectedMode = null },
+                                    prefilledCode = prefilledPairingCode.value
                                 )
                             }
                             null -> {
@@ -97,6 +107,23 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        handlePairingDeeplink(intent)
+    }
+
+    /**
+     * Extracts the `code` query parameter from a `parentalcontrol://pair?code=…`
+     * intent and stashes it in [prefilledPairingCode] for [PairingScreen] to
+     * pick up. No-op for intents that don't match the deeplink shape.
+     */
+    private fun handlePairingDeeplink(intent: Intent?) {
+        if (intent?.action != Intent.ACTION_VIEW) return
+        val data = intent.data ?: return
+        if (data.scheme != "parentalcontrol" || data.host != "pair") return
+        prefilledPairingCode.value = data.getQueryParameter("code")
     }
 
     private fun restartActivity() {

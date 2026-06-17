@@ -3,12 +3,15 @@ package com.example.parentalcontrol.pairing
 import android.content.Context
 import android.os.Build
 import android.util.Log
-import com.example.parentalcontrol.auth.DeviceAuthManager
 import com.example.parentalcontrol.auth.AuthResult
+import com.example.parentalcontrol.auth.DeviceAuthManager
 import com.example.parentalcontrol.network.SupabaseClientProvider
-import io.ktor.client.request.*
-import io.ktor.client.statement.*
-import io.ktor.http.*
+import io.ktor.client.request.header
+import io.ktor.client.request.post
+import io.ktor.client.request.setBody
+import io.ktor.client.statement.bodyAsText
+import io.ktor.http.ContentType
+import io.ktor.http.contentType
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -46,65 +49,56 @@ class PairingManager private constructor(
     private val clientProvider = SupabaseClientProvider.getInstance(context)
 
     /**
+     * Visible for testing: lets the test inject a stub [DeviceInfo] provider
+     * to avoid the JVM `Build.MODEL` null issue without touching production
+     * behavior. Default uses [getDeviceInfo].
+     */
+    @JvmField
+    var deviceInfoProvider: () -> DeviceInfo = ::getDeviceInfo
+
+    /**
      * Empareja el dispositivo con el código proporcionado.
-     * 
+     *
+     * Posts to `${SUPABASE_URL}/functions/v1/pairing` with the bearer token +
+     * apikey header and the JSON body built by [buildPairingRequest]. The
+     * server returns `{ device_id, parent_id }` on success; the existing
+     * [parsePairingResponse] handles 200/404/409/410/etc.
+     *
      * @param code Código de emparejamiento (QR o manual)
      * @return Resultado del emparejamiento
      */
     suspend fun pairWithCode(code: String): PairingResult {
         return withContext(Dispatchers.IO) {
             Log.d(TAG, "Intentando emparejar con código: ${code.take(4)}...")
-            
-            // MODO MOCK PARA PRUEBAS LOCALES
-            // En producción, esto llamaría al backend de Supabase
+
+            val token = authManager.getAccessToken()
+            if (token == null) {
+                return@withContext PairingResult.Error(
+                    PairingErrorType.SESSION_ERROR,
+                    "No autenticado"
+                )
+            }
+
             try {
-                // Generar IDs simulados para el emparejamiento local
-                val mockDeviceId = "child-device-${System.currentTimeMillis()}"
-                val mockParentId = "parent-${code.uppercase()}"
-                
-                // Guardar sesión de emparejamiento
-                authManager.savePairedSession(mockDeviceId, mockParentId)
-                
-                // Guardar dispositivo emparejado en almacenamiento del padre (mock)
-                // En producción, el backend guardaría esto
-                savePairedDeviceToParentStorage(code, mockDeviceId, mockParentId)
-                
-                Log.d(TAG, "Emparejamiento local exitoso con código: $code")
-                PairingResult.Success(mockDeviceId, mockParentId)
-                
+                val deviceInfo = deviceInfoProvider()
+                val requestBody = buildPairingRequest(code, deviceInfo)
+                val response = clientProvider.httpClient.post(
+                    "${SupabaseClientProvider.SUPABASE_URL}/functions/v1/pairing"
+                ) {
+                    header("Authorization", "Bearer $token")
+                    header("apikey", SupabaseClientProvider.SUPABASE_ANON_KEY)
+                    contentType(ContentType.Application.Json)
+                    setBody(requestBody)
+                }
+                parsePairingResponse(response.status.value, response.bodyAsText())
             } catch (e: Exception) {
-                Log.e(TAG, "Error en emparejamiento local: ${e.message}")
+                Log.e(TAG, "Error en emparejamiento: ${e.message}")
                 PairingResult.Error(
                     PairingErrorType.NETWORK_ERROR,
-                    "Error de conexión: ${e.message}"
+                    e.message ?: "Error de red"
                 )
             }
         }
-    }
-    
-    private fun savePairedDeviceToParentStorage(code: String, deviceId: String, parentId: String) {
-        // Este es un mock: guarda el dispositivo emparejado en SharedPreferences
-        // que el padre puede leer. En producción, el backend manejaría esto.
-        val prefs = context.getSharedPreferences("parent_paired_devices", Context.MODE_PRIVATE)
-        val devicesJson = prefs.getString("devices", "[]")
-        
-        // Agregar nuevo dispositivo a la lista
-        val devices = org.json.JSONArray(devicesJson)
-        val newDevice = org.json.JSONObject().apply {
-            put("id", deviceId)
-            put("name", "Dispositivo emparejado")
-            put("model", android.os.Build.MODEL)
-            put("appVersion", "1.0.0")
-            put("policyVersion", 1)
-            put("state", "ACTIVE")
-            put("lastSeenAt", java.time.Instant.now().toString())
-            put("isOnline", true)
-            put("pairingCode", code)
-        }
-        devices.put(newDevice)
-        
-        prefs.edit().putString("devices", devices.toString()).apply()
-        Log.d(TAG, "Dispositivo guardado para el padre: $deviceId")
     }
 
     /**

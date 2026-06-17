@@ -2,8 +2,10 @@ package com.example.parentalcontrol.di
 
 import android.content.Context
 import androidx.room.Room
+import com.example.parentalcontrol.auth.DeviceAuthManager
 import com.example.parentalcontrol.data.local.AppDatabase
 import com.example.parentalcontrol.health.HealthMonitor
+import com.example.parentalcontrol.network.SupabaseClientProvider
 import com.example.parentalcontrol.sync.SyncManager
 import com.example.parentalcontrol.time.DefaultTimeProvider
 import com.example.parentalcontrol.time.TimeProvider
@@ -41,4 +43,14 @@ object AppModule {
     @Singleton
     fun provideHealthMonitor(@ApplicationContext context: Context): HealthMonitor =
         HealthMonitor.getInstance(context)
+
+    @Provides
+    @Singleton
+    fun provideDeviceAuthManager(@ApplicationContext context: Context): DeviceAuthManager =
+        DeviceAuthManager.getInstance(context)
+
+    @Provides
+    @Singleton
+    fun provideSupabaseClientProvider(@ApplicationContext context: Context): SupabaseClientProvider =
+        SupabaseClientProvider.getInstance(context)
 }

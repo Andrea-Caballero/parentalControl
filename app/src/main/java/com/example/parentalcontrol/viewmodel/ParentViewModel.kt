@@ -19,9 +19,7 @@ import javax.inject.Inject
  * TODO: Agregar @HiltViewModel cuando Hilt esté configurado.
  */
 @HiltViewModel
-class ParentViewModel @Inject constructor() : ViewModel() {
-
-    private val repository = ParentRepository()
+class ParentViewModel @Inject constructor(private val repository: ParentRepository) : ViewModel() {
 
     // Estado de dispositivos
     private val _devices = MutableStateFlow<List<ChildDevice>>(emptyList())
@@ -119,7 +117,11 @@ class ParentViewModel @Inject constructor() : ViewModel() {
         viewModelScope.launch {
             _isLoading.value = true
             try {
-                _pairingCode.value = repository.createPairingCode(deviceName, ageBand, ttlMinutes)
+                val result = repository.createPairingCode(deviceName, ageBand, ttlMinutes)
+                _pairingCode.value = result.getOrNull()
+                if (result.isFailure) {
+                    _error.value = "Error creando código: ${result.exceptionOrNull()?.message}"
+                }
             } catch (e: Exception) {
                 _error.value = "Error creando código: ${e.message}"
             } finally {

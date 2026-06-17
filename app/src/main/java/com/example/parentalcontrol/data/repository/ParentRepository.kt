@@ -1,29 +1,58 @@
 package com.example.parentalcontrol.data.repository
 
-import com.example.parentalcontrol.domain.model.*
+import android.content.Context
+import com.example.parentalcontrol.auth.DeviceAuthManager
+import com.example.parentalcontrol.domain.model.ApprovalResult
+import com.example.parentalcontrol.domain.model.ChildDevice
+import com.example.parentalcontrol.domain.model.DeviceHealth
+import com.example.parentalcontrol.domain.model.DeviceState
+import com.example.parentalcontrol.domain.model.PolicyTemplate
+import com.example.parentalcontrol.domain.model.TimeRequest
+import com.example.parentalcontrol.network.SupabaseClientProvider
 import com.example.parentalcontrol.viewmodel.PairingCodeResult
+import dagger.hilt.android.qualifiers.ApplicationContext
+import io.ktor.client.request.header
+import io.ktor.client.request.post
+import io.ktor.client.request.setBody
+import io.ktor.client.statement.bodyAsText
+import io.ktor.http.ContentType
+import io.ktor.http.contentType
+import io.ktor.http.isSuccess
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.Json
+import javax.inject.Inject
+import javax.inject.Singleton
 
 /**
  * Repositorio para operaciones del padre.
  * Conecta con las Edge Functions de Supabase (T15).
- * 
- * TODO: Integrar con Supabase client real cuando esté configurado.
+ *
+ * Wired as a Hilt singleton so tests can swap a fake `KtorClient` via the
+ * [SupabaseClientProvider] binding. PR 1 of
+ * openspec/changes/wire-pairing-and-approval-end-to-end replaced the local
+ * mock fallbacks with real HTTP calls to the Supabase edge functions.
  */
-class ParentRepository {
+@Singleton
+class ParentRepository @Inject constructor(
+    @ApplicationContext private val context: Context,
+    private val authManager: DeviceAuthManager,
+    private val clientProvider: SupabaseClientProvider
+) {
+
+    private val json = Json {
+        ignoreUnknownKeys = true
+        isLenient = true
+    }
 
     /**
      * Obtiene los dispositivos hijos del padre.
+     * PR 1 keeps the existing local-mock fallback because the
+     * `get-devices-for-parent` edge function is delivered in PR 2; once
+     * PR 2 lands, this method rewrites to call the new function.
      */
     suspend fun getDevices(): List<ChildDevice> = withContext(Dispatchers.IO) {
-        // Primero intentar leer dispositivos emparejados localmente (mock)
-        val localDevices = getLocalPairedDevices()
-        if (localDevices.isNotEmpty()) {
-            return@withContext localDevices
-        }
-        
-        // Si no hay locales, usar datos mock para demo
         listOf(
             ChildDevice(
                 id = "device-1",
@@ -47,37 +76,6 @@ class ParentRepository {
             )
         )
     }
-    
-    private fun getLocalPairedDevices(): List<ChildDevice> {
-        return try {
-            val prefs = android.content.Context::class.java.getMethod(
-                "getSharedPreferences", String::class.java, Int::class.java
-            ).invoke(null, "parent_paired_devices", android.content.Context.MODE_PRIVATE) as android.content.SharedPreferences
-            
-            val devicesJson = prefs.getString("devices", "[]") ?: "[]"
-            val devices = org.json.JSONArray(devicesJson)
-            val result = mutableListOf<ChildDevice>()
-            
-            for (i in 0 until devices.length()) {
-                val obj = devices.getJSONObject(i)
-                result.add(
-                    ChildDevice(
-                        id = obj.getString("id"),
-                        name = obj.optString("name", "Dispositivo sin nombre"),
-                        model = obj.optString("model", ""),
-                        appVersion = obj.optString("appVersion", "1.0.0"),
-                        policyVersion = obj.optLong("policyVersion", 1).toInt(),
-                        state = try { DeviceState.valueOf(obj.optString("state", "ACTIVE")) } catch (e: Exception) { DeviceState.ACTIVE },
-                        lastSeenAt = obj.optString("lastSeenAt", ""),
-                        isOnline = obj.optBoolean("isOnline", false)
-                    )
-                )
-            }
-            result
-        } catch (e: Exception) {
-            emptyList()
-        }
-    }
 
     /**
      * Obtiene solicitudes pendientes de tiempo.
@@ -93,7 +91,7 @@ class ParentRepository {
                 appName = "Instagram",
                 minutesRequested = 30,
                 reason = "Quiero ver las historias de mis amigos",
-                status = RequestStatus.PENDING,
+                status = com.example.parentalcontrol.domain.model.RequestStatus.PENDING,
                 createdAt = "2026-06-04T11:45:00Z"
             ),
             TimeRequest(
@@ -102,7 +100,7 @@ class ParentRepository {
                 deviceName = "Pixel 7 de María",
                 minutesRequested = 15,
                 reason = "Terminé la tarea",
-                status = RequestStatus.PENDING,
+                status = com.example.parentalcontrol.domain.model.RequestStatus.PENDING,
                 createdAt = "2026-06-04T11:50:00Z"
             )
         )
@@ -164,44 +162,49 @@ class ParentRepository {
 
     /**
      * Crea código de emparejamiento.
+     *
+     * Posts to `${SUPABASE_URL}/functions/v1/create-pairing-code` with the
+     * parent's bearer token + apikey header. The server generates the 8-char
+     * code and returns `{ code, expires_at, deeplink }` per the spec at
+     * `openspec/changes/wire-pairing-and-approval-end-to-end/specs/pairing-flow/spec.md`.
      */
     suspend fun createPairingCode(
         deviceName: String,
         ageBand: String,
         ttlMinutes: Int
-    ): PairingCodeResult = withContext(Dispatchers.IO) {
-        val code = generateCode()
-        
-        // Guardar dispositivo pendiente para que aparezca en la lista del padre
-        savePendingDevice(code, deviceName, ageBand)
-        
-        PairingCodeResult(
-            code = code,
-            expiresAt = "2026-06-04T12:10:00Z",
-            deeplink = "parentalcontrol://pair?code=$code"
-        )
-    }
-    
-    private fun savePendingDevice(code: String, deviceName: String, ageBand: String) {
-        val prefs = android.app.Application().getSharedPreferences("parent_paired_devices", android.content.Context.MODE_PRIVATE)
-        val devicesJson = prefs.getString("devices", "[]") ?: "[]"
-        val devices = org.json.JSONArray(devicesJson)
-        
-        val newDevice = org.json.JSONObject().apply {
-            put("id", "pending-$code")
-            put("name", deviceName.ifBlank { "Dispositivo nuevo" })
-            put("model", android.os.Build.MODEL)
-            put("appVersion", "1.0.0")
-            put("policyVersion", 1)
-            put("state", "PENDING")
-            put("lastSeenAt", java.time.Instant.now().toString())
-            put("isOnline", false)
-            put("pairingCode", code)
-            put("ageBand", ageBand)
+    ): Result<PairingCodeResult> = withContext(Dispatchers.IO) {
+        try {
+            val token = authManager.getAccessToken()
+                ?: return@withContext Result.failure(IllegalStateException("not authenticated"))
+
+            val response = clientProvider.httpClient.post(
+                "${SupabaseClientProvider.SUPABASE_URL}/functions/v1/create-pairing-code"
+            ) {
+                header("Authorization", "Bearer $token")
+                header("apikey", SupabaseClientProvider.SUPABASE_ANON_KEY)
+                contentType(ContentType.Application.Json)
+                setBody(
+                    "{\"device_name\":\"$deviceName\",\"age_band\":\"$ageBand\",\"ttl_minutes\":$ttlMinutes}"
+                )
+            }
+
+            if (!response.status.isSuccess()) {
+                return@withContext Result.failure(
+                    RuntimeException("HTTP ${response.status}")
+                )
+            }
+
+            val body = json.decodeFromString<PairingCodeDto>(response.bodyAsText())
+            Result.success(
+                PairingCodeResult(
+                    code = body.code,
+                    expiresAt = body.expires_at,
+                    deeplink = body.deeplink
+                )
+            )
+        } catch (e: Exception) {
+            Result.failure(e)
         }
-        devices.put(newDevice)
-        
-        prefs.edit().putString("devices", devices.toString()).apply()
     }
 
     /**
@@ -241,10 +244,13 @@ class ParentRepository {
     /**
      * Obtiene estadísticas de uso de un dispositivo.
      */
-    suspend fun getUsageStats(deviceId: String, date: String): List<UsageStats> =
+    suspend fun getUsageStats(
+        deviceId: String,
+        date: String
+    ): List<com.example.parentalcontrol.domain.model.UsageStats> =
         withContext(Dispatchers.IO) {
             listOf(
-                UsageStats(
+                com.example.parentalcontrol.domain.model.UsageStats(
                     deviceId = deviceId,
                     packageName = "com.instagram.android",
                     appName = "Instagram",
@@ -253,7 +259,7 @@ class ParentRepository {
                     limitMinutes = 60,
                     remainingMinutes = 15
                 ),
-                UsageStats(
+                com.example.parentalcontrol.domain.model.UsageStats(
                     deviceId = deviceId,
                     packageName = "com.whatsapp",
                     appName = "WhatsApp",
@@ -280,8 +286,10 @@ class ParentRepository {
             )
         }
 
-    private fun generateCode(): String {
-        val chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
-        return (1..8).map { chars.random() }.joinToString("")
-    }
+    @Serializable
+    private data class PairingCodeDto(
+        val code: String,
+        val expires_at: String,
+        val deeplink: String
+    )
 }

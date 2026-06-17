@@ -4,6 +4,7 @@ ksp = "2.0.21-1.0.28"
 compose-bom = "2024.10.01"
 navigation = "2.8.0"
 kotlinx-coroutines = "1.7.3"
+qrose = "1.0.0"
 
 [plugins]
 android-application = { id = "com.android.application", version = "8.5.2" }
@@ -33,6 +34,9 @@ navigation-compose = { module = "androidx.navigation:navigation-compose", versio
 
 compose-ui-tooling-preview = { module = "androidx.compose.ui:ui-tooling-preview" }
 compose-ui-tooling = { module = "androidx.compose.ui:ui-tooling" }
+
+# QR
+qrcode = { module = "io.github.alexzhirkevich:qrose", version.ref = "qrose" }
 
 
 # Datos

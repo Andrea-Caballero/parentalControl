@@ -55,6 +55,8 @@ import com.example.parentalcontrol.domain.model.TimeRequest
 import com.example.parentalcontrol.ui.parent.components.DeviceCard
 import com.example.parentalcontrol.ui.parent.components.PairingBottomSheet
 import com.example.parentalcontrol.ui.parent.components.RequestCard
+import com.example.parentalcontrol.ui.screen.apps.AppsScreen
+import com.example.parentalcontrol.ui.screen.apps.AppsViewModel
 import com.example.parentalcontrol.viewmodel.DeviceListUiState
 import com.example.parentalcontrol.viewmodel.ParentViewModel
 
@@ -67,11 +69,17 @@ import com.example.parentalcontrol.viewmodel.ParentViewModel
  * (`Loading` / `Success` / `Empty` / `Error`) so the dashboard can render
  * a retry banner when the `get-devices-for-parent` call fails and an
  * empty-state CTA when no devices are paired.
+ *
+ * PR 5 adds an inline navigation state machine: tapping a device opens
+ * [DeviceDetailScreen]; the Policy tab's "Add to block list" button opens
+ * [AppsScreen] pre-scoped to the originating `deviceId`. The state is a
+ * simple stack so back-navigation returns to the previous screen.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun DashboardScreen(
     viewModel: ParentViewModel,
+    appsViewModel: AppsViewModel? = null,
     onNavigateToDevice: (String) -> Unit = {},
     onNavigateToRequests: () -> Unit = {}
 ) {
@@ -84,6 +92,78 @@ fun DashboardScreen(
     var showPairingSheet by remember { mutableStateOf(false) }
     var selectedTab by remember { mutableIntStateOf(0) }
 
+    // PR 5 navigation state machine. The three screens are the Devices/Requests
+    // tabs, [DeviceDetailScreen], and [AppsScreen].
+    var navTarget by remember { mutableStateOf<NavTarget>(NavTarget.Dashboard) }
+
+    val appsVm: AppsViewModel = appsViewModel
+        ?: error("DashboardScreen requires `appsViewModel` to be provided by the caller (Hilt @HiltViewModel).")
+
+    when (val target = navTarget) {
+        is NavTarget.Dashboard -> {
+            DashboardScaffold(
+                viewModel = viewModel,
+                devices = devices,
+                deviceListState = deviceListState,
+                pendingRequests = pendingRequests,
+                isLoading = isLoading,
+                error = error,
+                selectedTab = selectedTab,
+                showPairingSheet = showPairingSheet,
+                onSelectTab = { selectedTab = it },
+                onShowPairingSheet = { showPairingSheet = true },
+                onDismissPairingSheet = { showPairingSheet = false },
+                onNavigateToDevice = { id -> navTarget = NavTarget.DeviceDetail(id) },
+                onNavigateToRequests = onNavigateToRequests,
+                onClearError = { viewModel.clearError() }
+            )
+        }
+        is NavTarget.DeviceDetail -> {
+            DeviceDetailScreen(
+                deviceId = target.deviceId,
+                viewModel = viewModel,
+                onNavigateBack = { navTarget = NavTarget.Dashboard },
+                onNavigateToApps = { id -> navTarget = NavTarget.Apps(id) }
+            )
+        }
+        is NavTarget.Apps -> {
+            AppsScreen(
+                viewModel = appsVm,
+                onBack = { navTarget = NavTarget.DeviceDetail(target.deviceId) }
+            )
+        }
+    }
+}
+
+/**
+ * Internal navigation targets for the parent screens — replaces the
+ * standalone `NavController`/`NavHost` until a proper Navigation graph
+ * lands. Stays trivial: each target knows how to render itself.
+ */
+private sealed class NavTarget {
+    data object Dashboard : NavTarget()
+    data class DeviceDetail(val deviceId: String) : NavTarget()
+    data class Apps(val deviceId: String) : NavTarget()
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun DashboardScaffold(
+    viewModel: ParentViewModel,
+    devices: List<ChildDevice>,
+    deviceListState: DeviceListUiState,
+    pendingRequests: List<TimeRequest>,
+    isLoading: Boolean,
+    error: String?,
+    selectedTab: Int,
+    showPairingSheet: Boolean,
+    onSelectTab: (Int) -> Unit,
+    onShowPairingSheet: () -> Unit,
+    onDismissPairingSheet: () -> Unit,
+    onNavigateToDevice: (String) -> Unit,
+    onNavigateToRequests: () -> Unit,
+    onClearError: () -> Unit
+) {
     Scaffold(
         topBar = {
             TopAppBar(
@@ -100,7 +180,7 @@ fun DashboardScreen(
                             Icon(Icons.Default.Notifications, "Solicitudes")
                         }
                     }
-                    IconButton(onClick = { showPairingSheet = true }) {
+                    IconButton(onClick = onShowPairingSheet) {
                         Icon(Icons.Default.Add, "Agregar dispositivo")
                     }
                 }
@@ -115,13 +195,13 @@ fun DashboardScreen(
             TabRow(selectedTabIndex = selectedTab) {
                 Tab(
                     selected = selectedTab == 0,
-                    onClick = { selectedTab = 0 },
+                    onClick = { onSelectTab(0) },
                     text = { Text("Dispositivos") },
                     icon = { Icon(Icons.Default.Home, null) }
                 )
                 Tab(
                     selected = selectedTab == 1,
-                    onClick = { selectedTab = 1 },
+                    onClick = { onSelectTab(1) },
                     text = { Text("Solicitudes") },
                     icon = {
                         BadgedBox(
@@ -145,7 +225,7 @@ fun DashboardScreen(
                     onLockDevice = { viewModel.lockDevice(it) },
                     onUnlockDevice = { viewModel.unlockDevice(it) },
                     onRetry = { viewModel.loadDevices() },
-                    onClearError = { viewModel.clearError() }
+                    onClearError = onClearError
                 )
                 1 -> RequestsTab(
                     requests = pendingRequests,
@@ -159,14 +239,14 @@ fun DashboardScreen(
         if (showPairingSheet) {
             PairingBottomSheet(
                 viewModel = viewModel,
-                onDismiss = { showPairingSheet = false }
+                onDismiss = onDismissPairingSheet
             )
         }
 
         // Snackbar de error
         error?.let {
             LaunchedEffect(it) {
-                viewModel.clearError()
+                onClearError()
             }
         }
     }

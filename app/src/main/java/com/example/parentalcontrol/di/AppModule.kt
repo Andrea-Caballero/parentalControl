@@ -30,6 +30,15 @@ object AppModule {
             AppDatabase.DATABASE_NAME
         ).build()
 
+    /**
+     * PR 5 of `openspec/changes/wire-pairing-and-approval-end-to-end` (task #30):
+     * exposes [com.example.parentalcontrol.data.local.AppPolicyDao] for Hilt
+     * injection into [com.example.parentalcontrol.ui.screen.apps.AppsViewModel].
+     */
+    @Provides
+    fun provideAppPolicyDao(db: AppDatabase): com.example.parentalcontrol.data.local.AppPolicyDao =
+        db.appPolicyDao()
+
     @Provides
     @Singleton
     fun provideTimeProvider(@ApplicationContext context: Context): TimeProvider =

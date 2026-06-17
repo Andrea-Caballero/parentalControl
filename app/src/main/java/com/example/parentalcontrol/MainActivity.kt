@@ -17,6 +17,7 @@ import com.example.parentalcontrol.ui.child.status.ChildStatusScreen
 import com.example.parentalcontrol.ui.child.status.ChildStatusViewModel
 import com.example.parentalcontrol.ui.parent.screens.DashboardScreen
 import com.example.parentalcontrol.ui.screen.OnboardingScreen
+import com.example.parentalcontrol.ui.screen.apps.AppsViewModel
 import com.example.parentalcontrol.ui.theme.ParentalControlTheme
 import com.example.parentalcontrol.viewmodel.ParentViewModel
 import dagger.hilt.android.AndroidEntryPoint
@@ -50,8 +51,10 @@ class MainActivity : ComponentActivity() {
                         when (selectedMode) {
                             "parent" -> {
                                 val parentViewModel: ParentViewModel = hiltViewModel()
+                                val appsViewModel: AppsViewModel = hiltViewModel()
                                 DashboardScreen(
                                     viewModel = parentViewModel,
+                                    appsViewModel = appsViewModel,
                                     onNavigateToDevice = { },
                                     onNavigateToRequests = { }
                                 )
@@ -98,8 +101,10 @@ class MainActivity : ComponentActivity() {
                     }
                     else -> {
                         val parentViewModel: ParentViewModel = hiltViewModel()
+                        val appsViewModel: AppsViewModel = hiltViewModel()
                         DashboardScreen(
                             viewModel = parentViewModel,
+                            appsViewModel = appsViewModel,
                             onNavigateToDevice = { },
                             onNavigateToRequests = { }
                         )

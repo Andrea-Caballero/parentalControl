@@ -1421,10 +1421,10 @@
 	<file name="src/main/java/com/example/parentalcontrol/ui/parent/screens/DeviceDetailScreen.kt">
 		<error line="3" column="1" source="import-ordering" />
 		<error line="3" column="1" source="no-wildcard-imports" />
-		<error line="8" column="1" source="no-wildcard-imports" />
-		<error line="9" column="1" source="no-wildcard-imports" />
 		<error line="10" column="1" source="no-wildcard-imports" />
-		<error line="16" column="1" source="no-wildcard-imports" />
+		<error line="11" column="1" source="no-wildcard-imports" />
+		<error line="12" column="1" source="no-wildcard-imports" />
+		<error line="19" column="1" source="no-wildcard-imports" />
 	</file>
 	<file name="src/main/java/com/example/parentalcontrol/ui/reinforced/ReinforcedModeOfferScreen.kt">
 		<error line="3" column="1" source="no-wildcard-imports" />

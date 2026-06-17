@@ -3,6 +3,8 @@ package com.example.parentalcontrol.ui.parent.screens
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.*
@@ -10,6 +12,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
@@ -25,7 +28,8 @@ import com.example.parentalcontrol.viewmodel.ParentViewModel
 fun DeviceDetailScreen(
     deviceId: String,
     viewModel: ParentViewModel,
-    onNavigateBack: () -> Unit
+    onNavigateBack: () -> Unit,
+    onNavigateToApps: (String) -> Unit = {}
 ) {
     val devices by viewModel.devices.collectAsState()
     val templates by viewModel.templates.collectAsState()
@@ -189,7 +193,8 @@ fun DeviceDetailScreen(
                     device = device,
                     templates = templates,
                     onApplyTemplate = { showTemplateDialog = true },
-                    onReward = { viewModel.grantReward(deviceId, 15, "Recompensa") }
+                    onReward = { viewModel.grantReward(deviceId, 15, "Recompensa") },
+                    onAddToBlockList = { onNavigateToApps(deviceId) }
                 )
             }
         }
@@ -407,11 +412,13 @@ private fun PolicyTab(
     device: ChildDevice,
     templates: List<PolicyTemplate>,
     onApplyTemplate: () -> Unit,
-    onReward: () -> Unit
+    onReward: () -> Unit,
+    onAddToBlockList: () -> Unit
 ) {
     Column(
         modifier = Modifier
             .fillMaxSize()
+            .verticalScroll(rememberScrollState())
             .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
@@ -477,6 +484,33 @@ private fun PolicyTab(
                     Icon(Icons.Default.Settings, null)
                     Spacer(modifier = Modifier.width(8.dp))
                     Text("Cambiar plantilla")
+                }
+            }
+        }
+
+        // PR 5 task #32: "Add to block list" affordance wired to
+        // onNavigateToApps(deviceId). Opens AppsScreen for this child device.
+        Card(modifier = Modifier.fillMaxWidth()) {
+            Column(modifier = Modifier.padding(16.dp)) {
+                Text(
+                    "App block list",
+                    style = MaterialTheme.typography.titleMedium
+                )
+                Text(
+                    "Curate which apps this child can launch",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.outline
+                )
+                Spacer(modifier = Modifier.height(12.dp))
+                OutlinedButton(
+                    onClick = onAddToBlockList,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("add_to_block_list_button")
+                ) {
+                    Icon(Icons.Default.Add, null)
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("Add to block list")
                 }
             }
         }

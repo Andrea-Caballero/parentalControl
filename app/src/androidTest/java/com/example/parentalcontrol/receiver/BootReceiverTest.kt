@@ -1,4 +1,4 @@
-package com.example.parentalcontrol.boot
+package com.example.parentalcontrol.receiver
 
 import android.content.Context
 import android.content.Intent

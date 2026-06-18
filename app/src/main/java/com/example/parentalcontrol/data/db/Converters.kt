@@ -1,6 +1,7 @@
-package com.example.parentalcontrol.data.local
+package com.example.parentalcontrol.data.db
 
 import androidx.room.TypeConverter
+import com.example.parentalcontrol.data.model.WindowEntity
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import java.util.UUID

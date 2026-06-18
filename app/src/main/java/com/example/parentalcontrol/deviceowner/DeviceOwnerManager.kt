@@ -6,7 +6,7 @@ import android.content.Context
 import android.content.Intent
 import android.os.Build
 import android.util.Log
-import com.example.parentalcontrol.admin.DeviceAdminReceiver
+import com.example.parentalcontrol.admin.ParentalDeviceAdminReceiver
 import java.time.Instant
 
 /**
@@ -25,7 +25,7 @@ class DeviceOwnerManager private constructor(context: Context) {
         private const val TAG = "DeviceOwnerManager"
         
         private const val ADMIN_PKG = "com.example.parentalcontrol"
-        private const val ADMIN_CLASS = "com.example.parentalcontrol.admin.DeviceAdminReceiver"
+        private const val ADMIN_CLASS = "com.example.parentalcontrol.admin.ParentalDeviceAdminReceiver"
 
         @Volatile
         private var instance: DeviceOwnerManager? = null

@@ -6,7 +6,7 @@ import android.view.accessibility.AccessibilityEvent
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 
-class ForegroundAppService : AccessibilityService() {
+class AppMonitorService : AccessibilityService() {
 
     companion object {
         private val _appInForeground = MutableStateFlow<String?>(null)

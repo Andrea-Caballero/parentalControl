@@ -5,8 +5,8 @@ import android.content.Intent
 import android.content.pm.ActivityInfo
 import android.content.pm.PackageManager
 import android.content.pm.ResolveInfo
-import com.example.parentalcontrol.data.local.AppPolicyDao
-import com.example.parentalcontrol.data.local.AppPolicyEntity
+import com.example.parentalcontrol.data.db.AppPolicyDao
+import com.example.parentalcontrol.data.model.AppPolicyEntity
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.every

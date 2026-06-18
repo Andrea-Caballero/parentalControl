@@ -4,7 +4,7 @@ import android.content.Context
 import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
-import com.example.parentalcontrol.data.local.AppDatabase
+import com.example.parentalcontrol.data.db.ParentalDatabase
 import com.example.parentalcontrol.time.FakeTimeProvider
 import com.example.parentalcontrol.time.TimeProvider
 import org.junit.Assert.assertEquals
@@ -25,7 +25,7 @@ import java.time.ZoneId
 class TamperDetectorTest {
 
     private lateinit var context: Context
-    private lateinit var database: AppDatabase
+    private lateinit var database: ParentalDatabase
     private lateinit var timeProvider: FakeTimeProvider
 
     @Before
@@ -33,7 +33,7 @@ class TamperDetectorTest {
         context = ApplicationProvider.getApplicationContext()
         database = Room.inMemoryDatabaseBuilder(
             context,
-            AppDatabase::class.java
+            ParentalDatabase::class.java
         ).allowMainThreadQueries().build()
         timeProvider = FakeTimeProvider()
     }

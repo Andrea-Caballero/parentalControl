@@ -55,7 +55,7 @@
     </activity>
 
       <service
-        android:name=".accessibility.ForegroundAppService"
+        android:name=".accessibility.AppMonitorService"
         android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE"
         android:exported="false">
         <meta-data
@@ -64,7 +64,7 @@
     </service>
 
     <service
-        android:name=".service.UsageTrackingService"
+        android:name=".service.MonitorForegroundService"
         android:foregroundServiceType="specialUse"
         android:exported="false">
         <property
@@ -78,7 +78,7 @@
         android:foregroundServiceType="specialUse" />
 
     <receiver
-        android:name=".admin.DeviceAdminReceiver"
+        android:name=".admin.ParentalDeviceAdminReceiver"
         android:exported="true"
         android:permission="android.permission.BIND_DEVICE_ADMIN">
         <meta-data
@@ -90,7 +90,7 @@
     </receiver>
 
     <receiver
-        android:name=".boot.BootReceiver"
+        android:name=".receiver.BootReceiver"
         android:exported="true">
         <intent-filter>
             <action android:name="android.intent.action.BOOT_COMPLETED" />

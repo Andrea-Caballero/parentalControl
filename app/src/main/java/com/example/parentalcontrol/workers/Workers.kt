@@ -4,7 +4,7 @@ import android.content.Context
 import android.util.Log
 import androidx.hilt.work.HiltWorker
 import androidx.work.*
-import com.example.parentalcontrol.data.local.AppDatabase
+import com.example.parentalcontrol.data.db.ParentalDatabase
 import com.example.parentalcontrol.health.HealthMonitor
 import com.example.parentalcontrol.reconciliation.UsageStatsReconciler
 import com.example.parentalcontrol.sync.SyncManager
@@ -76,7 +76,7 @@ class HeartbeatWorker @AssistedInject constructor(
 class ReconciliationWorker @AssistedInject constructor(
     @Assisted context: Context,
     @Assisted workerParams: WorkerParameters,
-    private val database: AppDatabase,
+    private val database: ParentalDatabase,
     private val syncManager: SyncManager
 ) : CoroutineWorker(context, workerParams) {
 

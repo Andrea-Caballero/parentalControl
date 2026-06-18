@@ -4,8 +4,8 @@ import android.content.Context
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
-import com.example.parentalcontrol.data.local.GrantEntity
-import com.example.parentalcontrol.data.local.TimeRequestEntity
+import com.example.parentalcontrol.data.model.GrantEntity
+import com.example.parentalcontrol.data.model.TimeRequestEntity
 import com.example.parentalcontrol.data.repository.GrantResult
 import com.example.parentalcontrol.data.repository.TimeExtraRepository
 import com.example.parentalcontrol.data.repository.TimeRequestResult

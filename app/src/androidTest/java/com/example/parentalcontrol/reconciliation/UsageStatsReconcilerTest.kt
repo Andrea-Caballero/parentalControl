@@ -4,7 +4,8 @@ import android.content.Context
 import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
-import com.example.parentalcontrol.data.local.AppDatabase
+import com.example.parentalcontrol.data.db.ParentalDatabase
+import com.example.parentalcontrol.data.model.UsageTodayEntity
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -21,7 +22,7 @@ import org.junit.runner.RunWith
 class UsageStatsReconcilerTest {
 
     private lateinit var context: Context
-    private lateinit var database: AppDatabase
+    private lateinit var database: ParentalDatabase
     private lateinit var reconciler: UsageStatsReconciler
 
     @Before
@@ -29,7 +30,7 @@ class UsageStatsReconcilerTest {
         context = ApplicationProvider.getApplicationContext()
         database = Room.inMemoryDatabaseBuilder(
             context,
-            AppDatabase::class.java
+            ParentalDatabase::class.java
         ).allowMainThreadQueries().build()
         reconciler = UsageStatsReconciler(context, database)
     }
@@ -62,7 +63,7 @@ class UsageStatsReconcilerTest {
         val serverDate = java.time.LocalDate.now().toString()
 
         database.usageDao().upsertUsage(
-            com.example.parentalcontrol.data.local.UsageTodayEntity(
+            com.example.parentalcontrol.data.model.UsageTodayEntity(
                 package_name = "com.test.app",
                 server_date = serverDate,
                 usage_minutes = 30
@@ -81,7 +82,7 @@ class UsageStatsReconcilerTest {
         val serverDate = java.time.LocalDate.now().toString()
 
         database.usageDao().upsertUsage(
-            com.example.parentalcontrol.data.local.UsageTodayEntity(
+            com.example.parentalcontrol.data.model.UsageTodayEntity(
                 package_name = "com.test.app2",
                 server_date = serverDate,
                 usage_minutes = 15

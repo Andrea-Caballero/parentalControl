@@ -48,7 +48,7 @@ class LockManagerTest {
 
     @Test
     fun testDeviceAdminReceiverClassExists() {
-        val receiver = DeviceAdminReceiver()
+        val receiver = ParentalDeviceAdminReceiver()
         assertNotNull(receiver)
     }
 

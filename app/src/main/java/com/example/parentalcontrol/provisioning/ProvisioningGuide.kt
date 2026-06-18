@@ -29,7 +29,7 @@ package com.example.parentalcontrol.provisioning
  * 
  * ### 4. ADB (Desarrollo)
  * ```
- * adb dpm set-device-owner com.example.parentalcontrol/.admin.DeviceAdminReceiver
+ * adb dpm set-device-owner com.example.parentalcontrol/.admin.ParentalDeviceAdminReceiver
  * ```
  */
 object ProvisioningGuide {

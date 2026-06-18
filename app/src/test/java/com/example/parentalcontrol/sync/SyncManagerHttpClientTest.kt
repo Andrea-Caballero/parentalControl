@@ -3,8 +3,8 @@ package com.example.parentalcontrol.sync
 import android.content.Context
 import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
-import com.example.parentalcontrol.data.local.AppDatabase
-import com.example.parentalcontrol.data.local.OutboxEntity
+import com.example.parentalcontrol.data.db.ParentalDatabase
+import com.example.parentalcontrol.data.model.OutboxEntity
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertTrue
@@ -31,18 +31,18 @@ import java.util.UUID
 class SyncManagerHttpClientTest {
 
     private lateinit var context: Context
-    private lateinit var db: AppDatabase
+    private lateinit var db: ParentalDatabase
 
     @Before
     fun setup() {
         context = ApplicationProvider.getApplicationContext()
-        val fresh = Room.inMemoryDatabaseBuilder(context, AppDatabase::class.java)
+        val fresh = Room.inMemoryDatabaseBuilder(context, ParentalDatabase::class.java)
             .allowMainThreadQueries()
             .build()
         runCatching {
-            val field = AppDatabase::class.java.getDeclaredField("INSTANCE")
+            val field = ParentalDatabase::class.java.getDeclaredField("INSTANCE")
             field.isAccessible = true
-            field.get(null)?.let { (it as AppDatabase).close() }
+            field.get(null)?.let { (it as ParentalDatabase).close() }
             field.set(null, fresh)
         }
         db = fresh
@@ -52,7 +52,7 @@ class SyncManagerHttpClientTest {
     fun teardown() {
         runCatching { db.close() }
         runCatching {
-            val field = AppDatabase::class.java.getDeclaredField("INSTANCE")
+            val field = ParentalDatabase::class.java.getDeclaredField("INSTANCE")
             field.isAccessible = true
             field.set(null, null)
         }
@@ -84,11 +84,11 @@ class SyncManagerHttpClientTest {
     /**
      * The real [SyncManager] constructor is private. Tests that need to
      * exercise its public surface use reflection to instantiate it with
-     * the in-memory [AppDatabase] from [setup].
+     * the in-memory [ParentalDatabase] from [setup].
      */
-    private fun newSyncManagerViaReflection(context: Context, db: AppDatabase): SyncManager {
+    private fun newSyncManagerViaReflection(context: Context, db: ParentalDatabase): SyncManager {
         val constructor = SyncManager::class.java
-            .getDeclaredConstructor(Context::class.java, AppDatabase::class.java)
+            .getDeclaredConstructor(Context::class.java, ParentalDatabase::class.java)
         constructor.isAccessible = true
         return constructor.newInstance(context, db)
     }

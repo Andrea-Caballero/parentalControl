@@ -1,4 +1,4 @@
-package com.example.parentalcontrol.data.local
+package com.example.parentalcontrol.data.db
 
 import androidx.room.testing.MigrationTestHelper
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -30,13 +30,13 @@ import org.junit.runner.RunWith
 @RunWith(AndroidJUnit4::class)
 class AppPolicyMigrationTest {
 
-    private val dbName = AppDatabase.DATABASE_NAME
+    private val dbName = ParentalDatabase.DATABASE_NAME
 
     @Test
     fun migration_5_to_6_creates_composite_pk_and_preserves_data() {
         val helper = MigrationTestHelper(
             InstrumentationRegistry.getInstrumentation(),
-            AppDatabase::class.java
+            ParentalDatabase::class.java
         )
 
         // Seed v5 with two rows for the same package across two devices.
@@ -58,7 +58,7 @@ class AppPolicyMigrationTest {
         }
 
         // Run the migration to v6.
-        val db = helper.runMigrationsAndValidate(dbName, 6, true, AppDatabase.MIGRATION_5_6)
+        val db = helper.runMigrationsAndValidate(dbName, 6, true, ParentalDatabase.MIGRATION_5_6)
 
         try {
             // Both rows must survive the migration.
@@ -142,7 +142,7 @@ class AppPolicyMigrationTest {
     fun migration_5_to_6_preserves_daily_limit_and_category_columns() {
         val helper = MigrationTestHelper(
             InstrumentationRegistry.getInstrumentation(),
-            AppDatabase::class.java
+            ParentalDatabase::class.java
         )
 
         helper.createDatabase(dbName, 5).apply {
@@ -155,7 +155,7 @@ class AppPolicyMigrationTest {
             close()
         }
 
-        val db = helper.runMigrationsAndValidate(dbName, 6, true, AppDatabase.MIGRATION_5_6)
+        val db = helper.runMigrationsAndValidate(dbName, 6, true, ParentalDatabase.MIGRATION_5_6)
         try {
             val cursor = db.query(
                 "SELECT state, daily_limit_minutes, category FROM app_policies WHERE package_name = 'com.y'",

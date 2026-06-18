@@ -2,10 +2,9 @@ package com.example.parentalcontrol.data.repository
 
 import android.content.Context
 import android.util.Log
-import com.example.parentalcontrol.data.local.AppDatabase
-import com.example.parentalcontrol.data.local.GrantDao
-import com.example.parentalcontrol.data.local.GrantEntity
-import com.example.parentalcontrol.data.local.TimeRequestEntity
+import com.example.parentalcontrol.data.db.ParentalDatabase
+import com.example.parentalcontrol.data.model.GrantEntity
+import com.example.parentalcontrol.data.model.TimeRequestEntity
 import com.example.parentalcontrol.outbox.OutboxManager
 import com.example.parentalcontrol.time.TimeProvider
 import com.example.parentalcontrol.time.DefaultTimeProvider
@@ -48,7 +47,7 @@ class TimeExtraRepository(
         }
     }
 
-    private val database = AppDatabase.getInstance(context)
+    private val database = ParentalDatabase.getInstance(context)
     private val timeRequestDao = database.timeRequestDao()
     private val grantDao = database.grantDao()
     private val outboxManager = OutboxManager.getInstance(context)

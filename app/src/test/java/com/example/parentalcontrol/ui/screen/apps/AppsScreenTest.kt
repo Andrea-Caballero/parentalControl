@@ -8,8 +8,8 @@ import android.content.pm.ResolveInfo
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
-import com.example.parentalcontrol.data.local.AppPolicyDao
-import com.example.parentalcontrol.data.local.AppPolicyEntity
+import com.example.parentalcontrol.data.db.AppPolicyDao
+import com.example.parentalcontrol.data.model.AppPolicyEntity
 import com.example.parentalcontrol.ui.theme.ParentalControlTheme
 import io.mockk.coEvery
 import io.mockk.every

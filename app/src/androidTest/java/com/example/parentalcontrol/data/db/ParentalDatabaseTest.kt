@@ -1,8 +1,14 @@
-package com.example.parentalcontrol.data.local
+package com.example.parentalcontrol.data.db
 
 import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import com.example.parentalcontrol.data.model.AppPolicyEntity
+import com.example.parentalcontrol.data.model.GrantEntity
+import com.example.parentalcontrol.data.model.OutboxEntity
+import com.example.parentalcontrol.data.model.PolicyEntity
+import com.example.parentalcontrol.data.model.UsageTodayEntity
+import com.example.parentalcontrol.data.model.WindowEntity
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import org.junit.After
@@ -18,9 +24,9 @@ import java.io.IOException
 import java.util.UUID
 
 @RunWith(AndroidJUnit4::class)
-class AppDatabaseTest {
+class ParentalDatabaseTest {
 
-    private lateinit var db: AppDatabase
+    private lateinit var db: ParentalDatabase
     private lateinit var policyDao: PolicyDao
     private lateinit var appPolicyDao: AppPolicyDao
     private lateinit var grantDao: GrantDao
@@ -30,7 +36,7 @@ class AppDatabaseTest {
     @Before
     fun createDb() {
         val context = ApplicationProvider.getApplicationContext<android.content.Context>()
-        db = Room.inMemoryDatabaseBuilder(context, AppDatabase::class.java)
+        db = Room.inMemoryDatabaseBuilder(context, ParentalDatabase::class.java)
             .allowMainThreadQueries()
             .build()
         policyDao = db.policyDao()

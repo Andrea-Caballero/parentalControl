@@ -1,4 +1,4 @@
-package com.example.parentalcontrol.data.local
+package com.example.parentalcontrol.data.db
 
 import androidx.room.testing.MigrationTestHelper
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -25,13 +25,13 @@ import org.junit.runner.RunWith
 @RunWith(AndroidJUnit4::class)
 class OutboxMigrationTest {
 
-    private val dbName = AppDatabase.DATABASE_NAME
+    private val dbName = ParentalDatabase.DATABASE_NAME
 
     @Test
     fun migration_4_to_5_renames_intentos_and_adds_processed_columns() {
         val helper = MigrationTestHelper(
             InstrumentationRegistry.getInstrumentation(),
-            AppDatabase::class.java
+            ParentalDatabase::class.java
         )
 
         helper.createDatabase(dbName, 4).apply {
@@ -45,7 +45,7 @@ class OutboxMigrationTest {
         }
 
         // Open the database with the v5 schema, running the migration
-        val db = helper.runMigrationsAndValidate(dbName, 5, true, AppDatabase.MIGRATION_4_5)
+        val db = helper.runMigrationsAndValidate(dbName, 5, true, ParentalDatabase.MIGRATION_4_5)
 
         // Verify the migration outcome
         val cursor = db.query(

@@ -2,7 +2,11 @@ package com.example.parentalcontrol.sync
 
 import android.content.Context
 import com.example.parentalcontrol.auth.DeviceAuthManager
-import com.example.parentalcontrol.data.local.*
+import com.example.parentalcontrol.data.db.ParentalDatabase
+import com.example.parentalcontrol.data.model.AppPolicyEntity
+import com.example.parentalcontrol.data.model.OutboxEntity
+import com.example.parentalcontrol.data.model.PolicyEntity
+import com.example.parentalcontrol.data.model.WindowEntity
 import com.example.parentalcontrol.network.ConnectionState
 import com.example.parentalcontrol.network.SupabaseClientProvider
 import io.ktor.client.*
@@ -77,7 +81,7 @@ data class AppPolicyResponse(
 
 class SyncManager private constructor(
     private val context: Context,
-    private var database: AppDatabase
+    private var database: ParentalDatabase
 ) {
     companion object {
         private const val MAX_RETRY_ATTEMPTS = 3
@@ -89,7 +93,7 @@ class SyncManager private constructor(
 
         fun getInstance(context: Context): SyncManager {
             return instance ?: synchronized(this) {
-                instance ?: SyncManager(context.applicationContext, AppDatabase.getInstance(context)).also {
+                instance ?: SyncManager(context.applicationContext, ParentalDatabase.getInstance(context)).also {
                     instance = it
                 }
             }
@@ -132,7 +136,7 @@ class SyncManager private constructor(
         scope.launch { updatePendingCount() }
     }
 
-    fun setDatabase(db: AppDatabase) {
+    fun setDatabase(db: ParentalDatabase) {
         database = db
     }
 

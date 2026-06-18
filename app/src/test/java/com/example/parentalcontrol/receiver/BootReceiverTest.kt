@@ -1,4 +1,4 @@
-package com.example.parentalcontrol.boot
+package com.example.parentalcontrol.receiver
 
 import androidx.test.core.app.ApplicationProvider
 import androidx.work.Configuration

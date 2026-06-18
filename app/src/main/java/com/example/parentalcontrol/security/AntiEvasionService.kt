@@ -6,8 +6,8 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.provider.Settings
 import android.view.accessibility.AccessibilityEvent
-import com.example.parentalcontrol.accessibility.ForegroundAppService
-import com.example.parentalcontrol.data.local.AppDatabase
+import com.example.parentalcontrol.accessibility.AppMonitorService
+import com.example.parentalcontrol.data.db.ParentalDatabase
 import com.example.parentalcontrol.time.DefaultTimeProvider
 import com.example.parentalcontrol.time.TimeProvider
 import kotlinx.coroutines.CoroutineScope
@@ -59,7 +59,7 @@ class AntiEvasionService : AccessibilityService() {
         super.onCreate()
         instance = this
         
-        val database = AppDatabase.getInstance(this)
+        val database = ParentalDatabase.getInstance(this)
         timeProvider = DefaultTimeProvider(this)
         tamperDetector = TamperDetector.getInstance(this, database, timeProvider)
 
@@ -142,7 +142,7 @@ class AntiEvasionService : AccessibilityService() {
      */
     private fun checkForSuspiciousSettings() {
         // Obtener la actividad actual
-        val currentPackage = ForegroundAppService.appInForeground.value
+        val currentPackage = AppMonitorService.appInForeground.value
         
         // Si viene de nuestra app, podría ser un intento de evadir
         // (aunque en realidad el usuario tiene derecho a abrir ajustes)

@@ -7,8 +7,8 @@ import androidx.work.ListenableWorker
 import androidx.work.WorkerFactory
 import androidx.work.WorkerParameters
 import androidx.work.testing.TestListenableWorkerBuilder
-import com.example.parentalcontrol.data.local.AppDatabase
-import com.example.parentalcontrol.data.local.OutboxEntity
+import com.example.parentalcontrol.data.db.ParentalDatabase
+import com.example.parentalcontrol.data.model.OutboxEntity
 import com.example.parentalcontrol.outbox.OutboxManager
 import com.example.parentalcontrol.sync.OutboxSendResult
 import com.example.parentalcontrol.sync.SyncManager
@@ -42,22 +42,22 @@ import java.util.UUID
 class OutboxDrainerTest {
 
     private lateinit var context: Context
-    private lateinit var db: AppDatabase
+    private lateinit var db: ParentalDatabase
     private lateinit var outboxManager: OutboxManager
 
     @Before
     fun setup() {
         context = ApplicationProvider.getApplicationContext()
         // Fresh in-memory DB per test, so the rows from one test never leak
-        // into the next. We bypass AppDatabase.getInstance by setting the
+        // into the next. We bypass ParentalDatabase.getInstance by setting the
         // private INSTANCE field directly via reflection.
-        val fresh = Room.inMemoryDatabaseBuilder(context, AppDatabase::class.java)
+        val fresh = Room.inMemoryDatabaseBuilder(context, ParentalDatabase::class.java)
             .allowMainThreadQueries()
             .build()
         runCatching {
-            val field = AppDatabase::class.java.getDeclaredField("INSTANCE")
+            val field = ParentalDatabase::class.java.getDeclaredField("INSTANCE")
             field.isAccessible = true
-            val old = field.get(null) as? AppDatabase
+            val old = field.get(null) as? ParentalDatabase
             old?.close()
             field.set(null, fresh)
         }
@@ -75,7 +75,7 @@ class OutboxDrainerTest {
     fun teardown() {
         runCatching { db.close() }
         runCatching {
-            val appDbField = AppDatabase::class.java.getDeclaredField("INSTANCE")
+            val appDbField = ParentalDatabase::class.java.getDeclaredField("INSTANCE")
             appDbField.isAccessible = true
             appDbField.set(null, null)
         }

@@ -14,7 +14,7 @@
 		<error line="1" column="1" source="final-newline" />
 		<error line="3" column="1" source="import-ordering" />
 	</file>
-	<file name="src/androidTest/java/com/example/parentalcontrol/accessibility/ForegroundAppServiceTest.kt">
+	<file name="src/androidTest/java/com/example/parentalcontrol/accessibility/AppMonitorServiceTest.kt">
 		<error line="1" column="1" source="final-newline" />
 		<error line="4" column="1" source="no-unused-imports" />
 		<error line="5" column="1" source="no-unused-imports" />
@@ -29,7 +29,7 @@
 		<error line="11" column="1" source="no-unused-imports" />
 		<error line="12" column="1" source="no-unused-imports" />
 	</file>
-	<file name="src/androidTest/java/com/example/parentalcontrol/boot/BootReceiverTest.kt">
+	<file name="src/androidTest/java/com/example/parentalcontrol/receiver/BootReceiverTest.kt">
 		<error line="3" column="1" source="import-ordering" />
 		<error line="9" column="1" source="no-unused-imports" />
 		<error line="11" column="1" source="no-unused-imports" />
@@ -40,10 +40,10 @@
 		<error line="74" column="1" source="no-trailing-spaces" />
 		<error line="77" column="1" source="no-trailing-spaces" />
 	</file>
-	<file name="src/androidTest/java/com/example/parentalcontrol/data/local/AppDatabaseTest.kt">
-		<error line="12" column="1" source="no-unused-imports" />
-		<error line="17" column="1" source="no-unused-imports" />
+	<file name="src/androidTest/java/com/example/parentalcontrol/data/db/ParentalDatabaseTest.kt">
 		<error line="18" column="1" source="no-unused-imports" />
+		<error line="23" column="1" source="no-unused-imports" />
+		<error line="24" column="1" source="no-unused-imports" />
 	</file>
 	<file name="src/androidTest/java/com/example/parentalcontrol/enforcement/EnforcementControllerTest.kt">
 		<error line="3" column="1" source="import-ordering" />
@@ -101,13 +101,13 @@
 	</file>
 	<file name="src/androidTest/java/com/example/parentalcontrol/reconciliation/UsageStatsReconcilerTest.kt">
 		<error line="3" column="1" source="import-ordering" />
-		<error line="11" column="1" source="no-unused-imports" />
-		<error line="13" column="1" source="no-unused-imports" />
+		<error line="12" column="1" source="no-unused-imports" />
 		<error line="14" column="1" source="no-unused-imports" />
 		<error line="15" column="1" source="no-unused-imports" />
-		<error line="42" column="1" source="no-trailing-spaces" />
-		<error line="52" column="1" source="no-trailing-spaces" />
-		<error line="56" column="1" source="indent" />
+		<error line="16" column="1" source="no-unused-imports" />
+		<error line="43" column="1" source="no-trailing-spaces" />
+		<error line="53" column="1" source="no-trailing-spaces" />
+		<error line="57" column="1" source="indent" />
 	</file>
 	<file name="src/androidTest/java/com/example/parentalcontrol/security/TamperDetectorTest.kt">
 		<error line="3" column="1" source="import-ordering" />
@@ -125,10 +125,7 @@
 	<file name="src/main/java/com/example/parentalcontrol/MainActivity.kt">
 		<error line="8" column="1" source="no-wildcard-imports" />
 	</file>
-	<file name="src/main/java/com/example/parentalcontrol/ParentalControlApp.kt">
-		<error line="6" column="1" source="no-unused-imports" />
-	</file>
-	<file name="src/main/java/com/example/parentalcontrol/accessibility/ForegroundAppService.kt">
+	<file name="src/main/java/com/example/parentalcontrol/accessibility/AppMonitorService.kt">
 		<error line="72" column="1" source="indent" />
 	</file>
 	<file name="src/main/java/com/example/parentalcontrol/admin/LockManager.kt">
@@ -251,22 +248,6 @@
 		<error line="305" column="1" source="no-trailing-spaces" />
 		<error line="308" column="1" source="no-trailing-spaces" />
 	</file>
-	<file name="src/main/java/com/example/parentalcontrol/boot/BootReceiver.kt">
-		<error line="14" column="1" source="no-trailing-spaces" />
-		<error line="14" column="3" source="no-trailing-spaces" />
-		<error line="30" column="1" source="no-trailing-spaces" />
-		<error line="43" column="1" source="no-trailing-spaces" />
-		<error line="48" column="1" source="no-trailing-spaces" />
-		<error line="51" column="1" source="no-trailing-spaces" />
-		<error line="57" column="1" source="no-trailing-spaces" />
-		<error line="65" column="1" source="no-trailing-spaces" />
-		<error line="66" column="72" source="no-trailing-spaces" />
-		<error line="67" column="78" source="no-trailing-spaces" />
-		<error line="77" column="1" source="no-trailing-spaces" />
-		<error line="79" column="1" source="no-trailing-spaces" />
-		<error line="106" column="1" source="no-trailing-spaces" />
-		<error line="117" column="1" source="no-trailing-spaces" />
-	</file>
 	<file name="src/main/java/com/example/parentalcontrol/consent/ConsentManager.kt">
 		<error line="4" column="1" source="no-unused-imports" />
 	</file>
@@ -287,24 +268,8 @@
 		<error line="302" column="1" source="no-trailing-spaces" />
 		<error line="307" column="60" source="indent" />
 	</file>
-	<file name="src/main/java/com/example/parentalcontrol/data/local/AppDatabase.kt">
-		<error line="3" column="1" source="no-wildcard-imports" />
-		<error line="181" column="12" source="indent" />
-		<error line="188" column="7" source="indent" />
-		<error line="200" column="1" source="max-line-length" />
-	</file>
-	<file name="src/main/java/com/example/parentalcontrol/data/local/BehavioralEventDao.kt">
-		<error line="3" column="1" source="no-wildcard-imports" />
-		<error line="10" column="1" source="no-trailing-spaces" />
-		<error line="13" column="1" source="no-trailing-spaces" />
-		<error line="16" column="1" source="no-trailing-spaces" />
-		<error line="19" column="1" source="no-trailing-spaces" />
-		<error line="22" column="1" source="no-trailing-spaces" />
-		<error line="25" column="1" source="no-trailing-spaces" />
-		<error line="28" column="1" source="no-trailing-spaces" />
-	</file>
 	<file name="src/main/java/com/example/parentalcontrol/data/local/LocalDataSource.kt">
-		<error line="3" column="1" source="no-wildcard-imports" />
+		<error line="12" column="1" source="no-wildcard-imports" />
 	</file>
 	<file name="src/main/java/com/example/parentalcontrol/data/local/PairedDevicesStore.kt">
 		<error line="21" column="1" source="no-trailing-spaces" />
@@ -328,34 +293,33 @@
 	</file>
 	<file name="src/main/java/com/example/parentalcontrol/data/repository/TimeExtraRepository.kt">
 		<error line="3" column="1" source="import-ordering" />
-		<error line="6" column="1" source="no-unused-imports" />
-		<error line="18" column="1" source="no-trailing-spaces" />
-		<error line="18" column="3" source="no-trailing-spaces" />
-		<error line="20" column="1" source="no-trailing-spaces" />
-		<error line="20" column="3" source="no-trailing-spaces" />
-		<error line="29" column="1" source="no-trailing-spaces" />
-		<error line="32" column="1" source="no-trailing-spaces" />
-		<error line="35" column="1" source="no-trailing-spaces" />
-		<error line="58" column="1" source="no-trailing-spaces" />
-		<error line="58" column="7" source="no-trailing-spaces" />
-		<error line="70" column="1" source="no-trailing-spaces" />
-		<error line="76" column="1" source="no-trailing-spaces" />
-		<error line="80" column="1" source="no-trailing-spaces" />
-		<error line="92" column="1" source="no-trailing-spaces" />
-		<error line="96" column="1" source="no-trailing-spaces" />
-		<error line="99" column="1" source="no-trailing-spaces" />
-		<error line="102" column="1" source="no-trailing-spaces" />
-		<error line="104" column="1" source="no-trailing-spaces" />
-		<error line="128" column="1" source="no-trailing-spaces" />
-		<error line="128" column="7" source="no-trailing-spaces" />
-		<error line="146" column="1" source="no-trailing-spaces" />
-		<error line="148" column="30" source="string-template" />
-		<error line="152" column="1" source="no-trailing-spaces" />
-		<error line="163" column="1" source="no-trailing-spaces" />
-		<error line="165" column="1" source="no-trailing-spaces" />
-		<error line="167" column="1" source="no-trailing-spaces" />
-		<error line="230" column="1" source="no-trailing-spaces" />
-		<error line="246" column="1" source="no-trailing-spaces" />
+		<error line="17" column="1" source="no-trailing-spaces" />
+		<error line="17" column="3" source="no-trailing-spaces" />
+		<error line="19" column="1" source="no-trailing-spaces" />
+		<error line="19" column="3" source="no-trailing-spaces" />
+		<error line="28" column="1" source="no-trailing-spaces" />
+		<error line="31" column="1" source="no-trailing-spaces" />
+		<error line="34" column="1" source="no-trailing-spaces" />
+		<error line="57" column="1" source="no-trailing-spaces" />
+		<error line="57" column="7" source="no-trailing-spaces" />
+		<error line="69" column="1" source="no-trailing-spaces" />
+		<error line="75" column="1" source="no-trailing-spaces" />
+		<error line="79" column="1" source="no-trailing-spaces" />
+		<error line="91" column="1" source="no-trailing-spaces" />
+		<error line="95" column="1" source="no-trailing-spaces" />
+		<error line="98" column="1" source="no-trailing-spaces" />
+		<error line="101" column="1" source="no-trailing-spaces" />
+		<error line="103" column="1" source="no-trailing-spaces" />
+		<error line="127" column="1" source="no-trailing-spaces" />
+		<error line="127" column="7" source="no-trailing-spaces" />
+		<error line="145" column="1" source="no-trailing-spaces" />
+		<error line="147" column="30" source="string-template" />
+		<error line="151" column="1" source="no-trailing-spaces" />
+		<error line="162" column="1" source="no-trailing-spaces" />
+		<error line="164" column="1" source="no-trailing-spaces" />
+		<error line="166" column="1" source="no-trailing-spaces" />
+		<error line="229" column="1" source="no-trailing-spaces" />
+		<error line="245" column="1" source="no-trailing-spaces" />
 	</file>
 	<file name="src/main/java/com/example/parentalcontrol/data/repository/UsageRepository.kt">
 		<error line="1" column="1" source="final-newline" />
@@ -1022,6 +986,9 @@
 	<file name="src/main/java/com/example/parentalcontrol/reconciliation/UsageStatsReconciler.kt">
 		<error line="6" column="1" source="no-unused-imports" />
 	</file>
+	<file name="src/main/java/com/example/parentalcontrol/service/MonitorForegroundService.kt">
+		<error line="28" column="1" source="no-unused-imports" />
+	</file>
 	<file name="src/main/java/com/example/parentalcontrol/reward/RewardManager.kt">
 		<error line="3" column="1" source="import-ordering" />
 		<error line="13" column="1" source="no-unused-imports" />
@@ -1190,21 +1157,16 @@
 		<error line="284" column="1" source="indent" />
 		<error line="285" column="1" source="indent" />
 	</file>
-	<file name="src/main/java/com/example/parentalcontrol/service/UsageTrackingService.kt">
-		<error line="28" column="1" source="no-unused-imports" />
-	</file>
 	<file name="src/main/java/com/example/parentalcontrol/sync/SyncManager.kt">
-		<error line="5" column="1" source="no-wildcard-imports" />
-		<error line="8" column="1" source="no-wildcard-imports" />
-		<error line="9" column="1" source="no-wildcard-imports" />
-		<error line="10" column="1" source="no-wildcard-imports" />
-		<error line="11" column="1" source="no-wildcard-imports" />
 		<error line="12" column="1" source="no-wildcard-imports" />
 		<error line="13" column="1" source="no-wildcard-imports" />
 		<error line="14" column="1" source="no-wildcard-imports" />
 		<error line="15" column="1" source="no-wildcard-imports" />
+		<error line="16" column="1" source="no-wildcard-imports" />
+		<error line="17" column="1" source="no-wildcard-imports" />
 		<error line="18" column="1" source="no-wildcard-imports" />
-		<error line="281" column="1" source="no-trailing-spaces" />
+		<error line="19" column="1" source="no-wildcard-imports" />
+		<error line="22" column="1" source="no-wildcard-imports" />
 		<error line="357" column="1" source="indent" />
 	</file>
 	<file name="src/main/java/com/example/parentalcontrol/time/TimeProvider.kt">

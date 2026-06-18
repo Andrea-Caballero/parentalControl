@@ -1602,7 +1602,7 @@
         errorLine1="            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {"
         errorLine2="                ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
         <location
-            file="src/main/java/com/example/parentalcontrol/boot/BootReceiver.kt"
+            file="src/main/java/com/example/parentalcontrol/receiver/BootReceiver.kt"
             line="88"
             column="17"/>
     </issue>

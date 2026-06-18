@@ -4,8 +4,8 @@ import android.accessibilityservice.AccessibilityService
 import android.content.Context
 import android.content.Intent
 import android.provider.Settings
-import com.example.parentalcontrol.data.local.AppDatabase
-import com.example.parentalcontrol.data.local.OutboxEntity
+import com.example.parentalcontrol.data.db.ParentalDatabase
+import com.example.parentalcontrol.data.model.OutboxEntity
 import com.example.parentalcontrol.time.TimeProvider
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -23,7 +23,7 @@ import java.util.UUID
  */
 class TamperDetector(
     private val context: Context,
-    private val database: AppDatabase,
+    private val database: ParentalDatabase,
     private val timeProvider: TimeProvider
 ) {
     companion object {
@@ -40,7 +40,7 @@ class TamperDetector(
 
         fun getInstance(
             context: Context,
-            database: AppDatabase,
+            database: ParentalDatabase,
             timeProvider: TimeProvider
         ): TamperDetector {
             return instance ?: synchronized(this) {

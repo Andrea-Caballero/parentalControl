@@ -5,19 +5,19 @@ import android.content.Context
 import android.content.Intent
 import android.os.Build
 import android.os.SystemClock
-import com.example.parentalcontrol.accessibility.ForegroundAppService
+import com.example.parentalcontrol.accessibility.AppMonitorService
 import com.example.parentalcontrol.admin.LockManager
-import com.example.parentalcontrol.data.local.AppDatabase
-import com.example.parentalcontrol.data.local.AppPolicyEntity
-import com.example.parentalcontrol.data.local.GrantEntity
-import com.example.parentalcontrol.data.local.PolicyEntity
+import com.example.parentalcontrol.data.db.ParentalDatabase
+import com.example.parentalcontrol.data.model.AppPolicyEntity
+import com.example.parentalcontrol.data.model.GrantEntity
+import com.example.parentalcontrol.data.model.PolicyEntity
 import com.example.parentalcontrol.deviceowner.DeviceCapability
 import com.example.parentalcontrol.deviceowner.DeviceOwnerManager
 import com.example.parentalcontrol.deviceowner.EnforcementLevel
 import com.example.parentalcontrol.domain.*
 import com.example.parentalcontrol.overlay.BlockOverlayService
 import com.example.parentalcontrol.reconciliation.UsageStatsReconciler
-import com.example.parentalcontrol.service.UsageTrackingService
+import com.example.parentalcontrol.service.MonitorForegroundService
 import com.example.parentalcontrol.time.DefaultTimeProvider
 import com.example.parentalcontrol.time.TimeProvider
 import kotlinx.coroutines.*
@@ -37,16 +37,16 @@ import java.time.LocalDateTime
  */
 class EnforcementController(
     private val context: Context,
-    private val database: AppDatabase,
+    private val database: ParentalDatabase,
     private val timeProvider: TimeProvider
 ) {
     companion object {
         private const val THRESHOLD_RECHECK_MINUTES = 5 // Reevaluar cada 5 minutos
-        
+
         @Volatile
         private var instance: EnforcementController? = null
-        
-        fun getInstance(context: Context, database: AppDatabase): EnforcementController {
+
+        fun getInstance(context: Context, database: ParentalDatabase): EnforcementController {
             return instance ?: synchronized(this) {
                 instance ?: EnforcementController(context, database, DefaultTimeProvider(context)).also {
                     instance = it
@@ -123,7 +123,7 @@ class EnforcementController(
      */
     private fun observeForegroundChanges() {
         controllerScope.launch {
-            ForegroundAppService.appInForeground.collect { packageName ->
+            AppMonitorService.appInForeground.collect { packageName ->
                 packageName?.let { evaluateAndEnforce(it) }
             }
         }

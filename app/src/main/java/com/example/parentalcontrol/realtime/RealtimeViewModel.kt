@@ -4,7 +4,7 @@ import android.content.Context
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
-import com.example.parentalcontrol.data.local.AppDatabase
+import com.example.parentalcontrol.data.db.ParentalDatabase
 import com.example.parentalcontrol.sync.SyncManager
 import android.util.Log
 import kotlinx.coroutines.flow.*
@@ -22,7 +22,7 @@ class RealtimeViewModel(
 
     private val realtimeManager = RealtimeManager.getInstance(context)
     private val syncManager = SyncManager.getInstance(context)
-    private val database = AppDatabase.getInstance(context)
+    private val database = ParentalDatabase.getInstance(context)
 
     // Estado de conexión
     val connectionState = realtimeManager.connectionState

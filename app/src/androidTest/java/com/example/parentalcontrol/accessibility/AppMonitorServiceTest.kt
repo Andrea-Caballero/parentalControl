@@ -14,14 +14,14 @@ import org.junit.Test
 import org.junit.runner.RunWith
 
 @RunWith(AndroidJUnit4::class)
-class ForegroundAppServiceTest {
+class AppMonitorServiceTest {
 
     private val context: Context = ApplicationProvider.getApplicationContext()
 
     @Test
     fun testForegroundAppEmission() = runBlocking {
         // Simulate an accessibility event
-        val service = ForegroundAppService()
+        val service = AppMonitorService()
         val mockEvent = android.view.accessibility.AccessibilityEvent.obtain(
             android.view.accessibility.AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED
         ).apply {
@@ -32,14 +32,14 @@ class ForegroundAppServiceTest {
         service.onAccessibilityEvent(mockEvent)
 
         // Verify that the package name is emitted
-        val emittedPackage = ForegroundAppService.appInForeground.first()
+        val emittedPackage = AppMonitorService.appInForeground.first()
         assertEquals("com.example.app", emittedPackage)
     }
 
     @Test
     fun testNoiseFiltering() = runBlocking {
         // Simulate an event from a launcher app
-        val service = ForegroundAppService()
+        val service = AppMonitorService()
         val mockEvent = android.view.accessibility.AccessibilityEvent.obtain(
             android.view.accessibility.AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED
         ).apply {
@@ -50,7 +50,7 @@ class ForegroundAppServiceTest {
         service.onAccessibilityEvent(mockEvent)
 
         // Verify that no noisy package name is emitted
-        val emittedPackage = ForegroundAppService.appInForeground.first()
+        val emittedPackage = AppMonitorService.appInForeground.first()
         assertEquals(null, emittedPackage)
     }
 }

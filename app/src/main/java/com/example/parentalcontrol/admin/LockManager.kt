@@ -13,7 +13,7 @@ class LockManager(private val context: Context) {
 
     companion object {
         private const val ADMIN_PKG = "com.example.parentalcontrol"
-        private const val ADMIN_CLASS = "com.example.parentalcontrol.admin.DeviceAdminReceiver"
+        private const val ADMIN_CLASS = "com.example.parentalcontrol.admin.ParentalDeviceAdminReceiver"
     }
 
     private val devicePolicyManager: DevicePolicyManager by lazy {

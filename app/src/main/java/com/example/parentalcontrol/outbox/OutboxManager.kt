@@ -2,9 +2,9 @@ package com.example.parentalcontrol.outbox
 
 import android.content.Context
 import android.util.Log
-import com.example.parentalcontrol.data.local.AppDatabase
-import com.example.parentalcontrol.data.local.OutboxEntity
-import com.example.parentalcontrol.data.local.TimeRequestEntity
+import com.example.parentalcontrol.data.db.ParentalDatabase
+import com.example.parentalcontrol.data.model.OutboxEntity
+import com.example.parentalcontrol.data.model.TimeRequestEntity
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
@@ -36,7 +36,7 @@ class OutboxManager private constructor(context: Context) {
         }
     }
 
-    private val database = AppDatabase.getInstance(context)
+    private val database = ParentalDatabase.getInstance(context)
     private val outboxDao = database.outboxDao()
     private val scope = CoroutineScope(Dispatchers.IO)
 

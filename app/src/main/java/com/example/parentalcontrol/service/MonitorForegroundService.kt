@@ -12,8 +12,8 @@ import android.os.IBinder
 import androidx.core.app.NotificationCompat
 import com.example.parentalcontrol.MainActivity
 import com.example.parentalcontrol.R
-import com.example.parentalcontrol.accessibility.ForegroundAppService
-import com.example.parentalcontrol.data.local.AppDatabase
+import com.example.parentalcontrol.accessibility.AppMonitorService
+import com.example.parentalcontrol.data.db.ParentalDatabase
 import com.example.parentalcontrol.reconciliation.UsageStatsReconciler
 import com.example.parentalcontrol.time.DefaultTimeProvider
 import com.example.parentalcontrol.time.TimeProvider
@@ -28,7 +28,7 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
-class UsageTrackingService : Service() {
+class MonitorForegroundService : Service() {
 
     companion object {
         const val CHANNEL_ID = "usage_tracking_channel"
@@ -47,14 +47,14 @@ class UsageTrackingService : Service() {
     private var warned10Minutes = false
     private var warned5Minutes = false
 
-    private lateinit var database: AppDatabase
+    private lateinit var database: ParentalDatabase
     private lateinit var timeProvider: TimeProvider
     private lateinit var reconciler: UsageStatsReconciler
     private val dailyLimitMinutes = MutableStateFlow(DEFAULT_DAILY_LIMIT_MINUTES)
 
     override fun onCreate() {
         super.onCreate()
-        database = AppDatabase.getInstance(this)
+        database = ParentalDatabase.getInstance(this)
         timeProvider = DefaultTimeProvider(this)
         reconciler = UsageStatsReconciler(this, database)
         createNotificationChannel()
@@ -122,7 +122,7 @@ class UsageTrackingService : Service() {
 
     private fun observeForegroundChanges() {
         serviceScope.launch {
-            ForegroundAppService.appInForeground.collectLatest { packageName ->
+            AppMonitorService.appInForeground.collectLatest { packageName ->
                 if (packageName != null && packageName != currentPackage) {
                     currentPackage = packageName
                     sessionStartTime = System.currentTimeMillis()

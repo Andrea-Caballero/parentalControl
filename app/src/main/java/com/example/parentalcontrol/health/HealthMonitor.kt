@@ -2,8 +2,8 @@ package com.example.parentalcontrol.health
 
 import android.content.Context
 import androidx.work.*
-import com.example.parentalcontrol.data.local.AppDatabase
-import com.example.parentalcontrol.data.local.OutboxEntity
+import com.example.parentalcontrol.data.db.ParentalDatabase
+import com.example.parentalcontrol.data.model.OutboxEntity
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -33,7 +33,7 @@ class HealthMonitor(private val context: Context) {
     }
 
     private val healthChecker = HealthChecker(context)
-    private val database = AppDatabase.getInstance(context)
+    private val database = ParentalDatabase.getInstance(context)
 
     private val _healthState = MutableStateFlow<HealthCheckResult?>(null)
     val healthState: StateFlow<HealthCheckResult?> = _healthState.asStateFlow()

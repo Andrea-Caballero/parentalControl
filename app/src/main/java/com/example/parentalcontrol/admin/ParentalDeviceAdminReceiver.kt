@@ -9,10 +9,10 @@ import android.widget.Toast
  * Device Admin Receiver para control parental.
  * Provee funcionalidad de bloqueo de dispositivo (lockNow).
  */
-class DeviceAdminReceiver : DeviceAdminReceiver() {
+class ParentalDeviceAdminReceiver : DeviceAdminReceiver() {
 
     companion object {
-        const val TAG = "DeviceAdminReceiver"
+        const val TAG = "ParentalDeviceAdminReceiver"
     }
 
     override fun onEnabled(context: Context, intent: Intent) {

@@ -1,5 +1,14 @@
 package com.example.parentalcontrol.data.local
 
+import com.example.parentalcontrol.data.db.ParentalDatabase
+import com.example.parentalcontrol.data.model.AppPolicyEntity
+import com.example.parentalcontrol.data.model.BehavioralEventEntity
+import com.example.parentalcontrol.data.model.GrantEntity
+import com.example.parentalcontrol.data.model.OutboxEntity
+import com.example.parentalcontrol.data.model.PolicyEntity
+import com.example.parentalcontrol.data.model.TimeRequestEntity
+import com.example.parentalcontrol.data.model.UsageTodayEntity
+import com.example.parentalcontrol.data.model.WindowEntity
 import com.example.parentalcontrol.domain.*
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
@@ -11,7 +20,7 @@ import java.time.format.DateTimeFormatter
 import java.util.UUID
 
 class LocalDataSource(
-    private val database: AppDatabase
+    private val database: ParentalDatabase
 ) {
     private val policyDao = database.policyDao()
     private val appPolicyDao = database.appPolicyDao()

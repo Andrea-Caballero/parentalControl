@@ -5,7 +5,8 @@ import android.app.usage.UsageStatsManager
 import android.content.Context
 import android.os.Build
 import android.provider.Settings
-import com.example.parentalcontrol.data.local.AppDatabase
+import com.example.parentalcontrol.data.db.ParentalDatabase
+import com.example.parentalcontrol.data.model.UsageTodayEntity
 import com.example.parentalcontrol.time.DefaultTimeProvider
 import com.example.parentalcontrol.time.TimeProvider
 import kotlinx.coroutines.Dispatchers
@@ -14,7 +15,7 @@ import kotlinx.coroutines.withContext
 
 class UsageStatsReconciler(
     private val context: Context,
-    private val database: AppDatabase,
+    private val database: ParentalDatabase,
     private val timeProvider: TimeProvider = DefaultTimeProvider(context)
 ) {
     companion object {
@@ -170,7 +171,7 @@ class UsageStatsReconciler(
             val existing = database.usageDao().getUsage(packageName, serverDate)
             if (existing == null || minutesDelta > existing.usage_minutes) {
                 database.usageDao().upsertUsage(
-                    com.example.parentalcontrol.data.local.UsageTodayEntity(
+                    com.example.parentalcontrol.data.model.UsageTodayEntity(
                         package_name = packageName,
                         server_date = serverDate,
                         usage_minutes = minutesDelta

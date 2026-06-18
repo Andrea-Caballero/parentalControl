@@ -2,8 +2,8 @@ package com.example.parentalcontrol.reward
 
 import android.content.Context
 import android.util.Log
-import com.example.parentalcontrol.data.local.AppDatabase
-import com.example.parentalcontrol.data.local.GrantEntity
+import com.example.parentalcontrol.data.db.ParentalDatabase
+import com.example.parentalcontrol.data.model.GrantEntity
 import com.example.parentalcontrol.time.TimeProvider
 import com.example.parentalcontrol.time.DefaultTimeProvider
 import kotlinx.coroutines.flow.Flow
@@ -41,7 +41,7 @@ class RewardManager private constructor(context: Context) {
         }
     }
 
-    private val database = AppDatabase.getInstance(context)
+    private val database = ParentalDatabase.getInstance(context)
     private val grantDao = database.grantDao()
     private val timeProvider: TimeProvider = DefaultTimeProvider(context)
     

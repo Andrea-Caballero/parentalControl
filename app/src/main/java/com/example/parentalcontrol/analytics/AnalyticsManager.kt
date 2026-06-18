@@ -3,8 +3,8 @@ package com.example.parentalcontrol.analytics
 import android.content.Context
 import android.util.Log
 import com.example.parentalcontrol.auth.DeviceAuthService
-import com.example.parentalcontrol.data.local.AppDatabase
-import com.example.parentalcontrol.data.local.BehavioralEventEntity
+import com.example.parentalcontrol.data.db.ParentalDatabase
+import com.example.parentalcontrol.data.model.BehavioralEventEntity
 import com.example.parentalcontrol.time.DefaultTimeProvider
 import com.example.parentalcontrol.time.TimeProvider
 import kotlinx.coroutines.CoroutineScope
@@ -99,7 +99,7 @@ class AnalyticsManager private constructor(context: Context) {
     }
 
     private val context = context
-    private val database = AppDatabase.getInstance(context)
+    private val database = ParentalDatabase.getInstance(context)
     private val eventDao = database.behavioralEventDao()
     private val timeProvider: TimeProvider = DefaultTimeProvider(context)
     private val analyticsScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)

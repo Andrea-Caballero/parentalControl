@@ -11,7 +11,7 @@ import android.os.Build
 import android.os.PowerManager
 import android.provider.Settings
 import android.view.accessibility.AccessibilityManager
-import com.example.parentalcontrol.admin.DeviceAdminReceiver
+import com.example.parentalcontrol.admin.ParentalDeviceAdminReceiver
 
 /**
  * Resultado de verificación de salud.
@@ -77,7 +77,7 @@ class HealthChecker(private val context: Context) {
 
     companion object {
         private const val ADMIN_PKG = "com.example.parentalcontrol"
-        private const val ADMIN_CLASS = "com.example.parentalcontrol.admin.DeviceAdminReceiver"
+        private const val ADMIN_CLASS = "com.example.parentalcontrol.admin.ParentalDeviceAdminReceiver"
     }
 
     private val devicePolicyManager: DevicePolicyManager by lazy {

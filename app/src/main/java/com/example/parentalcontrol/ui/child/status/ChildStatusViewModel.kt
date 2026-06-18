@@ -5,8 +5,8 @@ import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
-import com.example.parentalcontrol.data.local.AppDatabase
-import com.example.parentalcontrol.data.local.TimeRequestEntity
+import com.example.parentalcontrol.data.db.ParentalDatabase
+import com.example.parentalcontrol.data.model.TimeRequestEntity
 import com.example.parentalcontrol.health.DegradationAlertManager
 import com.example.parentalcontrol.health.HealthChecker
 import com.example.parentalcontrol.health.Permission
@@ -46,7 +46,7 @@ class ChildStatusViewModel @Inject constructor(
         }
     }
 
-    private val database = AppDatabase.getInstance(context)
+    private val database = ParentalDatabase.getInstance(context)
     private val usageDao = database.usageDao()
     private val timeRequestDao = database.timeRequestDao()
     private val rewardManager = RewardManager.getInstance(context)

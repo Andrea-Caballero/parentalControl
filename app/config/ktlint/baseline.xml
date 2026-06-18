@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <baseline version="1.0">
-	<file name="src/androidTest/java/com/example/parentalcontrol/ExampleInstrumentedTest.kt">
+	<file name="src/androidTest/java/com/tudominio/parentalcontrol/ExampleInstrumentedTest.kt">
 		<error line="1" column="1" source="final-newline" />
 		<error line="3" column="1" source="import-ordering" />
 		<error line="10" column="1" source="no-unused-imports" />
@@ -10,18 +10,18 @@
 		<error line="14" column="1" source="no-unused-imports" />
 		<error line="15" column="1" source="no-unused-imports" />
 	</file>
-	<file name="src/androidTest/java/com/example/parentalcontrol/MyHiltTestRunner.kt">
+	<file name="src/androidTest/java/com/tudominio/parentalcontrol/MyHiltTestRunner.kt">
 		<error line="1" column="1" source="final-newline" />
 		<error line="3" column="1" source="import-ordering" />
 	</file>
-	<file name="src/androidTest/java/com/example/parentalcontrol/accessibility/AppMonitorServiceTest.kt">
+	<file name="src/androidTest/java/com/tudominio/parentalcontrol/accessibility/AppMonitorServiceTest.kt">
 		<error line="1" column="1" source="final-newline" />
 		<error line="4" column="1" source="no-unused-imports" />
 		<error line="5" column="1" source="no-unused-imports" />
 		<error line="7" column="1" source="no-unused-imports" />
 		<error line="12" column="1" source="no-unused-imports" />
 	</file>
-	<file name="src/androidTest/java/com/example/parentalcontrol/admin/LockManagerTest.kt">
+	<file name="src/androidTest/java/com/tudominio/parentalcontrol/admin/LockManagerTest.kt">
 		<error line="3" column="1" source="import-ordering" />
 		<error line="6" column="1" source="no-unused-imports" />
 		<error line="7" column="1" source="no-unused-imports" />
@@ -29,7 +29,7 @@
 		<error line="11" column="1" source="no-unused-imports" />
 		<error line="12" column="1" source="no-unused-imports" />
 	</file>
-	<file name="src/androidTest/java/com/example/parentalcontrol/receiver/BootReceiverTest.kt">
+	<file name="src/androidTest/java/com/tudominio/parentalcontrol/receiver/BootReceiverTest.kt">
 		<error line="3" column="1" source="import-ordering" />
 		<error line="9" column="1" source="no-unused-imports" />
 		<error line="11" column="1" source="no-unused-imports" />
@@ -40,12 +40,12 @@
 		<error line="74" column="1" source="no-trailing-spaces" />
 		<error line="77" column="1" source="no-trailing-spaces" />
 	</file>
-	<file name="src/androidTest/java/com/example/parentalcontrol/data/db/ParentalDatabaseTest.kt">
+	<file name="src/androidTest/java/com/tudominio/parentalcontrol/data/db/ParentalDatabaseTest.kt">
 		<error line="18" column="1" source="no-unused-imports" />
 		<error line="23" column="1" source="no-unused-imports" />
 		<error line="24" column="1" source="no-unused-imports" />
 	</file>
-	<file name="src/androidTest/java/com/example/parentalcontrol/enforcement/EnforcementControllerTest.kt">
+	<file name="src/androidTest/java/com/tudominio/parentalcontrol/enforcement/EnforcementControllerTest.kt">
 		<error line="3" column="1" source="import-ordering" />
 		<error line="8" column="1" source="no-wildcard-imports" />
 		<error line="15" column="1" source="no-unused-imports" />
@@ -63,7 +63,7 @@
 		<error line="126" column="1" source="no-trailing-spaces" />
 		<error line="139" column="1" source="no-trailing-spaces" />
 	</file>
-	<file name="src/androidTest/java/com/example/parentalcontrol/health/HealthCheckerTest.kt">
+	<file name="src/androidTest/java/com/tudominio/parentalcontrol/health/HealthCheckerTest.kt">
 		<error line="3" column="1" source="import-ordering" />
 		<error line="6" column="1" source="no-unused-imports" />
 		<error line="10" column="1" source="no-unused-imports" />
@@ -82,7 +82,7 @@
 		<error line="109" column="1" source="no-trailing-spaces" />
 		<error line="117" column="1" source="no-trailing-spaces" />
 	</file>
-	<file name="src/androidTest/java/com/example/parentalcontrol/keystore/SecureStorageTest.kt">
+	<file name="src/androidTest/java/com/tudominio/parentalcontrol/keystore/SecureStorageTest.kt">
 		<error line="4" column="1" source="no-unused-imports" />
 		<error line="7" column="1" source="no-unused-imports" />
 		<error line="8" column="1" source="no-unused-imports" />
@@ -92,14 +92,14 @@
 		<error line="13" column="1" source="no-unused-imports" />
 		<error line="22" column="1" source="no-unused-imports" />
 	</file>
-	<file name="src/androidTest/java/com/example/parentalcontrol/overlay/BlockOverlayServiceTest.kt">
+	<file name="src/androidTest/java/com/tudominio/parentalcontrol/overlay/BlockOverlayServiceTest.kt">
 		<error line="3" column="1" source="import-ordering" />
 		<error line="10" column="1" source="no-unused-imports" />
 		<error line="11" column="1" source="no-unused-imports" />
 		<error line="12" column="1" source="no-unused-imports" />
 		<error line="38" column="1" source="no-trailing-spaces" />
 	</file>
-	<file name="src/androidTest/java/com/example/parentalcontrol/reconciliation/UsageStatsReconcilerTest.kt">
+	<file name="src/androidTest/java/com/tudominio/parentalcontrol/reconciliation/UsageStatsReconcilerTest.kt">
 		<error line="3" column="1" source="import-ordering" />
 		<error line="12" column="1" source="no-unused-imports" />
 		<error line="14" column="1" source="no-unused-imports" />
@@ -109,7 +109,7 @@
 		<error line="53" column="1" source="no-trailing-spaces" />
 		<error line="57" column="1" source="indent" />
 	</file>
-	<file name="src/androidTest/java/com/example/parentalcontrol/security/TamperDetectorTest.kt">
+	<file name="src/androidTest/java/com/tudominio/parentalcontrol/security/TamperDetectorTest.kt">
 		<error line="3" column="1" source="import-ordering" />
 		<error line="12" column="1" source="no-unused-imports" />
 		<error line="14" column="1" source="no-unused-imports" />
@@ -122,17 +122,17 @@
 		<error line="116" column="1" source="no-trailing-spaces" />
 		<error line="128" column="1" source="no-trailing-spaces" />
 	</file>
-	<file name="src/main/java/com/example/parentalcontrol/MainActivity.kt">
+	<file name="src/main/java/com/tudominio/parentalcontrol/MainActivity.kt">
 		<error line="8" column="1" source="no-wildcard-imports" />
 	</file>
-	<file name="src/main/java/com/example/parentalcontrol/accessibility/AppMonitorService.kt">
+	<file name="src/main/java/com/tudominio/parentalcontrol/accessibility/AppMonitorService.kt">
 		<error line="72" column="1" source="indent" />
 	</file>
-	<file name="src/main/java/com/example/parentalcontrol/admin/LockManager.kt">
+	<file name="src/main/java/com/tudominio/parentalcontrol/admin/LockManager.kt">
 		<error line="50" column="1" source="no-trailing-spaces" />
 		<error line="50" column="7" source="no-trailing-spaces" />
 	</file>
-	<file name="src/main/java/com/example/parentalcontrol/analytics/AnalyticsManager.kt">
+	<file name="src/main/java/com/tudominio/parentalcontrol/analytics/AnalyticsManager.kt">
 		<error line="17" column="1" source="no-trailing-spaces" />
 		<error line="17" column="3" source="no-trailing-spaces" />
 		<error line="19" column="1" source="no-trailing-spaces" />
@@ -179,7 +179,7 @@
 		<error line="310" column="18" source="no-multi-spaces" />
 		<error line="311" column="18" source="no-multi-spaces" />
 	</file>
-	<file name="src/main/java/com/example/parentalcontrol/analytics/AnalyticsSyncWorker.kt">
+	<file name="src/main/java/com/tudominio/parentalcontrol/analytics/AnalyticsSyncWorker.kt">
 		<error line="5" column="1" source="no-wildcard-imports" />
 		<error line="12" column="1" source="no-trailing-spaces" />
 		<error line="12" column="3" source="no-trailing-spaces" />
@@ -201,7 +201,7 @@
 		<error line="104" column="1" source="no-trailing-spaces" />
 		<error line="109" column="1" source="no-trailing-spaces" />
 	</file>
-	<file name="src/main/java/com/example/parentalcontrol/auth/DeviceAuthManager.kt">
+	<file name="src/main/java/com/tudominio/parentalcontrol/auth/DeviceAuthManager.kt">
 		<error line="8" column="1" source="no-wildcard-imports" />
 		<error line="9" column="1" source="no-wildcard-imports" />
 		<error line="10" column="1" source="no-wildcard-imports" />
@@ -218,7 +218,7 @@
 		<error line="302" column="1" source="no-trailing-spaces" />
 		<error line="309" column="1" source="no-trailing-spaces" />
 	</file>
-	<file name="src/main/java/com/example/parentalcontrol/auth/DeviceAuthService.kt">
+	<file name="src/main/java/com/tudominio/parentalcontrol/auth/DeviceAuthService.kt">
 		<error line="26" column="1" source="no-trailing-spaces" />
 		<error line="41" column="1" source="no-trailing-spaces" />
 		<error line="45" column="1" source="no-trailing-spaces" />
@@ -248,17 +248,17 @@
 		<error line="305" column="1" source="no-trailing-spaces" />
 		<error line="308" column="1" source="no-trailing-spaces" />
 	</file>
-	<file name="src/main/java/com/example/parentalcontrol/consent/ConsentManager.kt">
+	<file name="src/main/java/com/tudominio/parentalcontrol/consent/ConsentManager.kt">
 		<error line="4" column="1" source="no-unused-imports" />
 	</file>
-	<file name="src/main/java/com/example/parentalcontrol/consent/ConsentViewModel.kt">
+	<file name="src/main/java/com/tudominio/parentalcontrol/consent/ConsentViewModel.kt">
 		<error line="46" column="1" source="no-trailing-spaces" />
 		<error line="125" column="1" source="no-trailing-spaces" />
 		<error line="128" column="1" source="no-trailing-spaces" />
 		<error line="131" column="1" source="no-trailing-spaces" />
 		<error line="134" column="1" source="no-trailing-spaces" />
 	</file>
-	<file name="src/main/java/com/example/parentalcontrol/copy/CopyManager.kt">
+	<file name="src/main/java/com/tudominio/parentalcontrol/copy/CopyManager.kt">
 		<error line="3" column="1" source="import-ordering" />
 		<error line="11" column="1" source="no-trailing-spaces" />
 		<error line="11" column="3" source="no-trailing-spaces" />
@@ -268,10 +268,10 @@
 		<error line="302" column="1" source="no-trailing-spaces" />
 		<error line="307" column="60" source="indent" />
 	</file>
-	<file name="src/main/java/com/example/parentalcontrol/data/local/LocalDataSource.kt">
+	<file name="src/main/java/com/tudominio/parentalcontrol/data/local/LocalDataSource.kt">
 		<error line="12" column="1" source="no-wildcard-imports" />
 	</file>
-	<file name="src/main/java/com/example/parentalcontrol/data/local/PairedDevicesStore.kt">
+	<file name="src/main/java/com/tudominio/parentalcontrol/data/local/PairedDevicesStore.kt">
 		<error line="21" column="1" source="no-trailing-spaces" />
 		<error line="26" column="1" source="no-trailing-spaces" />
 		<error line="29" column="1" source="no-trailing-spaces" />
@@ -283,15 +283,15 @@
 		<error line="62" column="1" source="no-trailing-spaces" />
 		<error line="84" column="1" source="no-trailing-spaces" />
 	</file>
-	<file name="src/main/java/com/example/parentalcontrol/data/repository/ChildRepository.kt">
+	<file name="src/main/java/com/tudominio/parentalcontrol/data/repository/ChildRepository.kt">
 		<error line="71" column="1" source="no-trailing-spaces" />
 		<error line="131" column="1" source="no-trailing-spaces" />
 	</file>
-	<file name="src/main/java/com/example/parentalcontrol/data/repository/RulesRepository.kt">
+	<file name="src/main/java/com/tudominio/parentalcontrol/data/repository/RulesRepository.kt">
 		<error line="1" column="1" source="final-newline" />
 		<error line="3" column="23" source="no-empty-class-body" />
 	</file>
-	<file name="src/main/java/com/example/parentalcontrol/data/repository/TimeExtraRepository.kt">
+	<file name="src/main/java/com/tudominio/parentalcontrol/data/repository/TimeExtraRepository.kt">
 		<error line="3" column="1" source="import-ordering" />
 		<error line="17" column="1" source="no-trailing-spaces" />
 		<error line="17" column="3" source="no-trailing-spaces" />
@@ -321,11 +321,11 @@
 		<error line="229" column="1" source="no-trailing-spaces" />
 		<error line="245" column="1" source="no-trailing-spaces" />
 	</file>
-	<file name="src/main/java/com/example/parentalcontrol/data/repository/UsageRepository.kt">
+	<file name="src/main/java/com/tudominio/parentalcontrol/data/repository/UsageRepository.kt">
 		<error line="1" column="1" source="final-newline" />
 		<error line="3" column="23" source="no-empty-class-body" />
 	</file>
-	<file name="src/main/java/com/example/parentalcontrol/deviceowner/DeviceOwnerManager.kt">
+	<file name="src/main/java/com/tudominio/parentalcontrol/deviceowner/DeviceOwnerManager.kt">
 		<error line="9" column="1" source="no-unused-imports" />
 		<error line="14" column="1" source="no-trailing-spaces" />
 		<error line="14" column="3" source="no-trailing-spaces" />
@@ -368,7 +368,7 @@
 		<error line="513" column="1" source="no-trailing-spaces" />
 		<error line="516" column="1" source="no-trailing-spaces" />
 	</file>
-	<file name="src/main/java/com/example/parentalcontrol/disclosure/DisclosureScreen.kt">
+	<file name="src/main/java/com/tudominio/parentalcontrol/disclosure/DisclosureScreen.kt">
 		<error line="3" column="1" source="no-wildcard-imports" />
 		<error line="6" column="1" source="no-wildcard-imports" />
 		<error line="7" column="1" source="no-wildcard-imports" />
@@ -399,7 +399,7 @@
 		<error line="224" column="1" source="no-trailing-spaces" />
 		<error line="226" column="1" source="no-trailing-spaces" />
 	</file>
-	<file name="src/main/java/com/example/parentalcontrol/disclosure/TransparencyScreen.kt">
+	<file name="src/main/java/com/tudominio/parentalcontrol/disclosure/TransparencyScreen.kt">
 		<error line="3" column="1" source="no-wildcard-imports" />
 		<error line="8" column="1" source="no-wildcard-imports" />
 		<error line="9" column="1" source="no-wildcard-imports" />
@@ -423,7 +423,7 @@
 		<error line="252" column="1" source="no-trailing-spaces" />
 		<error line="254" column="1" source="no-trailing-spaces" />
 	</file>
-	<file name="src/main/java/com/example/parentalcontrol/dnsfilter/DnsFilterManager.kt">
+	<file name="src/main/java/com/tudominio/parentalcontrol/dnsfilter/DnsFilterManager.kt">
 		<error line="3" column="1" source="no-unused-imports" />
 		<error line="13" column="1" source="no-trailing-spaces" />
 		<error line="13" column="3" source="no-trailing-spaces" />
@@ -452,7 +452,7 @@
 		<error line="229" column="1" source="no-trailing-spaces" />
 		<error line="257" column="59" source="no-trailing-spaces" />
 	</file>
-	<file name="src/main/java/com/example/parentalcontrol/dnsfilter/DnsFilterService.kt">
+	<file name="src/main/java/com/tudominio/parentalcontrol/dnsfilter/DnsFilterService.kt">
 		<error line="14" column="1" source="no-unused-imports" />
 		<error line="19" column="1" source="no-trailing-spaces" />
 		<error line="19" column="3" source="no-trailing-spaces" />
@@ -511,23 +511,23 @@
 		<error line="324" column="1" source="no-trailing-spaces" />
 		<error line="327" column="1" source="no-trailing-spaces" />
 	</file>
-	<file name="src/main/java/com/example/parentalcontrol/domain/Policy.kt">
+	<file name="src/main/java/com/tudominio/parentalcontrol/domain/Policy.kt">
 		<error line="4" column="1" source="no-unused-imports" />
 		<error line="6" column="1" source="no-unused-imports" />
 	</file>
-	<file name="src/main/java/com/example/parentalcontrol/domain/usecase/GetAppUsageUseCase.kt">
+	<file name="src/main/java/com/tudominio/parentalcontrol/domain/usecase/GetAppUsageUseCase.kt">
 		<error line="1" column="1" source="final-newline" />
 		<error line="3" column="26" source="no-empty-class-body" />
 	</file>
-	<file name="src/main/java/com/example/parentalcontrol/domain/usecase/IsAppBlockedUseCase.kt">
+	<file name="src/main/java/com/tudominio/parentalcontrol/domain/usecase/IsAppBlockedUseCase.kt">
 		<error line="1" column="1" source="final-newline" />
 		<error line="3" column="27" source="no-empty-class-body" />
 	</file>
-	<file name="src/main/java/com/example/parentalcontrol/domain/usecase/SetAppLimitUseCase.kt">
+	<file name="src/main/java/com/tudominio/parentalcontrol/domain/usecase/SetAppLimitUseCase.kt">
 		<error line="1" column="1" source="final-newline" />
 		<error line="3" column="26" source="no-empty-class-body" />
 	</file>
-	<file name="src/main/java/com/example/parentalcontrol/enforcement/EnforcementController.kt">
+	<file name="src/main/java/com/tudominio/parentalcontrol/enforcement/EnforcementController.kt">
 		<error line="3" column="1" source="no-unused-imports" />
 		<error line="6" column="1" source="no-unused-imports" />
 		<error line="17" column="1" source="no-wildcard-imports" />
@@ -548,7 +548,7 @@
 		<error line="200" column="1" source="no-trailing-spaces" />
 		<error line="266" column="1" source="no-trailing-spaces" />
 	</file>
-	<file name="src/main/java/com/example/parentalcontrol/enforcement/MockPolicyManager.kt">
+	<file name="src/main/java/com/tudominio/parentalcontrol/enforcement/MockPolicyManager.kt">
 		<error line="3" column="1" source="no-wildcard-imports" />
 		<error line="23" column="35" source="indent" />
 		<error line="23" column="92" source="no-trailing-spaces" />
@@ -558,7 +558,7 @@
 		<error line="60" column="1" source="indent" />
 		<error line="60" column="78" source="indent" />
 	</file>
-	<file name="src/main/java/com/example/parentalcontrol/health/DegradationAlertManager.kt">
+	<file name="src/main/java/com/tudominio/parentalcontrol/health/DegradationAlertManager.kt">
 		<error line="20" column="1" source="no-trailing-spaces" />
 		<error line="23" column="1" source="no-trailing-spaces" />
 		<error line="26" column="1" source="no-trailing-spaces" />
@@ -585,7 +585,7 @@
 		<error line="129" column="1" source="no-trailing-spaces" />
 		<error line="154" column="1" source="max-line-length" />
 	</file>
-	<file name="src/main/java/com/example/parentalcontrol/health/HealthChecker.kt">
+	<file name="src/main/java/com/tudominio/parentalcontrol/health/HealthChecker.kt">
 		<error line="8" column="1" source="no-unused-imports" />
 		<error line="10" column="1" source="no-unused-imports" />
 		<error line="14" column="1" source="no-unused-imports" />
@@ -594,7 +594,7 @@
 		<error line="187" column="1" source="no-trailing-spaces" />
 		<error line="203" column="30" source="no-trailing-spaces" />
 	</file>
-	<file name="src/main/java/com/example/parentalcontrol/health/HealthMonitor.kt">
+	<file name="src/main/java/com/tudominio/parentalcontrol/health/HealthMonitor.kt">
 		<error line="4" column="1" source="no-wildcard-imports" />
 		<error line="22" column="1" source="no-trailing-spaces" />
 		<error line="25" column="1" source="no-trailing-spaces" />
@@ -602,11 +602,11 @@
 		<error line="113" column="1" source="no-trailing-spaces" />
 		<error line="194" column="1" source="no-trailing-spaces" />
 	</file>
-	<file name="src/main/java/com/example/parentalcontrol/keystore/SecureStorage.kt">
+	<file name="src/main/java/com/tudominio/parentalcontrol/keystore/SecureStorage.kt">
 		<error line="42" column="1" source="no-trailing-spaces" />
 		<error line="51" column="1" source="no-trailing-spaces" />
 	</file>
-	<file name="src/main/java/com/example/parentalcontrol/network/SupabaseClientProvider.kt">
+	<file name="src/main/java/com/tudominio/parentalcontrol/network/SupabaseClientProvider.kt">
 		<error line="4" column="1" source="no-unused-imports" />
 		<error line="7" column="1" source="no-wildcard-imports" />
 		<error line="8" column="1" source="no-wildcard-imports" />
@@ -657,7 +657,7 @@
 		<error line="275" column="31" source="string-template" />
 		<error line="281" column="1" source="no-trailing-spaces" />
 	</file>
-	<file name="src/main/java/com/example/parentalcontrol/onboarding/OnboardingScreen.kt">
+	<file name="src/main/java/com/tudominio/parentalcontrol/onboarding/OnboardingScreen.kt">
 		<error line="3" column="1" source="no-unused-imports" />
 		<error line="4" column="1" source="no-unused-imports" />
 		<error line="7" column="1" source="no-wildcard-imports" />
@@ -727,7 +727,7 @@
 		<error line="539" column="1" source="no-trailing-spaces" />
 		<error line="541" column="1" source="no-trailing-spaces" />
 	</file>
-	<file name="src/main/java/com/example/parentalcontrol/onboarding/OnboardingState.kt">
+	<file name="src/main/java/com/tudominio/parentalcontrol/onboarding/OnboardingState.kt">
 		<error line="9" column="1" source="no-unused-imports" />
 		<error line="18" column="1" source="no-trailing-spaces" />
 		<error line="18" column="3" source="no-trailing-spaces" />
@@ -762,7 +762,7 @@
 		<error line="360" column="1" source="no-trailing-spaces" />
 		<error line="364" column="1" source="no-trailing-spaces" />
 	</file>
-	<file name="src/main/java/com/example/parentalcontrol/outbox/OutboxManager.kt">
+	<file name="src/main/java/com/tudominio/parentalcontrol/outbox/OutboxManager.kt">
 		<error line="11" column="1" source="no-unused-imports" />
 		<error line="12" column="1" source="no-unused-imports" />
 		<error line="16" column="1" source="no-trailing-spaces" />
@@ -773,7 +773,7 @@
 		<error line="95" column="1" source="no-trailing-spaces" />
 		<error line="97" column="1" source="no-trailing-spaces" />
 	</file>
-	<file name="src/main/java/com/example/parentalcontrol/overlay/BlockOverlayService.kt">
+	<file name="src/main/java/com/tudominio/parentalcontrol/overlay/BlockOverlayService.kt">
 		<error line="4" column="1" source="no-unused-imports" />
 		<error line="7" column="1" source="no-unused-imports" />
 		<error line="18" column="1" source="no-wildcard-imports" />
@@ -784,7 +784,7 @@
 		<error line="172" column="1" source="indent" />
 		<error line="173" column="1" source="indent" />
 	</file>
-	<file name="src/main/java/com/example/parentalcontrol/pairing/PairingManager.kt">
+	<file name="src/main/java/com/tudominio/parentalcontrol/pairing/PairingManager.kt">
 		<error line="6" column="1" source="no-unused-imports" />
 		<error line="20" column="1" source="no-trailing-spaces" />
 		<error line="20" column="3" source="no-trailing-spaces" />
@@ -814,7 +814,7 @@
 		<error line="351" column="1" source="no-trailing-spaces" />
 		<error line="354" column="1" source="no-trailing-spaces" />
 	</file>
-	<file name="src/main/java/com/example/parentalcontrol/pairing/PairingViewModel.kt">
+	<file name="src/main/java/com/tudominio/parentalcontrol/pairing/PairingViewModel.kt">
 		<error line="3" column="1" source="import-ordering" />
 		<error line="77" column="1" source="no-trailing-spaces" />
 		<error line="83" column="1" source="no-trailing-spaces" />
@@ -825,7 +825,7 @@
 		<error line="127" column="1" source="no-trailing-spaces" />
 		<error line="232" column="1" source="no-trailing-spaces" />
 	</file>
-	<file name="src/main/java/com/example/parentalcontrol/pairing/ui/PairingScreen.kt">
+	<file name="src/main/java/com/tudominio/parentalcontrol/pairing/ui/PairingScreen.kt">
 		<error line="13" column="1" source="no-wildcard-imports" />
 		<error line="20" column="1" source="no-wildcard-imports" />
 		<error line="21" column="1" source="no-wildcard-imports" />
@@ -870,7 +870,7 @@
 		<error line="482" column="1" source="no-trailing-spaces" />
 		<error line="491" column="1" source="no-trailing-spaces" />
 	</file>
-	<file name="src/main/java/com/example/parentalcontrol/provisioning/ProvisioningGuide.kt">
+	<file name="src/main/java/com/tudominio/parentalcontrol/provisioning/ProvisioningGuide.kt">
 		<error line="5" column="1" source="no-trailing-spaces" />
 		<error line="5" column="3" source="no-trailing-spaces" />
 		<error line="7" column="1" source="no-trailing-spaces" />
@@ -893,7 +893,7 @@
 		<error line="169" column="1" source="max-line-length" />
 		<error line="170" column="1" source="max-line-length" />
 	</file>
-	<file name="src/main/java/com/example/parentalcontrol/push/FcmHelper.kt">
+	<file name="src/main/java/com/tudominio/parentalcontrol/push/FcmHelper.kt">
 		<error line="8" column="1" source="no-trailing-spaces" />
 		<error line="8" column="3" source="no-trailing-spaces" />
 		<error line="15" column="1" source="no-trailing-spaces" />
@@ -904,7 +904,7 @@
 		<error line="54" column="1" source="no-trailing-spaces" />
 		<error line="58" column="1" source="no-trailing-spaces" />
 	</file>
-	<file name="src/main/java/com/example/parentalcontrol/push/FcmPushService.kt">
+	<file name="src/main/java/com/tudominio/parentalcontrol/push/FcmPushService.kt">
 		<error line="6" column="1" source="no-wildcard-imports" />
 		<error line="10" column="1" source="no-trailing-spaces" />
 		<error line="10" column="3" source="no-trailing-spaces" />
@@ -927,7 +927,7 @@
 		<error line="236" column="1" source="no-trailing-spaces" />
 		<error line="240" column="1" source="no-trailing-spaces" />
 	</file>
-	<file name="src/main/java/com/example/parentalcontrol/realtime/RealtimeManager.kt">
+	<file name="src/main/java/com/tudominio/parentalcontrol/realtime/RealtimeManager.kt">
 		<error line="10" column="1" source="no-wildcard-imports" />
 		<error line="11" column="1" source="no-wildcard-imports" />
 		<error line="12" column="1" source="no-wildcard-imports" />
@@ -967,7 +967,7 @@
 		<error line="192" column="1" source="no-consecutive-blank-lines" />
 		<error line="200" column="1" source="no-trailing-spaces" />
 	</file>
-	<file name="src/main/java/com/example/parentalcontrol/realtime/RealtimeViewModel.kt">
+	<file name="src/main/java/com/tudominio/parentalcontrol/realtime/RealtimeViewModel.kt">
 		<error line="3" column="1" source="import-ordering" />
 		<error line="10" column="1" source="no-wildcard-imports" />
 		<error line="15" column="1" source="no-trailing-spaces" />
@@ -983,13 +983,13 @@
 		<error line="181" column="1" source="no-trailing-spaces" />
 		<error line="192" column="1" source="no-trailing-spaces" />
 	</file>
-	<file name="src/main/java/com/example/parentalcontrol/reconciliation/UsageStatsReconciler.kt">
+	<file name="src/main/java/com/tudominio/parentalcontrol/reconciliation/UsageStatsReconciler.kt">
 		<error line="6" column="1" source="no-unused-imports" />
 	</file>
-	<file name="src/main/java/com/example/parentalcontrol/service/MonitorForegroundService.kt">
+	<file name="src/main/java/com/tudominio/parentalcontrol/service/MonitorForegroundService.kt">
 		<error line="28" column="1" source="no-unused-imports" />
 	</file>
-	<file name="src/main/java/com/example/parentalcontrol/reward/RewardManager.kt">
+	<file name="src/main/java/com/tudominio/parentalcontrol/reward/RewardManager.kt">
 		<error line="3" column="1" source="import-ordering" />
 		<error line="13" column="1" source="no-unused-imports" />
 		<error line="17" column="1" source="no-trailing-spaces" />
@@ -1014,7 +1014,7 @@
 		<error line="214" column="1" source="no-trailing-spaces" />
 		<error line="243" column="1" source="no-trailing-spaces" />
 	</file>
-	<file name="src/main/java/com/example/parentalcontrol/security/AntiEvasionService.kt">
+	<file name="src/main/java/com/tudominio/parentalcontrol/security/AntiEvasionService.kt">
 		<error line="5" column="1" source="no-unused-imports" />
 		<error line="6" column="1" source="no-unused-imports" />
 		<error line="7" column="1" source="no-unused-imports" />
@@ -1034,7 +1034,7 @@
 		<error line="158" column="1" source="no-trailing-spaces" />
 		<error line="160" column="61" source="indent" />
 	</file>
-	<file name="src/main/java/com/example/parentalcontrol/security/TamperDetector.kt">
+	<file name="src/main/java/com/tudominio/parentalcontrol/security/TamperDetector.kt">
 		<error line="3" column="1" source="no-unused-imports" />
 		<error line="5" column="1" source="no-unused-imports" />
 		<error line="6" column="1" source="no-unused-imports" />
@@ -1053,7 +1053,7 @@
 		<error line="252" column="20" source="indent" />
 		<error line="254" column="31" source="indent" />
 	</file>
-	<file name="src/main/java/com/example/parentalcontrol/security/integrity/IntegrityResponseHandler.kt">
+	<file name="src/main/java/com/tudominio/parentalcontrol/security/integrity/IntegrityResponseHandler.kt">
 		<error line="11" column="1" source="no-trailing-spaces" />
 		<error line="11" column="3" source="no-trailing-spaces" />
 		<error line="13" column="1" source="no-trailing-spaces" />
@@ -1091,7 +1091,7 @@
 		<error line="313" column="1" source="no-trailing-spaces" />
 		<error line="316" column="1" source="no-trailing-spaces" />
 	</file>
-	<file name="src/main/java/com/example/parentalcontrol/security/integrity/PlayIntegrityManager.kt">
+	<file name="src/main/java/com/tudominio/parentalcontrol/security/integrity/PlayIntegrityManager.kt">
 		<error line="13" column="1" source="no-wildcard-imports" />
 		<error line="14" column="1" source="no-wildcard-imports" />
 		<error line="15" column="1" source="no-wildcard-imports" />
@@ -1130,7 +1130,7 @@
 		<error line="272" column="1" source="no-trailing-spaces" />
 		<error line="275" column="1" source="no-trailing-spaces" />
 	</file>
-	<file name="src/main/java/com/example/parentalcontrol/security/network/TlsConfig.kt">
+	<file name="src/main/java/com/tudominio/parentalcontrol/security/network/TlsConfig.kt">
 		<error line="4" column="1" source="no-unused-imports" />
 		<error line="15" column="1" source="no-unused-imports" />
 		<error line="20" column="1" source="no-trailing-spaces" />
@@ -1157,7 +1157,7 @@
 		<error line="284" column="1" source="indent" />
 		<error line="285" column="1" source="indent" />
 	</file>
-	<file name="src/main/java/com/example/parentalcontrol/sync/SyncManager.kt">
+	<file name="src/main/java/com/tudominio/parentalcontrol/sync/SyncManager.kt">
 		<error line="12" column="1" source="no-wildcard-imports" />
 		<error line="13" column="1" source="no-wildcard-imports" />
 		<error line="14" column="1" source="no-wildcard-imports" />
@@ -1169,17 +1169,17 @@
 		<error line="22" column="1" source="no-wildcard-imports" />
 		<error line="357" column="1" source="indent" />
 	</file>
-	<file name="src/main/java/com/example/parentalcontrol/time/TimeProvider.kt">
+	<file name="src/main/java/com/tudominio/parentalcontrol/time/TimeProvider.kt">
 		<error line="7" column="1" source="no-unused-imports" />
 		<error line="16" column="1" source="no-unused-imports" />
 	</file>
-	<file name="src/main/java/com/example/parentalcontrol/ui/child/components/ChildComponents.kt">
+	<file name="src/main/java/com/tudominio/parentalcontrol/ui/child/components/ChildComponents.kt">
 		<error line="3" column="1" source="no-wildcard-imports" />
 		<error line="7" column="1" source="no-wildcard-imports" />
 		<error line="8" column="1" source="no-wildcard-imports" />
 		<error line="9" column="1" source="no-wildcard-imports" />
 	</file>
-	<file name="src/main/java/com/example/parentalcontrol/ui/child/components/DegradedAlertDialog.kt">
+	<file name="src/main/java/com/tudominio/parentalcontrol/ui/child/components/DegradedAlertDialog.kt">
 		<error line="4" column="1" source="no-wildcard-imports" />
 		<error line="6" column="1" source="no-wildcard-imports" />
 		<error line="13" column="1" source="no-wildcard-imports" />
@@ -1204,7 +1204,7 @@
 		<error line="218" column="1" source="no-trailing-spaces" />
 		<error line="220" column="1" source="no-trailing-spaces" />
 	</file>
-	<file name="src/main/java/com/example/parentalcontrol/ui/child/components/ExtraTimeComponents.kt">
+	<file name="src/main/java/com/tudominio/parentalcontrol/ui/child/components/ExtraTimeComponents.kt">
 		<error line="3" column="1" source="no-wildcard-imports" />
 		<error line="4" column="1" source="no-unused-imports" />
 		<error line="5" column="1" source="no-wildcard-imports" />
@@ -1214,7 +1214,7 @@
 		<error line="65" column="28" source="string-template" />
 		<error line="102" column="1" source="no-trailing-spaces" />
 	</file>
-	<file name="src/main/java/com/example/parentalcontrol/ui/child/components/RewardComponents.kt">
+	<file name="src/main/java/com/tudominio/parentalcontrol/ui/child/components/RewardComponents.kt">
 		<error line="3" column="1" source="no-wildcard-imports" />
 		<error line="5" column="1" source="no-wildcard-imports" />
 		<error line="9" column="1" source="no-wildcard-imports" />
@@ -1238,7 +1238,7 @@
 		<error line="327" column="1" source="no-trailing-spaces" />
 		<error line="349" column="1" source="no-trailing-spaces" />
 	</file>
-	<file name="src/main/java/com/example/parentalcontrol/ui/child/extra/ExtraTimeScreen.kt">
+	<file name="src/main/java/com/tudominio/parentalcontrol/ui/child/extra/ExtraTimeScreen.kt">
 		<error line="3" column="1" source="no-wildcard-imports" />
 		<error line="9" column="1" source="no-wildcard-imports" />
 		<error line="10" column="1" source="no-wildcard-imports" />
@@ -1278,7 +1278,7 @@
 		<error line="344" column="1" source="no-trailing-spaces" />
 		<error line="346" column="1" source="no-trailing-spaces" />
 	</file>
-	<file name="src/main/java/com/example/parentalcontrol/ui/child/screens/BlockScreen.kt">
+	<file name="src/main/java/com/tudominio/parentalcontrol/ui/child/screens/BlockScreen.kt">
 		<error line="4" column="1" source="no-wildcard-imports" />
 		<error line="8" column="1" source="no-wildcard-imports" />
 		<error line="9" column="1" source="no-wildcard-imports" />
@@ -1294,7 +1294,7 @@
 		<error line="219" column="39" source="no-trailing-spaces" />
 		<error line="221" column="36" source="no-trailing-spaces" />
 	</file>
-	<file name="src/main/java/com/example/parentalcontrol/ui/child/screens/HomeScreen.kt">
+	<file name="src/main/java/com/tudominio/parentalcontrol/ui/child/screens/HomeScreen.kt">
 		<error line="3" column="1" source="no-wildcard-imports" />
 		<error line="4" column="1" source="no-wildcard-imports" />
 		<error line="8" column="1" source="no-wildcard-imports" />
@@ -1303,7 +1303,7 @@
 		<error line="15" column="1" source="no-wildcard-imports" />
 		<error line="99" column="43" source="no-trailing-spaces" />
 	</file>
-	<file name="src/main/java/com/example/parentalcontrol/ui/child/status/ChildStatusScreen.kt">
+	<file name="src/main/java/com/tudominio/parentalcontrol/ui/child/status/ChildStatusScreen.kt">
 		<error line="3" column="1" source="no-wildcard-imports" />
 		<error line="4" column="1" source="no-wildcard-imports" />
 		<error line="6" column="1" source="no-wildcard-imports" />
@@ -1357,7 +1357,7 @@
 		<error line="536" column="1" source="no-trailing-spaces" />
 		<error line="538" column="1" source="no-trailing-spaces" />
 	</file>
-	<file name="src/main/java/com/example/parentalcontrol/ui/child/status/ChildStatusViewModel.kt">
+	<file name="src/main/java/com/tudominio/parentalcontrol/ui/child/status/ChildStatusViewModel.kt">
 		<error line="3" column="1" source="import-ordering" />
 		<error line="19" column="1" source="no-wildcard-imports" />
 		<error line="33" column="1" source="no-trailing-spaces" />
@@ -1374,13 +1374,13 @@
 		<error line="344" column="1" source="no-trailing-spaces" />
 		<error line="354" column="1" source="no-trailing-spaces" />
 	</file>
-	<file name="src/main/java/com/example/parentalcontrol/ui/parent/components/DeviceComponents.kt">
+	<file name="src/main/java/com/tudominio/parentalcontrol/ui/parent/components/DeviceComponents.kt">
 		<error line="4" column="1" source="no-wildcard-imports" />
 		<error line="6" column="1" source="no-wildcard-imports" />
 		<error line="7" column="1" source="no-wildcard-imports" />
 		<error line="8" column="1" source="no-wildcard-imports" />
 	</file>
-	<file name="src/main/java/com/example/parentalcontrol/ui/parent/screens/DeviceDetailScreen.kt">
+	<file name="src/main/java/com/tudominio/parentalcontrol/ui/parent/screens/DeviceDetailScreen.kt">
 		<error line="3" column="1" source="import-ordering" />
 		<error line="3" column="1" source="no-wildcard-imports" />
 		<error line="10" column="1" source="no-wildcard-imports" />
@@ -1388,7 +1388,7 @@
 		<error line="12" column="1" source="no-wildcard-imports" />
 		<error line="19" column="1" source="no-wildcard-imports" />
 	</file>
-	<file name="src/main/java/com/example/parentalcontrol/ui/reinforced/ReinforcedModeOfferScreen.kt">
+	<file name="src/main/java/com/tudominio/parentalcontrol/ui/reinforced/ReinforcedModeOfferScreen.kt">
 		<error line="3" column="1" source="no-wildcard-imports" />
 		<error line="4" column="1" source="no-wildcard-imports" />
 		<error line="9" column="1" source="no-wildcard-imports" />
@@ -1431,7 +1431,7 @@
 		<error line="340" column="1" source="no-trailing-spaces" />
 		<error line="342" column="1" source="no-trailing-spaces" />
 	</file>
-	<file name="src/main/java/com/example/parentalcontrol/ui/repair/RepairScreen.kt">
+	<file name="src/main/java/com/tudominio/parentalcontrol/ui/repair/RepairScreen.kt">
 		<error line="5" column="1" source="no-wildcard-imports" />
 		<error line="7" column="1" source="no-wildcard-imports" />
 		<error line="14" column="1" source="no-wildcard-imports" />
@@ -1480,7 +1480,7 @@
 		<error line="486" column="1" source="no-trailing-spaces" />
 		<error line="488" column="1" source="no-trailing-spaces" />
 	</file>
-	<file name="src/main/java/com/example/parentalcontrol/ui/repair/RepairViewModel.kt">
+	<file name="src/main/java/com/tudominio/parentalcontrol/ui/repair/RepairViewModel.kt">
 		<error line="3" column="1" source="import-ordering" />
 		<error line="13" column="1" source="no-unused-imports" />
 		<error line="16" column="1" source="no-wildcard-imports" />
@@ -1507,7 +1507,7 @@
 		<error line="316" column="15" source="no-multi-spaces" />
 		<error line="317" column="13" source="no-multi-spaces" />
 	</file>
-	<file name="src/main/java/com/example/parentalcontrol/ui/screen/OnboardingScreen.kt">
+	<file name="src/main/java/com/tudominio/parentalcontrol/ui/screen/OnboardingScreen.kt">
 		<error line="3" column="1" source="no-wildcard-imports" />
 		<error line="4" column="1" source="no-wildcard-imports" />
 		<error line="5" column="1" source="no-wildcard-imports" />
@@ -1522,15 +1522,15 @@
 		<error line="85" column="1" source="no-trailing-spaces" />
 		<error line="87" column="1" source="no-trailing-spaces" />
 	</file>
-	<file name="src/main/java/com/example/parentalcontrol/ui/screen/apps/AppsScreen.kt">
+	<file name="src/main/java/com/tudominio/parentalcontrol/ui/screen/apps/AppsScreen.kt">
 		<error line="1" column="1" source="final-newline" />
 		<error line="3" column="18" source="no-empty-class-body" />
 	</file>
-	<file name="src/main/java/com/example/parentalcontrol/ui/screen/apps/AppsViewModel.kt">
+	<file name="src/main/java/com/tudominio/parentalcontrol/ui/screen/apps/AppsViewModel.kt">
 		<error line="1" column="1" source="final-newline" />
 		<error line="3" column="21" source="no-empty-class-body" />
 	</file>
-	<file name="src/main/java/com/example/parentalcontrol/ui/screen/dashboard/DashboardScreen.kt">
+	<file name="src/main/java/com/tudominio/parentalcontrol/ui/screen/dashboard/DashboardScreen.kt">
 		<error line="14" column="1" source="indent" />
 		<error line="15" column="1" source="indent" />
 		<error line="16" column="1" source="indent" />
@@ -1546,39 +1546,39 @@
 		<error line="27" column="1" source="indent" />
 		<error line="28" column="1" source="indent" />
 	</file>
-	<file name="src/main/java/com/example/parentalcontrol/ui/screen/dashboard/DashboardViewModel.kt">
+	<file name="src/main/java/com/tudominio/parentalcontrol/ui/screen/dashboard/DashboardViewModel.kt">
 		<error line="1" column="1" source="final-newline" />
 		<error line="3" column="26" source="no-empty-class-body" />
 	</file>
-	<file name="src/main/java/com/example/parentalcontrol/ui/screen/settings/SettingsScreen.kt">
+	<file name="src/main/java/com/tudominio/parentalcontrol/ui/screen/settings/SettingsScreen.kt">
 		<error line="1" column="1" source="final-newline" />
 		<error line="3" column="22" source="no-empty-class-body" />
 	</file>
-	<file name="src/main/java/com/example/parentalcontrol/ui/screen/settings/SettingsViewModel.kt">
+	<file name="src/main/java/com/tudominio/parentalcontrol/ui/screen/settings/SettingsViewModel.kt">
 		<error line="1" column="1" source="final-newline" />
 		<error line="3" column="25" source="no-empty-class-body" />
 	</file>
-	<file name="src/main/java/com/example/parentalcontrol/ui/theme/Color.kt">
+	<file name="src/main/java/com/tudominio/parentalcontrol/ui/theme/Color.kt">
 		<error line="1" column="1" source="final-newline" />
 	</file>
-	<file name="src/main/java/com/example/parentalcontrol/ui/theme/Theme.kt">
+	<file name="src/main/java/com/tudominio/parentalcontrol/ui/theme/Theme.kt">
 		<error line="5" column="1" source="no-wildcard-imports" />
 	</file>
-	<file name="src/main/java/com/example/parentalcontrol/ui/theme/Type.kt">
+	<file name="src/main/java/com/tudominio/parentalcontrol/ui/theme/Type.kt">
 		<error line="1" column="1" source="final-newline" />
 	</file>
-	<file name="src/main/java/com/example/parentalcontrol/viewmodel/ChildViewModel.kt">
+	<file name="src/main/java/com/tudominio/parentalcontrol/viewmodel/ChildViewModel.kt">
 		<error line="6" column="1" source="no-unused-imports" />
 		<error line="77" column="1" source="no-trailing-spaces" />
 		<error line="93" column="1" source="no-trailing-spaces" />
 		<error line="151" column="1" source="no-trailing-spaces" />
 	</file>
-	<file name="src/main/java/com/example/parentalcontrol/viewmodel/ParentViewModel.kt">
+	<file name="src/main/java/com/tudominio/parentalcontrol/viewmodel/ParentViewModel.kt">
 		<error line="3" column="1" source="import-ordering" />
 		<error line="19" column="1" source="no-trailing-spaces" />
 		<error line="19" column="3" source="no-trailing-spaces" />
 	</file>
-	<file name="src/main/java/com/example/parentalcontrol/viewmodel/TimeExtraViewModel.kt">
+	<file name="src/main/java/com/tudominio/parentalcontrol/viewmodel/TimeExtraViewModel.kt">
 		<error line="8" column="1" source="no-unused-imports" />
 		<error line="24" column="1" source="no-trailing-spaces" />
 		<error line="24" column="3" source="no-trailing-spaces" />
@@ -1593,15 +1593,15 @@
 		<error line="199" column="1" source="no-trailing-spaces" />
 		<error line="201" column="1" source="no-trailing-spaces" />
 	</file>
-	<file name="src/main/java/com/example/parentalcontrol/workers/WorkScheduler.kt">
+	<file name="src/main/java/com/tudominio/parentalcontrol/workers/WorkScheduler.kt">
 		<error line="5" column="1" source="no-wildcard-imports" />
 	</file>
-	<file name="src/main/java/com/example/parentalcontrol/workers/Workers.kt">
+	<file name="src/main/java/com/tudominio/parentalcontrol/workers/Workers.kt">
 		<error line="6" column="1" source="no-wildcard-imports" />
 		<error line="17" column="1" source="no-unused-imports" />
 		<error line="43" column="1" source="max-line-length" />
 	</file>
-	<file name="src/test/java/com/example/parentalcontrol/ExampleUnitTest.kt">
+	<file name="src/test/java/com/tudominio/parentalcontrol/ExampleUnitTest.kt">
 		<error line="1" column="1" source="final-newline" />
 		<error line="3" column="1" source="import-ordering" />
 		<error line="6" column="1" source="no-unused-imports" />
@@ -1611,7 +1611,7 @@
 		<error line="10" column="1" source="no-unused-imports" />
 		<error line="11" column="1" source="no-unused-imports" />
 	</file>
-	<file name="src/test/java/com/example/parentalcontrol/analytics/AnalyticsTest.kt">
+	<file name="src/test/java/com/tudominio/parentalcontrol/analytics/AnalyticsTest.kt">
 		<error line="3" column="1" source="import-ordering" />
 		<error line="8" column="1" source="no-unused-imports" />
 		<error line="9" column="1" source="no-unused-imports" />
@@ -1639,7 +1639,7 @@
 		<error line="369" column="1" source="no-trailing-spaces" />
 		<error line="384" column="1" source="no-trailing-spaces" />
 	</file>
-	<file name="src/test/java/com/example/parentalcontrol/auth/DeviceAuthTest.kt">
+	<file name="src/test/java/com/tudominio/parentalcontrol/auth/DeviceAuthTest.kt">
 		<error line="3" column="1" source="import-ordering" />
 		<error line="5" column="1" source="no-unused-imports" />
 		<error line="6" column="1" source="no-unused-imports" />
@@ -1652,7 +1652,7 @@
 		<error line="129" column="1" source="no-trailing-spaces" />
 		<error line="136" column="1" source="no-trailing-spaces" />
 	</file>
-	<file name="src/test/java/com/example/parentalcontrol/compliance/PlayComplianceTest.kt">
+	<file name="src/test/java/com/tudominio/parentalcontrol/compliance/PlayComplianceTest.kt">
 		<error line="3" column="1" source="import-ordering" />
 		<error line="6" column="1" source="no-unused-imports" />
 		<error line="7" column="1" source="no-unused-imports" />
@@ -1679,7 +1679,7 @@
 		<error line="320" column="1" source="no-trailing-spaces" />
 		<error line="346" column="1" source="no-trailing-spaces" />
 	</file>
-	<file name="src/test/java/com/example/parentalcontrol/consent/ConsentTest.kt">
+	<file name="src/test/java/com/tudominio/parentalcontrol/consent/ConsentTest.kt">
 		<error line="3" column="1" source="import-ordering" />
 		<error line="6" column="1" source="no-unused-imports" />
 		<error line="7" column="1" source="no-unused-imports" />
@@ -1691,7 +1691,7 @@
 		<error line="220" column="1" source="no-trailing-spaces" />
 		<error line="234" column="1" source="no-trailing-spaces" />
 	</file>
-	<file name="src/test/java/com/example/parentalcontrol/data/repository/TimeExtraRepositoryTest.kt">
+	<file name="src/test/java/com/tudominio/parentalcontrol/data/repository/TimeExtraRepositoryTest.kt">
 		<error line="3" column="1" source="import-ordering" />
 		<error line="6" column="1" source="no-unused-imports" />
 		<error line="7" column="1" source="no-unused-imports" />
@@ -1709,7 +1709,7 @@
 		<error line="132" column="1" source="no-trailing-spaces" />
 		<error line="214" column="1" source="no-trailing-spaces" />
 	</file>
-	<file name="src/test/java/com/example/parentalcontrol/deviceowner/DeviceOwnerTest.kt">
+	<file name="src/test/java/com/tudominio/parentalcontrol/deviceowner/DeviceOwnerTest.kt">
 		<error line="3" column="1" source="import-ordering" />
 		<error line="3" column="1" source="no-unused-imports" />
 		<error line="4" column="1" source="no-unused-imports" />
@@ -1744,7 +1744,7 @@
 		<error line="284" column="1" source="no-trailing-spaces" />
 		<error line="293" column="1" source="no-trailing-spaces" />
 	</file>
-	<file name="src/test/java/com/example/parentalcontrol/dnsfilter/DnsFilterTest.kt">
+	<file name="src/test/java/com/tudominio/parentalcontrol/dnsfilter/DnsFilterTest.kt">
 		<error line="3" column="1" source="import-ordering" />
 		<error line="3" column="1" source="no-unused-imports" />
 		<error line="4" column="1" source="no-unused-imports" />
@@ -1778,7 +1778,7 @@
 		<error line="288" column="1" source="no-trailing-spaces" />
 		<error line="292" column="1" source="no-trailing-spaces" />
 	</file>
-	<file name="src/test/java/com/example/parentalcontrol/domain/RulesEngineTest.kt">
+	<file name="src/test/java/com/tudominio/parentalcontrol/domain/RulesEngineTest.kt">
 		<error line="4" column="1" source="no-unused-imports" />
 		<error line="5" column="1" source="no-unused-imports" />
 		<error line="97" column="1" source="max-line-length" />
@@ -1792,7 +1792,7 @@
 		<error line="512" column="1" source="max-line-length" />
 		<error line="558" column="1" source="max-line-length" />
 	</file>
-	<file name="src/test/java/com/example/parentalcontrol/onboarding/OnboardingTest.kt">
+	<file name="src/test/java/com/tudominio/parentalcontrol/onboarding/OnboardingTest.kt">
 		<error line="3" column="1" source="import-ordering" />
 		<error line="6" column="1" source="no-unused-imports" />
 		<error line="7" column="1" source="no-unused-imports" />
@@ -1821,7 +1821,7 @@
 		<error line="251" column="1" source="no-trailing-spaces" />
 		<error line="259" column="1" source="no-trailing-spaces" />
 	</file>
-	<file name="src/test/java/com/example/parentalcontrol/pairing/PairingTest.kt">
+	<file name="src/test/java/com/tudominio/parentalcontrol/pairing/PairingTest.kt">
 		<error line="3" column="1" source="import-ordering" />
 		<error line="6" column="1" source="no-unused-imports" />
 		<error line="8" column="1" source="no-unused-imports" />
@@ -1836,7 +1836,7 @@
 		<error line="250" column="1" source="no-trailing-spaces" />
 		<error line="262" column="1" source="no-trailing-spaces" />
 	</file>
-	<file name="src/test/java/com/example/parentalcontrol/push/FcmPushServiceTest.kt">
+	<file name="src/test/java/com/tudominio/parentalcontrol/push/FcmPushServiceTest.kt">
 		<error line="3" column="1" source="import-ordering" />
 		<error line="3" column="1" source="no-unused-imports" />
 		<error line="8" column="1" source="no-unused-imports" />
@@ -1863,7 +1863,7 @@
 		<error line="202" column="1" source="no-trailing-spaces" />
 		<error line="208" column="1" source="no-trailing-spaces" />
 	</file>
-	<file name="src/test/java/com/example/parentalcontrol/realtime/RealtimeManagerTest.kt">
+	<file name="src/test/java/com/tudominio/parentalcontrol/realtime/RealtimeManagerTest.kt">
 		<error line="3" column="1" source="import-ordering" />
 		<error line="6" column="1" source="no-unused-imports" />
 		<error line="7" column="1" source="no-unused-imports" />
@@ -1891,7 +1891,7 @@
 		<error line="237" column="1" source="no-trailing-spaces" />
 		<error line="239" column="1" source="no-trailing-spaces" />
 	</file>
-	<file name="src/test/java/com/example/parentalcontrol/reward/RewardTest.kt">
+	<file name="src/test/java/com/tudominio/parentalcontrol/reward/RewardTest.kt">
 		<error line="3" column="1" source="import-ordering" />
 		<error line="6" column="1" source="no-unused-imports" />
 		<error line="7" column="1" source="no-unused-imports" />
@@ -1918,7 +1918,7 @@
 		<error line="276" column="1" source="no-trailing-spaces" />
 		<error line="280" column="1" source="no-trailing-spaces" />
 	</file>
-	<file name="src/test/java/com/example/parentalcontrol/security/integrity/IntegrityTest.kt">
+	<file name="src/test/java/com/tudominio/parentalcontrol/security/integrity/IntegrityTest.kt">
 		<error line="3" column="1" source="import-ordering" />
 		<error line="6" column="1" source="no-unused-imports" />
 		<error line="7" column="1" source="no-unused-imports" />
@@ -1957,7 +1957,7 @@
 		<error line="328" column="1" source="no-trailing-spaces" />
 		<error line="354" column="1" source="no-trailing-spaces" />
 	</file>
-	<file name="src/test/java/com/example/parentalcontrol/security/network/TlsConfigTest.kt">
+	<file name="src/test/java/com/tudominio/parentalcontrol/security/network/TlsConfigTest.kt">
 		<error line="3" column="1" source="import-ordering" />
 		<error line="5" column="1" source="no-unused-imports" />
 		<error line="7" column="1" source="no-unused-imports" />
@@ -1989,7 +1989,7 @@
 		<error line="226" column="1" source="no-trailing-spaces" />
 		<error line="237" column="1" source="no-trailing-spaces" />
 	</file>
-	<file name="src/test/java/com/example/parentalcontrol/sync/SyncManagerTest.kt">
+	<file name="src/test/java/com/tudominio/parentalcontrol/sync/SyncManagerTest.kt">
 		<error line="3" column="1" source="import-ordering" />
 		<error line="3" column="1" source="no-wildcard-imports" />
 		<error line="4" column="1" source="no-wildcard-imports" />
@@ -2048,7 +2048,7 @@
 		<error line="437" column="1" source="no-trailing-spaces" />
 		<error line="439" column="1" source="no-trailing-spaces" />
 	</file>
-	<file name="src/test/java/com/example/parentalcontrol/time/TimeProviderTest.kt">
+	<file name="src/test/java/com/tudominio/parentalcontrol/time/TimeProviderTest.kt">
 		<error line="3" column="1" source="import-ordering" />
 		<error line="9" column="1" source="no-unused-imports" />
 		<error line="10" column="1" source="no-unused-imports" />
@@ -2080,7 +2080,7 @@
 		<error line="181" column="1" source="no-trailing-spaces" />
 		<error line="185" column="1" source="no-trailing-spaces" />
 	</file>
-	<file name="src/test/java/com/example/parentalcontrol/ui/child/status/ChildStatusTest.kt">
+	<file name="src/test/java/com/tudominio/parentalcontrol/ui/child/status/ChildStatusTest.kt">
 		<error line="3" column="1" source="import-ordering" />
 		<error line="6" column="1" source="no-unused-imports" />
 		<error line="8" column="1" source="no-unused-imports" />
@@ -2102,7 +2102,7 @@
 		<error line="334" column="1" source="no-trailing-spaces" />
 		<error line="341" column="1" source="no-trailing-spaces" />
 	</file>
-	<file name="src/test/java/com/example/parentalcontrol/ui/repair/RepairTest.kt">
+	<file name="src/test/java/com/tudominio/parentalcontrol/ui/repair/RepairTest.kt">
 		<error line="3" column="1" source="import-ordering" />
 		<error line="6" column="1" source="no-unused-imports" />
 		<error line="7" column="1" source="no-unused-imports" />
@@ -2127,7 +2127,7 @@
 		<error line="307" column="1" source="no-trailing-spaces" />
 		<error line="315" column="1" source="no-trailing-spaces" />
 	</file>
-	<file name="src/test/java/com/example/parentalcontrol/workers/WorkersTest.kt">
+	<file name="src/test/java/com/tudominio/parentalcontrol/workers/WorkersTest.kt">
 		<error line="3" column="1" source="import-ordering" />
 		<error line="5" column="1" source="no-unused-imports" />
 		<error line="6" column="1" source="no-unused-imports" />

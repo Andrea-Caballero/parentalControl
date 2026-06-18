@@ -10,6 +10,8 @@ import com.tudominio.parentalcontrol.accessibility.AppMonitorService
 import com.tudominio.parentalcontrol.data.db.ParentalDatabase
 import com.tudominio.parentalcontrol.time.DefaultTimeProvider
 import com.tudominio.parentalcontrol.time.TimeProvider
+import dagger.hilt.android.AndroidEntryPoint
+import javax.inject.Inject
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -23,6 +25,7 @@ import java.time.ZoneId
  * Servicio anti-evasión que monitorea intentos de manipulación.
  * Se integra con el servicio de accesibilidad para detectar eventos.
  */
+@AndroidEntryPoint
 class AntiEvasionService : AccessibilityService() {
 
     companion object {
@@ -36,6 +39,9 @@ class AntiEvasionService : AccessibilityService() {
     private lateinit var tamperDetector: TamperDetector
     private lateinit var timeProvider: TimeProvider
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+
+    // Injected by Hilt before onCreate() (see @AndroidEntryPoint).
+    @Inject lateinit var database: ParentalDatabase
 
     // Package del sistema que no deben generar alertas
     private val safePackages = setOf(
@@ -58,8 +64,7 @@ class AntiEvasionService : AccessibilityService() {
     override fun onCreate() {
         super.onCreate()
         instance = this
-        
-        val database = ParentalDatabase.getInstance(this)
+
         timeProvider = DefaultTimeProvider(this)
         tamperDetector = TamperDetector.getInstance(this, database, timeProvider)
 

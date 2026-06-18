@@ -5,6 +5,13 @@ import android.util.Log
 import com.tudominio.parentalcontrol.data.db.ParentalDatabase
 import com.tudominio.parentalcontrol.data.model.OutboxEntity
 import com.tudominio.parentalcontrol.data.model.TimeRequestEntity
+import dagger.hilt.EntryPoint
+import dagger.hilt.InstallIn
+import dagger.hilt.android.EntryPointAccessors
+import dagger.hilt.components.SingletonComponent
+import dagger.hilt.android.qualifiers.ApplicationContext
+import javax.inject.Inject
+import javax.inject.Singleton
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
@@ -16,27 +23,43 @@ import java.util.UUID
  * Manager para la outbox de solicitudes offline.
  *
  * Encola solicitudes cuando no hay conexión y las sincroniza cuando se recupera.
+ *
+ * `database` is Hilt-injected (`@Singleton @Inject constructor`) so the
+ * `OutboxDrainerTest` no longer needs to reach into a private static
+ * field on ParentalDatabase — Hilt's `SingletonComponent` provides the
+ * test's in-memory instance via the standard `@HiltAndroidTest` /
+ * `TestInstallIn` flow.
  */
-class OutboxManager private constructor(context: Context) {
+@Singleton
+class OutboxManager @Inject constructor(
+    @ApplicationContext private val context: Context,
+    private val database: ParentalDatabase
+) {
 
     companion object {
         private const val TAG = "OutboxManager"
 
         private const val MAX_RETRIES = 3
 
-        @Volatile
-        private var instance: OutboxManager? = null
-
+        /**
+         * Convenience accessor for non-Hilt call sites (legacy Workers
+         * constructed by WorkManager outside the `@HiltWorker` graph, or
+         * unit tests that don't bootstrap Hilt). Resolves the singleton
+         * via the [OutboxManagerEntryPoint] bridge to `SingletonComponent`.
+         *
+         * Production code that runs inside an `@AndroidEntryPoint`,
+         * `@HiltViewModel`, or `@HiltWorker` context MUST inject the
+         * manager directly — do not call this method.
+         */
         fun getInstance(context: Context): OutboxManager {
-            return instance ?: synchronized(this) {
-                instance ?: OutboxManager(context.applicationContext).also {
-                    instance = it
-                }
-            }
+            val entryPoint = EntryPointAccessors.fromApplication(
+                context.applicationContext,
+                OutboxManagerEntryPoint::class.java
+            )
+            return entryPoint.outboxManager()
         }
     }
 
-    private val database = ParentalDatabase.getInstance(context)
     private val outboxDao = database.outboxDao()
     private val scope = CoroutineScope(Dispatchers.IO)
 
@@ -167,4 +190,19 @@ class OutboxManager private constructor(context: Context) {
             Log.e(TAG, "Error cleaning up: ${e.message}")
         }
     }
+}
+
+/**
+ * Hilt [EntryPoint] that exposes [OutboxManager] from the
+ * `SingletonComponent` to non-Hilt call sites that must resolve the
+ * singleton from a raw `Context` (Workers constructed by `WorkManager`
+ * outside the `@HiltWorker` graph, plain unit tests).
+ *
+ * Injecting the manager via `@Inject` is the preferred path. Use this
+ * bridge only when DI is unavailable.
+ */
+@EntryPoint
+@InstallIn(SingletonComponent::class)
+interface OutboxManagerEntryPoint {
+    fun outboxManager(): OutboxManager
 }

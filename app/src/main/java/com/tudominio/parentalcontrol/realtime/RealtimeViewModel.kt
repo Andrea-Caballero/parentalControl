@@ -7,22 +7,26 @@ import androidx.lifecycle.viewModelScope
 import com.tudominio.parentalcontrol.data.db.ParentalDatabase
 import com.tudominio.parentalcontrol.sync.SyncManager
 import android.util.Log
+import dagger.hilt.android.lifecycle.HiltViewModel
+import dagger.hilt.android.qualifiers.ApplicationContext
+import javax.inject.Inject
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 
 /**
  * ViewModel que observa cambios de Realtime y refresca la UI.
- * 
+ *
  * Se suscribe automáticamente al lifecycle - conecta en foreground,
  * desconecta en background.
  */
-class RealtimeViewModel(
-    private val context: Context
+@HiltViewModel
+class RealtimeViewModel @Inject constructor(
+    @ApplicationContext private val context: Context,
+    private val database: ParentalDatabase,
+    private val syncManager: SyncManager
 ) : ViewModel() {
 
     private val realtimeManager = RealtimeManager.getInstance(context)
-    private val syncManager = SyncManager.getInstance(context)
-    private val database = ParentalDatabase.getInstance(context)
 
     // Estado de conexión
     val connectionState = realtimeManager.connectionState
@@ -148,20 +152,11 @@ class RealtimeViewModel(
 }
 
 /**
- * Factory para crear RealtimeViewModel con contexto.
+ * Factory removed in PR 4 — `RealtimeViewModel` is now `@HiltViewModel`
+ * with `@Inject constructor`, so Hilt provides the ViewModel via
+ * `hiltViewModel()` in Compose. The old `RealtimeViewModelFactory(context)`
+ * call sites (if any survive this commit) are stale and must be replaced.
  */
-class RealtimeViewModelFactory(
-    private val context: Context
-) : ViewModelProvider.Factory {
-    
-    @Suppress("UNCHECKED_CAST")
-    override fun <T : ViewModel> create(modelClass: Class<T>): T {
-        if (modelClass.isAssignableFrom(RealtimeViewModel::class.java)) {
-            return RealtimeViewModel(context) as T
-        }
-        throw IllegalArgumentException("Unknown ViewModel class")
-    }
-}
 
 /**
  * Eventos de refresh para la UI.

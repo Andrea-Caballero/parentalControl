@@ -6,6 +6,13 @@ import com.tudominio.parentalcontrol.data.db.ParentalDatabase
 import com.tudominio.parentalcontrol.data.model.GrantEntity
 import com.tudominio.parentalcontrol.time.TimeProvider
 import com.tudominio.parentalcontrol.time.DefaultTimeProvider
+import dagger.hilt.EntryPoint
+import dagger.hilt.InstallIn
+import dagger.hilt.android.EntryPointAccessors
+import dagger.hilt.components.SingletonComponent
+import dagger.hilt.android.qualifiers.ApplicationContext
+import javax.inject.Inject
+import javax.inject.Singleton
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
@@ -14,34 +21,42 @@ import kotlin.collections.sortByDescending
 
 /**
  * Manager para el banco de tiempo / recompensas.
- * 
+ *
  * §0.3: Los grants de recompensa tienen source='reward'.
  * §0.9: Sin saldo infinito, respeta topes del padre.
+ *
+ * `database` is Hilt-injected (PR 4 of `align-with-guia-fedora44`). Use the
+ * [RewardManagerEntryPoint] bridge only for non-Hilt call sites.
  */
-class RewardManager private constructor(context: Context) {
+@Singleton
+class RewardManager @Inject constructor(
+    @ApplicationContext private val context: Context,
+    private val database: ParentalDatabase
+) {
 
     companion object {
         private const val TAG = "RewardManager"
-        
+
         // Scope para grants de recompensa
         const val REWARD_SCOPE = "reward"
-        
+
         // Máximo acumulado (2 horas por defecto)
         private const val DEFAULT_MAX_BALANCE_MINUTES = 120L
 
-        @Volatile
-        private var instance: RewardManager? = null
-
+        /**
+         * Convenience accessor for non-Hilt call sites. Production code
+         * inside `@AndroidEntryPoint` / `@HiltViewModel` should inject the
+         * manager directly via `@Inject RewardManager`.
+         */
         fun getInstance(context: Context): RewardManager {
-            return instance ?: synchronized(this) {
-                instance ?: RewardManager(context.applicationContext).also {
-                    instance = it
-                }
-            }
+            val entryPoint = EntryPointAccessors.fromApplication(
+                context.applicationContext,
+                RewardManagerEntryPoint::class.java
+            )
+            return entryPoint.rewardManager()
         }
     }
 
-    private val database = ParentalDatabase.getInstance(context)
     private val grantDao = database.grantDao()
     private val timeProvider: TimeProvider = DefaultTimeProvider(context)
     
@@ -259,3 +274,15 @@ data class RewardHistoryItem(
     val isActive: Boolean,
     val isExpired: Boolean
 )
+
+/**
+ * Hilt [EntryPoint] that exposes [RewardManager] from the
+ * `SingletonComponent` to non-Hilt call sites (legacy Workers, plain
+ * unit tests). Production code MUST inject the manager directly via
+ * `@Inject RewardManager` to avoid the runtime lookup cost.
+ */
+@EntryPoint
+@InstallIn(SingletonComponent::class)
+interface RewardManagerEntryPoint {
+    fun rewardManager(): RewardManager
+}

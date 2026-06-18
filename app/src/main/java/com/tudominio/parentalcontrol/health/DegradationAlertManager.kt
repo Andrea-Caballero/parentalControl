@@ -3,6 +3,13 @@ package com.tudominio.parentalcontrol.health
 import android.content.Context
 import android.util.Log
 import com.tudominio.parentalcontrol.analytics.AnalyticsManager
+import dagger.hilt.EntryPoint
+import dagger.hilt.InstallIn
+import dagger.hilt.android.EntryPointAccessors
+import dagger.hilt.components.SingletonComponent
+import dagger.hilt.android.qualifiers.ApplicationContext
+import javax.inject.Inject
+import javax.inject.Singleton
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -12,28 +19,31 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 
-class DegradationAlertManager private constructor(
-    private val context: Context
+@Singleton
+class DegradationAlertManager @Inject constructor(
+    @ApplicationContext private val context: Context,
+    private val analyticsManager: AnalyticsManager
 ) {
     companion object {
         private const val TAG = "DegradationAlertMgr"
-        
+
         private const val COOLDOWN_MS = 60 * 60 * 1000L
         private const val RECOVERY_COOLDOWN_MS = 30 * 60 * 1000L
-        
-        @Volatile
-        private var instance: DegradationAlertManager? = null
-        
+
+        /**
+         * Convenience accessor for non-Hilt call sites. Production code
+         * inside `@AndroidEntryPoint` / `@HiltViewModel` should inject the
+         * manager directly via `@Inject DegradationAlertManager`.
+         */
         fun getInstance(context: Context): DegradationAlertManager {
-            return instance ?: synchronized(this) {
-                instance ?: DegradationAlertManager(context.applicationContext).also {
-                    instance = it
-                }
-            }
+            val entryPoint = EntryPointAccessors.fromApplication(
+                context.applicationContext,
+                DegradationAlertManagerEntryPoint::class.java
+            )
+            return entryPoint.degradationAlertManager()
         }
     }
-    
-    private val analyticsManager = AnalyticsManager.getInstance(context)
+
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     
     data class ActiveAlert(
@@ -161,4 +171,14 @@ class DegradationAlertManager private constructor(
             )
         }
     }
+}
+
+/**
+ * Hilt [EntryPoint] that exposes [DegradationAlertManager] from the
+ * `SingletonComponent` to non-Hilt call sites.
+ */
+@EntryPoint
+@InstallIn(SingletonComponent::class)
+interface DegradationAlertManagerEntryPoint {
+    fun degradationAlertManager(): DegradationAlertManager
 }

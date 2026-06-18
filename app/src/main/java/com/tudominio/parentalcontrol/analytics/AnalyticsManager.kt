@@ -7,6 +7,13 @@ import com.tudominio.parentalcontrol.data.db.ParentalDatabase
 import com.tudominio.parentalcontrol.data.model.BehavioralEventEntity
 import com.tudominio.parentalcontrol.time.DefaultTimeProvider
 import com.tudominio.parentalcontrol.time.TimeProvider
+import dagger.hilt.EntryPoint
+import dagger.hilt.InstallIn
+import dagger.hilt.android.EntryPointAccessors
+import dagger.hilt.components.SingletonComponent
+import dagger.hilt.android.qualifiers.ApplicationContext
+import javax.inject.Inject
+import javax.inject.Singleton
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -14,26 +21,33 @@ import kotlinx.coroutines.launch
 
 /**
  * Manager de analytics para tracking de eventos conductuales.
- * 
+ *
  * T32: Instrumentación de eventos conductuales
- * 
+ *
  * Características:
  * - Encola eventos (no bloquea enforcement)
  * - Minimización de datos (§0.6)
  * - Esquema versionado
  * - Resiliente a offline
- * 
+ *
  * §0.5: Tabla behavioral_events
  * §0.6: Sin contenido del menor
+ *
+ * `database` is Hilt-injected (PR 4 of `align-with-guia-fedora44`).
+ * Use the [AnalyticsManagerEntryPoint] bridge only for non-Hilt call sites.
  */
-class AnalyticsManager private constructor(context: Context) {
+@Singleton
+class AnalyticsManager @Inject constructor(
+    @ApplicationContext private val context: Context,
+    private val database: ParentalDatabase
+) {
 
     companion object {
         private const val TAG = "AnalyticsManager"
-        
+
         // Versión del esquema de eventos
         const val EVENT_VERSION = 1
-        
+
         // Catalog de eventos
         object Events {
             // Onboarding (T26)
@@ -41,7 +55,7 @@ class AnalyticsManager private constructor(context: Context) {
             const val ONBOARDING_FIRST_WIN = "onboarding_first_win"
             const val ONBOARDING_COMPLETED = "onboarding_completed"
             const val ONBOARDING_ABANDONED = "onboarding_abandoned"
-            
+
             // Protección (T12/T30)
             const val PROTECTION_PROGRESS = "protection_progress"
             const val PERMISSION_GRANTED = "permission_granted"
@@ -51,7 +65,7 @@ class AnalyticsManager private constructor(context: Context) {
             const val DEGRADED_ALERT_SHOWN = "degraded_alert_shown"
             const val REPAIR_TAPPED = "repair_tapped"
             const val PROTECTION_RESTORED = "protection_restored"
-            
+
             // Tiempo (T27/T28)
             const val TIME_WARNING_SHOWN = "time_warning_shown"
             const val LIMIT_REACHED = "limit_reached"
@@ -59,21 +73,21 @@ class AnalyticsManager private constructor(context: Context) {
             const val ASK_PERMISSION_TAPPED = "ask_permission_tapped"
             const val EXTRA_TIME_REQUESTED = "extra_time_requested"
             const val EXTRA_TIME_RESOLVED = "extra_time_resolved"
-            
+
             // Recompensas (T29)
             const val REWARD_GRANTED = "reward_granted"
             const val REWARD_SEEN = "reward_seen"
-            
+
             // Anti-tampering (T13)
             const val ACCESSIBILITY_OFF_DETECTED = "accessibility_off_detected"
             const val UNINSTALL_ATTEMPT = "uninstall_attempt"
             const val CLOCK_TAMPER_SUSPECTED = "clock_tamper_suspected"
             const val TIMEZONE_CHANGED = "timezone_changed"
-            
+
             // Parent outcome (T33)
             const val PARENT_OUTCOME_CHECKIN = "parent_outcome_checkin"
         }
-        
+
         // Steps de onboarding
         object OnboardingSteps {
             const val PAIRING = "pairing"
@@ -86,20 +100,20 @@ class AnalyticsManager private constructor(context: Context) {
             const val DEVICE_ADMIN = "device_admin"
         }
 
-        @Volatile
-        private var instance: AnalyticsManager? = null
-
+        /**
+         * Convenience accessor for non-Hilt call sites. Production code
+         * inside `@AndroidEntryPoint` / `@HiltViewModel` should inject the
+         * manager directly via `@Inject AnalyticsManager`.
+         */
         fun getInstance(context: Context): AnalyticsManager {
-            return instance ?: synchronized(this) {
-                instance ?: AnalyticsManager(context.applicationContext).also {
-                    instance = it
-                }
-            }
+            val entryPoint = EntryPointAccessors.fromApplication(
+                context.applicationContext,
+                AnalyticsManagerEntryPoint::class.java
+            )
+            return entryPoint.analyticsManager()
         }
     }
 
-    private val context = context
-    private val database = ParentalDatabase.getInstance(context)
     private val eventDao = database.behavioralEventDao()
     private val timeProvider: TimeProvider = DefaultTimeProvider(context)
     private val analyticsScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -354,4 +368,14 @@ class AnalyticsManager private constructor(context: Context) {
         if (props.isEmpty()) return "{}"
         return props.entries.joinToString(",", "{", "}") { "\"${it.key}\":\"${it.value}\"" }
     }
+}
+
+/**
+ * Hilt [EntryPoint] that exposes [AnalyticsManager] from the
+ * `SingletonComponent` to non-Hilt call sites.
+ */
+@EntryPoint
+@InstallIn(SingletonComponent::class)
+interface AnalyticsManagerEntryPoint {
+    fun analyticsManager(): AnalyticsManager
 }

@@ -10,6 +10,7 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import com.tudominio.parentalcontrol.auth.DeviceAuthManager
 import com.tudominio.parentalcontrol.copy.CopyManager
 import com.tudominio.parentalcontrol.data.repository.TimeExtraRepository
+import com.tudominio.parentalcontrol.data.repository.TimeExtraRepositoryEntryPoint
 import com.tudominio.parentalcontrol.pairing.PairingViewModel
 import com.tudominio.parentalcontrol.pairing.ui.PairingScreen
 import com.tudominio.parentalcontrol.ui.child.extra.ExtraTimeScreen
@@ -21,6 +22,7 @@ import com.tudominio.parentalcontrol.ui.screen.apps.AppsViewModel
 import com.tudominio.parentalcontrol.ui.theme.ParentalControlTheme
 import com.tudominio.parentalcontrol.viewmodel.ParentViewModel
 import dagger.hilt.android.AndroidEntryPoint
+import dagger.hilt.android.EntryPointAccessors
 
 @AndroidEntryPoint
 class MainActivity : ComponentActivity() {
@@ -42,6 +44,10 @@ class MainActivity : ComponentActivity() {
         val parentId = getSharedPreferences("device_auth_prefs", MODE_PRIVATE)
             .getString("parent_id", null)
         val isChildDevice = isPaired && parentId != null
+        val timeExtraRepository = EntryPointAccessors.fromApplication(
+            applicationContext,
+            TimeExtraRepositoryEntryPoint::class.java
+        ).timeExtraRepository()
 
         setContent {
             ParentalControlTheme {
@@ -85,7 +91,7 @@ class MainActivity : ComponentActivity() {
                         if (showExtraTime) {
                             ExtraTimeScreen(
                                 copyManager = copyManager,
-                                repository = TimeExtraRepository(this@MainActivity),
+                                repository = timeExtraRepository,
                                 deviceId = deviceId,
                                 onBack = { showExtraTime = false },
                                 onRequestSent = { showExtraTime = false },

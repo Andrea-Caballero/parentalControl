@@ -25,33 +25,24 @@ import javax.inject.Inject
 @HiltViewModel
 class ChildStatusViewModel @Inject constructor(
     @ApplicationContext private val context: Context,
+    private val database: ParentalDatabase,
+    private val rewardManager: RewardManager,
+    private val degradationAlertManager: DegradationAlertManager,
     private val timeProvider: TimeProvider = DefaultTimeProvider(context)
 ) : ViewModel() {
 
     companion object {
         private const val TAG = "ChildStatusViewModel"
-        
+
         const val WARNING_THRESHOLD_10 = 10L
         const val WARNING_THRESHOLD_5 = 5L
-        
+
         private const val DEGRADATION_CHECK_INTERVAL_MS = 30_000L
-        
-        fun factory(context: Context): ViewModelProvider.Factory {
-            return object : ViewModelProvider.Factory {
-                @Suppress("UNCHECKED_CAST")
-                override fun <T : ViewModel> create(modelClass: Class<T>): T {
-                    return ChildStatusViewModel(context) as T
-                }
-            }
-        }
     }
 
-    private val database = ParentalDatabase.getInstance(context)
     private val usageDao = database.usageDao()
     private val timeRequestDao = database.timeRequestDao()
-    private val rewardManager = RewardManager.getInstance(context)
     private val healthChecker = HealthChecker(context)
-    private val degradationAlertManager = DegradationAlertManager.getInstance(context)
 
     private val _uiState = MutableStateFlow<ChildStatusUiState>(ChildStatusUiState.Loading)
     val uiState: StateFlow<ChildStatusUiState> = _uiState.asStateFlow()

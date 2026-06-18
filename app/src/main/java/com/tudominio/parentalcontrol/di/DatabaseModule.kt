@@ -35,7 +35,14 @@ object DatabaseModule {
             context,
             ParentalDatabase::class.java,
             ParentalDatabase.DATABASE_NAME
-        ).build()
+        )
+            // Register the v4 -> v5 -> v6 migrations that the migration tests
+            // verify (`OutboxMigrationTest`, `AppPolicyMigrationTest`). PR 4
+            // of `align-with-guia-fedora44` moved the construction here from
+            // the former `ParentalDatabase.getInstance(Context)` singleton,
+            // so the upgrade path is preserved exactly.
+            .addMigrations(ParentalDatabase.MIGRATION_4_5, ParentalDatabase.MIGRATION_5_6)
+            .build()
 
     @Provides
     fun providePolicyDao(db: ParentalDatabase): PolicyDao = db.policyDao()

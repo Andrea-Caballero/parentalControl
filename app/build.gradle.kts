@@ -12,16 +12,16 @@ plugins {
 }
 
 android {
-    namespace = "com.example.parentalcontrol"
+    namespace = "com.tudominio.parentalcontrol"
     compileSdk = 36
 
     defaultConfig {
-        applicationId = "com.example.parentalcontrol"
+        applicationId = "com.tudominio.parentalcontrol"
         minSdk = 26
         targetSdk = 36
         versionCode = 1
         versionName = "1.0"
-        testInstrumentationRunner = "com.example.parentalcontrol.MyHiltTestRunner"
+        testInstrumentationRunner = "com.tudominio.parentalcontrol.MyHiltTestRunner"
     }
 
     buildFeatures {

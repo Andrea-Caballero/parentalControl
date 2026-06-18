@@ -1,0 +1,117 @@
+package com.tudominio.parentalcontrol.data.db
+
+import android.content.Context
+import androidx.room.Database
+import androidx.room.Room
+import androidx.room.RoomDatabase
+import androidx.room.TypeConverters
+import androidx.room.migration.Migration
+import androidx.sqlite.db.SupportSQLiteDatabase
+import com.tudominio.parentalcontrol.data.model.AppPolicyEntity
+import com.tudominio.parentalcontrol.data.model.BehavioralEventEntity
+import com.tudominio.parentalcontrol.data.model.GrantEntity
+import com.tudominio.parentalcontrol.data.model.OutboxEntity
+import com.tudominio.parentalcontrol.data.model.PolicyEntity
+import com.tudominio.parentalcontrol.data.model.TimeRequestEntity
+import com.tudominio.parentalcontrol.data.model.UsageTodayEntity
+
+/**
+ * T03 — Persistencia local con Room (fuente de verdad offline).
+ *
+ * Entities live under `data.model`, DAOs under `data.db`. The `@Database`
+ * definition stays in this file because Room generates code for the
+ * implementing class and needs the entity list co-located.
+ */
+@Database(
+    entities = [
+        PolicyEntity::class,
+        AppPolicyEntity::class,
+        GrantEntity::class,
+        UsageTodayEntity::class,
+        OutboxEntity::class,
+        TimeRequestEntity::class,
+        BehavioralEventEntity::class
+    ],
+    version = 6,
+    exportSchema = true
+)
+@TypeConverters(Converters::class)
+abstract class ParentalDatabase : RoomDatabase() {
+
+    abstract fun policyDao(): PolicyDao
+    abstract fun appPolicyDao(): AppPolicyDao
+    abstract fun grantDao(): GrantDao
+    abstract fun usageDao(): UsageDao
+    abstract fun outboxDao(): OutboxDao
+    abstract fun timeRequestDao(): TimeRequestDao
+    abstract fun behavioralEventDao(): BehavioralEventDao
+
+    companion object {
+        const val DATABASE_NAME = "parental_control.db"
+
+        /**
+         * Migration v4 -> v5 on the `outbox` table.
+         *
+         * - Adds `processed INTEGER NOT NULL DEFAULT 0`
+         * - Adds `processed_at TEXT` (nullable)
+         * - Renames `intentos` -> `retries` (value carried forward)
+         */
+        val MIGRATION_4_5: Migration = object : Migration(4, 5) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE outbox ADD COLUMN processed INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE outbox ADD COLUMN processed_at TEXT")
+                db.execSQL("ALTER TABLE outbox RENAME COLUMN intentos TO retries")
+            }
+        }
+
+        /**
+         * Migration v5 -> v6 on the `app_policies` table.
+         *
+         * - Changes primary key from `package_name` alone to composite
+         *   `(device_id, package_name)` so the same package may have distinct
+         *   policy rows per child device.
+         * - SQLite does not support `ALTER TABLE ... DROP PRIMARY KEY`, so
+         *   the table is recreated and its rows are copied across.
+         */
+        val MIGRATION_5_6: Migration = object : Migration(5, 6) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE TABLE app_policies_new (" +
+                        "device_id TEXT NOT NULL, " +
+                        "package_name TEXT NOT NULL, " +
+                        "state TEXT NOT NULL, " +
+                        "daily_limit_minutes INTEGER, " +
+                        "allowed_windows TEXT NOT NULL, " +
+                        "category TEXT, " +
+                        "PRIMARY KEY (device_id, package_name))"
+                )
+                db.execSQL(
+                    "INSERT INTO app_policies_new (device_id, package_name, state, " +
+                        "daily_limit_minutes, allowed_windows, category) " +
+                        "SELECT device_id, package_name, state, daily_limit_minutes, " +
+                        "allowed_windows, category " +
+                        "FROM app_policies"
+                )
+                db.execSQL("DROP TABLE app_policies")
+                db.execSQL("ALTER TABLE app_policies_new RENAME TO app_policies")
+            }
+        }
+
+        @Volatile
+        private var INSTANCE: ParentalDatabase? = null
+
+        fun getInstance(context: Context): ParentalDatabase {
+            return INSTANCE ?: synchronized(this) {
+                val instance = Room.databaseBuilder(
+                    context.applicationContext,
+                    ParentalDatabase::class.java,
+                    DATABASE_NAME
+                )
+                    .addMigrations(MIGRATION_4_5, MIGRATION_5_6)
+                    .build()
+                INSTANCE = instance
+                instance
+            }
+        }
+    }
+}

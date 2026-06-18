@@ -31,8 +31,8 @@
     @kotlinx.serialization.SerialName <fields>;
 }
 
--keep,includedescriptorclasses class com.example.parentalcontrol.**$$serializer { *; }
--keepclassmembers class com.example.parentalcontrol.** {
+-keep,includedescriptorclasses class com.tudominio.parentalcontrol.**$$serializer { *; }
+-keepclassmembers class com.tudominio.parentalcontrol.** {
     *** INSTANCE;
     kotlinx.serialization.KSerializer serializer(...);
 }
@@ -115,25 +115,25 @@
 # ===== REFLECTION PRESERVATION =====
 
 # Preserve classes used via reflection by frameworks
--keep class com.example.parentalcontrol.data.local.** { *; }
--keep class com.example.parentalcontrol.auth.** { *; }
--keep class com.example.parentalcontrol.sync.** { *; }
--keep class com.example.parentalcontrol.health.** { *; }
--keep class com.example.parentalcontrol.enforcement.** { *; }
+-keep class com.tudominio.parentalcontrol.data.local.** { *; }
+-keep class com.tudominio.parentalcontrol.auth.** { *; }
+-keep class com.tudominio.parentalcontrol.sync.** { *; }
+-keep class com.tudominio.parentalcontrol.health.** { *; }
+-keep class com.tudominio.parentalcontrol.enforcement.** { *; }
 
 # ===== MAINTAIN CLASS NAMES (for tampered APK detection) =====
 
 # Keep entry points — repackaging changes these signatures
--keep class com.example.parentalcontrol.MainActivity { *; }
--keep class com.example.parentalcontrol.ParentalControlApp { *; }
--keep class com.example.parentalcontrol.accessibility.ForegroundAppService { *; }
--keep class com.example.parentalcontrol.service.UsageTrackingService { *; }
--keep class com.example.parentalcontrol.overlay.BlockOverlayService { *; }
+-keep class com.tudominio.parentalcontrol.MainActivity { *; }
+-keep class com.tudominio.parentalcontrol.ParentalControlApp { *; }
+-keep class com.tudominio.parentalcontrol.accessibility.ForegroundAppService { *; }
+-keep class com.tudominio.parentalcontrol.service.UsageTrackingService { *; }
+-keep class com.tudominio.parentalcontrol.overlay.BlockOverlayService { *; }
 
 # ===== ANTI-DEBUG BASICS =====
 
 # Detect debugger (not as sole defense)
--keep class com.example.parentalcontrol.security.TamperDetector { *; }
+-keep class com.tudominio.parentalcontrol.security.TamperDetector { *; }
 
 # ===== ENCRYPTION / SECURITY =====
 

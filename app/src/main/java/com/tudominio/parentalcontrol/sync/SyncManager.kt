@@ -9,19 +9,26 @@ import com.tudominio.parentalcontrol.data.model.PolicyEntity
 import com.tudominio.parentalcontrol.data.model.WindowEntity
 import com.tudominio.parentalcontrol.network.ConnectionState
 import com.tudominio.parentalcontrol.network.SupabaseClientProvider
+import dagger.hilt.EntryPoint
+import dagger.hilt.InstallIn
+import dagger.hilt.android.EntryPointAccessors
+import dagger.hilt.android.qualifiers.ApplicationContext
+import dagger.hilt.components.SingletonComponent
 import io.ktor.client.*
 import io.ktor.client.plugins.contentnegotiation.*
 import io.ktor.client.request.*
 import io.ktor.client.statement.*
 import io.ktor.http.*
 import io.ktor.serialization.kotlinx.json.*
+import java.time.ZoneOffset
+import java.util.UUID
+import javax.inject.Inject
+import javax.inject.Singleton
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.*
-import java.time.ZoneOffset
-import java.util.UUID
 
 enum class OutboxEventType {
     USAGE_LOG,
@@ -79,8 +86,9 @@ data class AppPolicyResponse(
     val allowed_windows: List<String>? = null
 )
 
-class SyncManager private constructor(
-    private val context: Context,
+@Singleton
+class SyncManager @Inject constructor(
+    @ApplicationContext private val context: Context,
     private var database: ParentalDatabase
 ) {
     companion object {
@@ -88,15 +96,17 @@ class SyncManager private constructor(
         private const val RETRY_DELAY_MS = 5000L
         private const val SYNC_INTERVAL_MS = 60_000L
 
-        @Volatile
-        private var instance: SyncManager? = null
-
+        /**
+         * Convenience accessor for non-Hilt call sites (legacy Workers
+         * constructed by `WorkManager` outside the `@HiltWorker` graph).
+         * Production code MUST inject the manager directly.
+         */
         fun getInstance(context: Context): SyncManager {
-            return instance ?: synchronized(this) {
-                instance ?: SyncManager(context.applicationContext, ParentalDatabase.getInstance(context)).also {
-                    instance = it
-                }
-            }
+            val entryPoint = EntryPointAccessors.fromApplication(
+                context.applicationContext,
+                SyncManagerEntryPoint::class.java
+            )
+            return entryPoint.syncManager()
         }
     }
 
@@ -441,4 +451,14 @@ class SyncManager private constructor(
     private suspend fun updatePendingCount() {
         _pendingCount.value = database.outboxDao().getPendingCountFlow().first()
     }
+}
+
+/**
+ * Hilt [EntryPoint] that exposes [SyncManager] from the
+ * `SingletonComponent` to non-Hilt call sites.
+ */
+@EntryPoint
+@InstallIn(SingletonComponent::class)
+interface SyncManagerEntryPoint {
+    fun syncManager(): SyncManager
 }

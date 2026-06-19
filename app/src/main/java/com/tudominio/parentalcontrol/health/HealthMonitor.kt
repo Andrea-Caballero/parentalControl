@@ -4,36 +4,51 @@ import android.content.Context
 import androidx.work.*
 import com.tudominio.parentalcontrol.data.db.ParentalDatabase
 import com.tudominio.parentalcontrol.data.model.OutboxEntity
+import dagger.hilt.EntryPoint
+import dagger.hilt.InstallIn
+import dagger.hilt.android.EntryPointAccessors
+import dagger.hilt.android.qualifiers.ApplicationContext
+import dagger.hilt.components.SingletonComponent
+import java.util.UUID
+import java.util.concurrent.TimeUnit
+import javax.inject.Inject
+import javax.inject.Singleton
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import java.util.UUID
-import java.util.concurrent.TimeUnit
 
 /**
  * Monitor de salud del sistema.
  * Verifica periódicamente el estado de los permisos y encola alertas.
+ *
+ * `database` is Hilt-injected (PR 4 of `align-with-guia-fedora44`). Use
+ * the [HealthMonitorEntryPoint] bridge only for non-Hilt call sites.
  */
-class HealthMonitor(private val context: Context) {
+@Singleton
+class HealthMonitor @Inject constructor(
+    @ApplicationContext private val context: Context,
+    private val database: ParentalDatabase
+) {
 
     companion object {
         private const val WORK_NAME = "health_check_work"
         private const val PERIODIC_INTERVAL_MINUTES = 15L
-        
-        @Volatile
-        private var instance: HealthMonitor? = null
-        
+
+        /**
+         * Convenience accessor for non-Hilt call sites. Production code
+         * inside `@AndroidEntryPoint` / `@HiltViewModel` should inject the
+         * monitor directly via `@Inject HealthMonitor`.
+         */
         fun getInstance(context: Context): HealthMonitor {
-            return instance ?: synchronized(this) {
-                instance ?: HealthMonitor(context.applicationContext).also {
-                    instance = it
-                }
-            }
+            val entryPoint = EntryPointAccessors.fromApplication(
+                context.applicationContext,
+                HealthMonitorEntryPoint::class.java
+            )
+            return entryPoint.healthMonitor()
         }
     }
 
     private val healthChecker = HealthChecker(context)
-    private val database = ParentalDatabase.getInstance(context)
 
     private val _healthState = MutableStateFlow<HealthCheckResult?>(null)
     val healthState: StateFlow<HealthCheckResult?> = _healthState.asStateFlow()
@@ -74,7 +89,7 @@ class HealthMonitor(private val context: Context) {
         if (previousLevel != null && previousLevel != result.enforcementLevel) {
             onEnforcementLevelChanged(previousLevel!!, result.enforcementLevel, result)
         }
-        
+
         previousLevel = result.enforcementLevel
 
         return result
@@ -110,7 +125,7 @@ class HealthMonitor(private val context: Context) {
     private suspend fun enqueueDegradationAlert(result: HealthCheckResult) {
         val alertType = "health_degradation"
         val missingPerms = result.missingPermissions.joinToString(", ") { it.name }
-        
+
         val alert = OutboxEntity(
             id = UUID.randomUUID(),
             tipo = alertType,
@@ -191,7 +206,7 @@ class HealthCheckWorker(
         return try {
             val monitor = HealthMonitor.getInstance(applicationContext)
             val result = monitor.performHealthCheck()
-            
+
             // Si está degradado, asegurar que se encole la alerta
             if (result.isDegraded) {
                 Result.success()
@@ -202,4 +217,14 @@ class HealthCheckWorker(
             Result.retry()
         }
     }
+}
+
+/**
+ * Hilt [EntryPoint] that exposes [HealthMonitor] from the
+ * `SingletonComponent` to non-Hilt call sites.
+ */
+@EntryPoint
+@InstallIn(SingletonComponent::class)
+interface HealthMonitorEntryPoint {
+    fun healthMonitor(): HealthMonitor
 }

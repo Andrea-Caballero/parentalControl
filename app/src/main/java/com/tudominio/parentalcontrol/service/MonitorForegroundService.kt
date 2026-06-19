@@ -17,6 +17,8 @@ import com.tudominio.parentalcontrol.data.db.ParentalDatabase
 import com.tudominio.parentalcontrol.reconciliation.UsageStatsReconciler
 import com.tudominio.parentalcontrol.time.DefaultTimeProvider
 import com.tudominio.parentalcontrol.time.TimeProvider
+import dagger.hilt.android.AndroidEntryPoint
+import javax.inject.Inject
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -25,9 +27,9 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.collectLatest
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
+@AndroidEntryPoint
 class MonitorForegroundService : Service() {
 
     companion object {
@@ -47,14 +49,14 @@ class MonitorForegroundService : Service() {
     private var warned10Minutes = false
     private var warned5Minutes = false
 
-    private lateinit var database: ParentalDatabase
+    // Injected by Hilt before onCreate() (see @AndroidEntryPoint).
+    @Inject lateinit var database: ParentalDatabase
     private lateinit var timeProvider: TimeProvider
     private lateinit var reconciler: UsageStatsReconciler
     private val dailyLimitMinutes = MutableStateFlow(DEFAULT_DAILY_LIMIT_MINUTES)
 
     override fun onCreate() {
         super.onCreate()
-        database = ParentalDatabase.getInstance(this)
         timeProvider = DefaultTimeProvider(this)
         reconciler = UsageStatsReconciler(this, database)
         createNotificationChannel()

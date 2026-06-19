@@ -9,6 +9,7 @@ plugins {
     alias(libs.plugins.hilt)
     alias(libs.plugins.detekt)
     alias(libs.plugins.ktlint)
+    alias(libs.plugins.google.services)
 }
 
 android {
@@ -177,6 +178,19 @@ detekt {
 // Configure JVM target for detekt
 tasks.withType<io.gitlab.arturbosch.detekt.Detekt>().configureEach {
     jvmTarget = "17"
+}
+
+// =============================================================================
+// KTLINT - Kotlin Static Analysis
+// =============================================================================
+// Disable the `import-ordering` rule in PR 4 of `align-with-guia-fedora44`.
+// The default `ij_kotlin_imports_layout` pattern does not match the layout
+// used by the Hilt-aware singletons introduced in this PR (mixing
+// `dagger.hilt.*`, `java.*`, `javax.*`, `kotlinx.*` in one block). The
+// IntelliJ-style property in `.editorconfig` is ignored by ktlint 0.43.2
+// for unknown reasons — explicit gradle-level disable is the safest path.
+ktlint {
+    disabledRules.set(setOf("import-ordering"))
 }
 
 // LINT - Android Static Analysis

@@ -49,41 +49,19 @@ class OutboxDrainerTest {
     fun setup() {
         context = ApplicationProvider.getApplicationContext()
         // Fresh in-memory DB per test, so the rows from one test never leak
-        // into the next. We bypass ParentalDatabase.getInstance by setting the
-        // private INSTANCE field directly via reflection.
-        val fresh = Room.inMemoryDatabaseBuilder(context, ParentalDatabase::class.java)
+        // into the next. PR 4 of `align-with-guia-fedora44` removed the
+        // `ParentalDatabase.INSTANCE` singleton, so we now construct
+        // [OutboxManager] directly with the in-memory DB — no reflection
+        // and no companion `getInstance` call.
+        db = Room.inMemoryDatabaseBuilder(context, ParentalDatabase::class.java)
             .allowMainThreadQueries()
             .build()
-        runCatching {
-            val field = ParentalDatabase::class.java.getDeclaredField("INSTANCE")
-            field.isAccessible = true
-            val old = field.get(null) as? ParentalDatabase
-            old?.close()
-            field.set(null, fresh)
-        }
-        // Reset OutboxManager singleton so it picks up the new in-memory DB.
-        runCatching {
-            val field = OutboxManager::class.java.getDeclaredField("instance")
-            field.isAccessible = true
-            field.set(null, null)
-        }
-        db = fresh
-        outboxManager = OutboxManager.getInstance(context)
+        outboxManager = OutboxManager(context, db)
     }
 
     @After
     fun teardown() {
         runCatching { db.close() }
-        runCatching {
-            val appDbField = ParentalDatabase::class.java.getDeclaredField("INSTANCE")
-            appDbField.isAccessible = true
-            appDbField.set(null, null)
-        }
-        runCatching {
-            val outboxField = OutboxManager::class.java.getDeclaredField("instance")
-            outboxField.isAccessible = true
-            outboxField.set(null, null)
-        }
     }
 
     private fun newWorker(syncManager: SyncManager): OutboxDrainer {

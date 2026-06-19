@@ -126,8 +126,8 @@
 # Keep entry points — repackaging changes these signatures
 -keep class com.tudominio.parentalcontrol.MainActivity { *; }
 -keep class com.tudominio.parentalcontrol.ParentalControlApp { *; }
--keep class com.tudominio.parentalcontrol.accessibility.ForegroundAppService { *; }
--keep class com.tudominio.parentalcontrol.service.UsageTrackingService { *; }
+-keep class com.tudominio.parentalcontrol.accessibility.AppMonitorService { *; }
+-keep class com.tudominio.parentalcontrol.service.MonitorForegroundService { *; }
 -keep class com.tudominio.parentalcontrol.overlay.BlockOverlayService { *; }
 
 # ===== ANTI-DEBUG BASICS =====

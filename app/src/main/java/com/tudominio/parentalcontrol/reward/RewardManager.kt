@@ -4,47 +4,61 @@ import android.content.Context
 import android.util.Log
 import com.tudominio.parentalcontrol.data.db.ParentalDatabase
 import com.tudominio.parentalcontrol.data.model.GrantEntity
-import com.tudominio.parentalcontrol.time.TimeProvider
 import com.tudominio.parentalcontrol.time.DefaultTimeProvider
+import com.tudominio.parentalcontrol.time.TimeProvider
+import dagger.hilt.EntryPoint
+import dagger.hilt.InstallIn
+import dagger.hilt.android.EntryPointAccessors
+import dagger.hilt.android.qualifiers.ApplicationContext
+import dagger.hilt.components.SingletonComponent
+import java.time.Instant
+import javax.inject.Inject
+import javax.inject.Singleton
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
-import java.time.Instant
-import kotlin.collections.sortByDescending
 
 /**
  * Manager para el banco de tiempo / recompensas.
- * 
+ *
  * §0.3: Los grants de recompensa tienen source='reward'.
  * §0.9: Sin saldo infinito, respeta topes del padre.
+ *
+ * `database` is Hilt-injected (PR 4 of `align-with-guia-fedora44`). Use the
+ * [RewardManagerEntryPoint] bridge only for non-Hilt call sites.
  */
-class RewardManager private constructor(context: Context) {
+@Singleton
+class RewardManager @Inject constructor(
+    @ApplicationContext private val context: Context,
+    private val database: ParentalDatabase
+) {
 
     companion object {
         private const val TAG = "RewardManager"
-        
+
         // Scope para grants de recompensa
         const val REWARD_SCOPE = "reward"
-        
+
         // Máximo acumulado (2 horas por defecto)
         private const val DEFAULT_MAX_BALANCE_MINUTES = 120L
 
-        @Volatile
-        private var instance: RewardManager? = null
-
+        /**
+         * Convenience accessor for non-Hilt call sites. Production code
+         * inside `@AndroidEntryPoint` / `@HiltViewModel` should inject the
+         * manager directly via `@Inject RewardManager`.
+         */
         fun getInstance(context: Context): RewardManager {
-            return instance ?: synchronized(this) {
-                instance ?: RewardManager(context.applicationContext).also {
-                    instance = it
-                }
-            }
+            val entryPoint = EntryPointAccessors.fromApplication(
+                context.applicationContext,
+                RewardManagerEntryPoint::class.java
+            )
+            return entryPoint.rewardManager()
         }
     }
 
-    private val database = ParentalDatabase.getInstance(context)
     private val grantDao = database.grantDao()
     private val timeProvider: TimeProvider = DefaultTimeProvider(context)
-    
+
     // Prefs para el tope máximo
     private val prefs = context.getSharedPreferences("reward_prefs", Context.MODE_PRIVATE)
 
@@ -54,11 +68,11 @@ class RewardManager private constructor(context: Context) {
     suspend fun getRewardBalance(): Long {
         val now = timeProvider.wallInstant().toString()
         val maxBalance = getMaxBalanceMinutes()
-        
+
         return try {
             val grants = grantDao.getGrantsForScope(REWARD_SCOPE).first()
             val activeGrants = grants.filter { it.expires_at > now }
-            
+
             val totalMinutes = activeGrants.sumOf { it.minutes }.toLong()
             minOf(totalMinutes, maxBalance)
         } catch (e: Exception) {
@@ -72,7 +86,7 @@ class RewardManager private constructor(context: Context) {
      */
     fun getActiveRewardGrants(): Flow<List<RewardGrantUi>> {
         val now = timeProvider.wallInstant().toString()
-        
+
         return grantDao.getGrantsForScope(REWARD_SCOPE).map { grants ->
             grants.filter { it.expires_at > now }
                 .sortedBy { it.expires_at }
@@ -85,10 +99,10 @@ class RewardManager private constructor(context: Context) {
      */
     suspend fun getRewardHistory(): List<RewardHistoryItem> {
         val now = timeProvider.wallInstant().toString()
-        
+
         return try {
             val grants = grantDao.getGrantsForScope(REWARD_SCOPE).first()
-            
+
             grants.map { grant ->
                 val isActive = grant.expires_at > now
                 val expiresAt = try {
@@ -96,7 +110,7 @@ class RewardManager private constructor(context: Context) {
                 } catch (e: Exception) {
                     null
                 }
-                
+
                 RewardHistoryItem(
                     id = grant.id,
                     minutes = grant.minutes,
@@ -140,12 +154,12 @@ class RewardManager private constructor(context: Context) {
      */
     suspend fun consumeRewardMinutes(minutes: Int): Boolean {
         val currentBalance = getRewardBalance()
-        
+
         if (currentBalance < minutes) {
             Log.w(TAG, "Not enough reward balance: $currentBalance < $minutes")
             return false
         }
-        
+
         // En una implementación real, decrementaríamos el grant activo
         // Por ahora, simplemente lo marcamos como usado
         Log.d(TAG, "Consumed $minutes reward minutes, remaining: ${currentBalance - minutes}")
@@ -154,7 +168,7 @@ class RewardManager private constructor(context: Context) {
 
     /**
      * Procesa un grant de recompensa desde el servidor.
-     * 
+     *
      * §0.3: El grant tiene source='reward'.
      */
     suspend fun processRewardGrant(
@@ -166,7 +180,7 @@ class RewardManager private constructor(context: Context) {
             val now = timeProvider.wallInstant()
             val grantedAt = now.toString()
             val expiresAtStr = expiresAt.toString()
-            
+
             val grant = GrantEntity(
                 id = "reward_$grantId",
                 device_id = "reward_device",
@@ -177,9 +191,9 @@ class RewardManager private constructor(context: Context) {
                 granted_at = grantedAt,
                 expires_at = expiresAtStr
             )
-            
+
             grantDao.insertGrant(grant)
-            
+
             Log.d(TAG, "Reward grant created: $grantId, $minutes min, expires at $expiresAt")
             true
         } catch (e: Exception) {
@@ -203,7 +217,7 @@ class RewardManager private constructor(context: Context) {
         } catch (e: Exception) {
             null
         }
-        
+
         val now = timeProvider.wallInstant()
         val minutesRemaining = if (expiresAt != null) {
             val seconds = java.time.Duration.between(now, expiresAt).seconds
@@ -211,7 +225,7 @@ class RewardManager private constructor(context: Context) {
         } else {
             minutes
         }
-        
+
         return RewardGrantUi(
             id = id,
             minutes = minutes,
@@ -240,7 +254,7 @@ data class RewardGrantUi(
             ).toMinutes()
             return minutesLeft in 0..5
         }
-    
+
     val isExpired: Boolean
         get() {
             val expires = expiresAt ?: return false
@@ -259,3 +273,15 @@ data class RewardHistoryItem(
     val isActive: Boolean,
     val isExpired: Boolean
 )
+
+/**
+ * Hilt [EntryPoint] that exposes [RewardManager] from the
+ * `SingletonComponent` to non-Hilt call sites (legacy Workers, plain
+ * unit tests). Production code MUST inject the manager directly via
+ * `@Inject RewardManager` to avoid the runtime lookup cost.
+ */
+@EntryPoint
+@InstallIn(SingletonComponent::class)
+interface RewardManagerEntryPoint {
+    fun rewardManager(): RewardManager
+}

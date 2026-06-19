@@ -60,7 +60,7 @@ Chain strategy: N/A
 
 ## Task 3: Verify fallback candidate (AGP 9.2.1) via bytecode inspection — ONLY IF Task 2 failed
 
-- [ ] Step 3.1: **Bytecode-inspection verification (two steps — same mechanism as Task 2.1)**:
+- [x] Step 3.1: **Bytecode-inspection verification (two steps — same mechanism as Task 2.1)**: *(Reconciled at archive: N/A — primary path verified AGP 8.13.2 / R8 8.13.19 / max metadata v2.3.0; fallback (9.2.1) never attempted. Documented in verification-evidence.md.)*
   1. Identify the R8 version AGP 9.2.1 ships with — download `builder-9.2.1.jar` from Google Maven and decompile `com.android.builder.dexing.R8Version` to read `VERSION_AGP_WAS_SHIPPED_WITH`.
   2. Find the max supported Kotlin metadata version in that R8 — download `r8-<r8>.jar` from Google Maven, locate the version constant class via `strings`, and decompile it to read the `h = gc2(new int[]{...}, false)` (or equivalent) literal.
      ```bash
@@ -73,8 +73,8 @@ Chain strategy: N/A
      strings r8-<r8>.jar | grep "while maximum supported version is"
      javap -c -classpath r8-<r8>.jar <version-constant-class>
      ```
-- [ ] Step 3.2: Append a section to `verification-evidence.md` with header `# Verification — fallback path` and paste the full bytecode-inspection transcript in fenced bash / java blocks.
-- [ ] Step 3.3: IF the decompiled max Kotlin metadata ≥ 2.3.0 → `chosen = "9.2.1"`, proceed to Task 4 (Task 5.2 wrapper sub-task also runs). ELSE → abort the change: report both transcripts, mark Task 3 failed, do not proceed.
+- [x] Step 3.2: Append a section to `verification-evidence.md` with header `# Verification — fallback path` and paste the full bytecode-inspection transcript in fenced bash / java blocks. *(Reconciled at archive: N/A — no fallback transcript exists because primary path was sufficient.)*
+- [x] Step 3.3: IF the decompiled max Kotlin metadata ≥ 2.3.0 → `chosen = "9.2.1"`, proceed to Task 4 (Task 5.2 wrapper sub-task also runs). ELSE → abort the change: report both transcripts, mark Task 3 failed, do not proceed. *(Reconciled at archive: N/A — primary path chosen; chosen = "8.13.2".)*
 
 **Outcome: Skipped — Task 2 passed with `chosen = "8.13.2"`; fallback path not invoked.**
 
@@ -91,7 +91,7 @@ Chain strategy: N/A
 ## Task 5: Edit `gradle/libs.versions.toml` — bump agp version
 
 - [x] Step 5.1: At `gradle/libs.versions.toml` line 2, change `agp = "8.9.2"` → `agp = "<chosen-version>"` (either `8.13.2` from Task 2 pass, or `9.2.1` from Task 3 pass). **Outcome: `agp = "8.13.2"` written.**
-- [ ] Step 5.2 (ONLY if Task 3 path chosen): bump `gradle/wrapper/gradle-wrapper.properties` `distributionUrl` to whatever AGP 9.2.1 requires. Check AGP 9.2.1 release notes; current wrapper `gradle-9.4.1-bin.zip` is likely sufficient but verify.
+- [x] Step 5.2 (ONLY if Task 3 path chosen): bump `gradle/wrapper/gradle-wrapper.properties` `distributionUrl` to whatever AGP 9.2.1 requires. Check AGP 9.2.1 release notes; current wrapper `gradle-9.4.1-bin.zip` is likely sufficient but verify. *(Reconciled at archive: N/A — primary path (AGP 8.13.2) requires Gradle 8.11.1+; current wrapper `gradle-9.4.1-bin.zip` is sufficient. No bump needed.)*
 
 **Step 5.2 not applicable — primary path taken; wrapper at 9.4.1 already exceeds AGP 8.13.2's Gradle 8.11.1+ minimum.**
 
@@ -143,7 +143,7 @@ Chain strategy: N/A
 
 ## Task 11: Persist apply-progress to Engram
 
-- [ ] Step 11.1: `mem_save` with:
+- [x] Step 11.1: `mem_save` with: *(Reconciled at archive: already executed by apply phase — Engram observation exists with topic_key `sdd/bump-agp-fix-r8-metadata-warnings/apply-progress`. Box left unchecked was a bookkeeping oversight in apply.)*
   - `topic_key`: `sdd/bump-agp-fix-r8-metadata-warnings/apply-progress`
   - `type`: `architecture`
   - `capture_prompt`: `false`

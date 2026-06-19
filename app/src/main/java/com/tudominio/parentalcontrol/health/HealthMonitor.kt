@@ -7,15 +7,15 @@ import com.tudominio.parentalcontrol.data.model.OutboxEntity
 import dagger.hilt.EntryPoint
 import dagger.hilt.InstallIn
 import dagger.hilt.android.EntryPointAccessors
-import dagger.hilt.components.SingletonComponent
 import dagger.hilt.android.qualifiers.ApplicationContext
+import dagger.hilt.components.SingletonComponent
+import java.util.UUID
+import java.util.concurrent.TimeUnit
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import java.util.UUID
-import java.util.concurrent.TimeUnit
 
 /**
  * Monitor de salud del sistema.
@@ -89,7 +89,7 @@ class HealthMonitor @Inject constructor(
         if (previousLevel != null && previousLevel != result.enforcementLevel) {
             onEnforcementLevelChanged(previousLevel!!, result.enforcementLevel, result)
         }
-        
+
         previousLevel = result.enforcementLevel
 
         return result
@@ -125,7 +125,7 @@ class HealthMonitor @Inject constructor(
     private suspend fun enqueueDegradationAlert(result: HealthCheckResult) {
         val alertType = "health_degradation"
         val missingPerms = result.missingPermissions.joinToString(", ") { it.name }
-        
+
         val alert = OutboxEntity(
             id = UUID.randomUUID(),
             tipo = alertType,
@@ -206,7 +206,7 @@ class HealthCheckWorker(
         return try {
             val monitor = HealthMonitor.getInstance(applicationContext)
             val result = monitor.performHealthCheck()
-            
+
             // Si está degradado, asegurar que se encole la alerta
             if (result.isDegraded) {
                 Result.success()

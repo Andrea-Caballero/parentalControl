@@ -6,18 +6,18 @@ import com.tudominio.parentalcontrol.data.db.ParentalDatabase
 import com.tudominio.parentalcontrol.data.model.GrantEntity
 import com.tudominio.parentalcontrol.data.model.TimeRequestEntity
 import com.tudominio.parentalcontrol.outbox.OutboxManager
-import com.tudominio.parentalcontrol.time.TimeProvider
 import com.tudominio.parentalcontrol.time.DefaultTimeProvider
+import com.tudominio.parentalcontrol.time.TimeProvider
 import dagger.hilt.EntryPoint
 import dagger.hilt.InstallIn
 import dagger.hilt.android.EntryPointAccessors
-import dagger.hilt.components.SingletonComponent
 import dagger.hilt.android.qualifiers.ApplicationContext
+import dagger.hilt.components.SingletonComponent
+import java.time.Instant
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
-import java.time.Instant
 
 /**
  * Repositorio para manejar solicitudes de tiempo extra.
@@ -68,7 +68,7 @@ class TimeExtraRepository @Inject constructor(
 
     /**
      * Crea una solicitud de tiempo extra.
-     * 
+     *
      * Offline: encola en outbox para sync posterior.
      */
     suspend fun createTimeRequest(
@@ -80,17 +80,17 @@ class TimeExtraRepository @Inject constructor(
         if (minutes <= 0 || minutes > MAX_REQUEST_MINUTES) {
             return TimeRequestResult.InvalidMinutes
         }
-        
+
         // Verificar throttle local
         if (isThrottled()) {
             val waitMinutes = getWaitTimeMinutes()
             return TimeRequestResult.Throttled(waitMinutes)
         }
-        
+
         // Crear la solicitud
         val requestId = generateRequestId()
         val now = timeProvider.wallInstant().toEpochMilli()
-        
+
         val request = TimeRequestEntity(
             request_id = requestId,
             device_id = deviceId,
@@ -102,19 +102,19 @@ class TimeExtraRepository @Inject constructor(
             responded_at = null,
             parent_response = null
         )
-        
+
         try {
             // Guardar localmente
             timeRequestDao.insertRequest(request)
-            
+
             // Guardar throttle
             saveLastRequestTime(now)
-            
+
             // Intentar enviar al servidor (offline-safe)
             val sent = outboxManager.enqueueTimeRequest(request)
-            
+
             Log.d(TAG, "Time request created: $requestId, sent=$sent")
-            
+
             return TimeRequestResult.Success(requestId, isSent = sent)
         } catch (e: Exception) {
             Log.e(TAG, "Error creating time request: ${e.message}")
@@ -138,7 +138,7 @@ class TimeExtraRepository @Inject constructor(
 
     /**
      * Procesa una respuesta de aprobación.
-     * 
+     *
      * §0.4 paso 6: Crea grant idempotente con source='extra_time'.
      */
     suspend fun processApproval(
@@ -156,13 +156,12 @@ class TimeExtraRepository @Inject constructor(
                 status = "approved",
                 respondedAt = timeProvider.wallInstant().toString()
             )
-            
+
             // Crear grant idempotente (source='extra_time')
-            val grantId = "extra_time_${requestId}"
+            val grantId = "extra_time_$requestId"
             val now = timeProvider.wallInstant()
-            val expires = expiresAt?.let { Instant.ofEpochMilli(it) }
-                ?: now.plusSeconds(approvedMinutes * 60L)
-            
+            val expires = expiresAt?.let { Instant.ofEpochMilli(it) } ?: now.plusSeconds(approvedMinutes * 60L)
+
             val grant = GrantEntity(
                 id = grantId,
                 device_id = deviceId,
@@ -173,11 +172,11 @@ class TimeExtraRepository @Inject constructor(
                 granted_at = now.toString(),
                 expires_at = expires.toString()
             )
-            
+
             grantDao.insertGrant(grant)
-            
+
             Log.d(TAG, "Grant created from approval: $grantId, expires=$expires")
-            
+
             return GrantResult.Success(grantId, expires)
         } catch (e: Exception) {
             Log.e(TAG, "Error processing approval: ${e.message}")
@@ -240,7 +239,7 @@ class TimeExtraRepository @Inject constructor(
             val extraGrants = grantDao.getGrantsForScope("extra_time").first()
             val rewardGrants = grantDao.getGrantsForScope("reward").first()
             val allGrants = extraGrants + rewardGrants
-            
+
             allGrants
                 .filter { it.expires_at > now }
                 .sumOf { it.minutes }.toLong()
@@ -256,7 +255,7 @@ class TimeExtraRepository @Inject constructor(
         val lastRequest = prefs.getLong("last_request_time", 0)
         val now = System.currentTimeMillis()
         val elapsed = (now - lastRequest) / 60_000 // minutos
-        
+
         return elapsed < THROTTLE_MIN_MINUTES
     }
 

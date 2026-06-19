@@ -12,23 +12,23 @@ import com.tudominio.parentalcontrol.network.SupabaseClientProvider
 import dagger.hilt.EntryPoint
 import dagger.hilt.InstallIn
 import dagger.hilt.android.EntryPointAccessors
-import dagger.hilt.components.SingletonComponent
 import dagger.hilt.android.qualifiers.ApplicationContext
+import dagger.hilt.components.SingletonComponent
 import io.ktor.client.*
 import io.ktor.client.plugins.contentnegotiation.*
 import io.ktor.client.request.*
 import io.ktor.client.statement.*
 import io.ktor.http.*
 import io.ktor.serialization.kotlinx.json.*
+import java.time.ZoneOffset
+import java.util.UUID
+import javax.inject.Inject
+import javax.inject.Singleton
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.*
-import java.time.ZoneOffset
-import java.util.UUID
-import javax.inject.Inject
-import javax.inject.Singleton
 
 enum class OutboxEventType {
     USAGE_LOG,

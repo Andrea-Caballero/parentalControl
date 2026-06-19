@@ -8,16 +8,15 @@ import com.tudominio.parentalcontrol.data.model.TimeRequestEntity
 import dagger.hilt.EntryPoint
 import dagger.hilt.InstallIn
 import dagger.hilt.android.EntryPointAccessors
-import dagger.hilt.components.SingletonComponent
 import dagger.hilt.android.qualifiers.ApplicationContext
+import dagger.hilt.components.SingletonComponent
+import java.time.Instant
+import java.util.UUID
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.launch
-import java.time.Instant
-import java.util.UUID
 
 /**
  * Manager para la outbox de solicitudes offline.

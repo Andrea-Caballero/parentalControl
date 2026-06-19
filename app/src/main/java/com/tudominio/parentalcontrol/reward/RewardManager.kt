@@ -4,20 +4,19 @@ import android.content.Context
 import android.util.Log
 import com.tudominio.parentalcontrol.data.db.ParentalDatabase
 import com.tudominio.parentalcontrol.data.model.GrantEntity
-import com.tudominio.parentalcontrol.time.TimeProvider
 import com.tudominio.parentalcontrol.time.DefaultTimeProvider
+import com.tudominio.parentalcontrol.time.TimeProvider
 import dagger.hilt.EntryPoint
 import dagger.hilt.InstallIn
 import dagger.hilt.android.EntryPointAccessors
-import dagger.hilt.components.SingletonComponent
 import dagger.hilt.android.qualifiers.ApplicationContext
+import dagger.hilt.components.SingletonComponent
+import java.time.Instant
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
-import java.time.Instant
-import kotlin.collections.sortByDescending
 
 /**
  * Manager para el banco de tiempo / recompensas.
@@ -59,7 +58,7 @@ class RewardManager @Inject constructor(
 
     private val grantDao = database.grantDao()
     private val timeProvider: TimeProvider = DefaultTimeProvider(context)
-    
+
     // Prefs para el tope máximo
     private val prefs = context.getSharedPreferences("reward_prefs", Context.MODE_PRIVATE)
 
@@ -69,11 +68,11 @@ class RewardManager @Inject constructor(
     suspend fun getRewardBalance(): Long {
         val now = timeProvider.wallInstant().toString()
         val maxBalance = getMaxBalanceMinutes()
-        
+
         return try {
             val grants = grantDao.getGrantsForScope(REWARD_SCOPE).first()
             val activeGrants = grants.filter { it.expires_at > now }
-            
+
             val totalMinutes = activeGrants.sumOf { it.minutes }.toLong()
             minOf(totalMinutes, maxBalance)
         } catch (e: Exception) {
@@ -87,7 +86,7 @@ class RewardManager @Inject constructor(
      */
     fun getActiveRewardGrants(): Flow<List<RewardGrantUi>> {
         val now = timeProvider.wallInstant().toString()
-        
+
         return grantDao.getGrantsForScope(REWARD_SCOPE).map { grants ->
             grants.filter { it.expires_at > now }
                 .sortedBy { it.expires_at }
@@ -100,10 +99,10 @@ class RewardManager @Inject constructor(
      */
     suspend fun getRewardHistory(): List<RewardHistoryItem> {
         val now = timeProvider.wallInstant().toString()
-        
+
         return try {
             val grants = grantDao.getGrantsForScope(REWARD_SCOPE).first()
-            
+
             grants.map { grant ->
                 val isActive = grant.expires_at > now
                 val expiresAt = try {
@@ -111,7 +110,7 @@ class RewardManager @Inject constructor(
                 } catch (e: Exception) {
                     null
                 }
-                
+
                 RewardHistoryItem(
                     id = grant.id,
                     minutes = grant.minutes,
@@ -155,12 +154,12 @@ class RewardManager @Inject constructor(
      */
     suspend fun consumeRewardMinutes(minutes: Int): Boolean {
         val currentBalance = getRewardBalance()
-        
+
         if (currentBalance < minutes) {
             Log.w(TAG, "Not enough reward balance: $currentBalance < $minutes")
             return false
         }
-        
+
         // En una implementación real, decrementaríamos el grant activo
         // Por ahora, simplemente lo marcamos como usado
         Log.d(TAG, "Consumed $minutes reward minutes, remaining: ${currentBalance - minutes}")
@@ -169,7 +168,7 @@ class RewardManager @Inject constructor(
 
     /**
      * Procesa un grant de recompensa desde el servidor.
-     * 
+     *
      * §0.3: El grant tiene source='reward'.
      */
     suspend fun processRewardGrant(
@@ -181,7 +180,7 @@ class RewardManager @Inject constructor(
             val now = timeProvider.wallInstant()
             val grantedAt = now.toString()
             val expiresAtStr = expiresAt.toString()
-            
+
             val grant = GrantEntity(
                 id = "reward_$grantId",
                 device_id = "reward_device",
@@ -192,9 +191,9 @@ class RewardManager @Inject constructor(
                 granted_at = grantedAt,
                 expires_at = expiresAtStr
             )
-            
+
             grantDao.insertGrant(grant)
-            
+
             Log.d(TAG, "Reward grant created: $grantId, $minutes min, expires at $expiresAt")
             true
         } catch (e: Exception) {
@@ -218,7 +217,7 @@ class RewardManager @Inject constructor(
         } catch (e: Exception) {
             null
         }
-        
+
         val now = timeProvider.wallInstant()
         val minutesRemaining = if (expiresAt != null) {
             val seconds = java.time.Duration.between(now, expiresAt).seconds
@@ -226,7 +225,7 @@ class RewardManager @Inject constructor(
         } else {
             minutes
         }
-        
+
         return RewardGrantUi(
             id = id,
             minutes = minutes,
@@ -255,7 +254,7 @@ data class RewardGrantUi(
             ).toMinutes()
             return minutesLeft in 0..5
         }
-    
+
     val isExpired: Boolean
         get() {
             val expires = expiresAt ?: return false

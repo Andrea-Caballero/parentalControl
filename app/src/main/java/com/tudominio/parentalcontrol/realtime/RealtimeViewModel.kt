@@ -1,16 +1,18 @@
 package com.tudominio.parentalcontrol.realtime
 
 import android.content.Context
+import android.util.Log
 import androidx.lifecycle.ViewModel
-import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.tudominio.parentalcontrol.data.db.ParentalDatabase
 import com.tudominio.parentalcontrol.sync.SyncManager
-import android.util.Log
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
-import kotlinx.coroutines.flow.*
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.asSharedFlow
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
 
 /**
@@ -48,10 +50,10 @@ class RealtimeViewModel @Inject constructor(
             // Cambio de política
             realtimeManager.policyChange.collect { event ->
                 Log.d(TAG, "Política actualizada a v${event.newVersion}")
-                
+
                 // Refrescar política desde servidor
                 syncManager.pullPolicy()
-                
+
                 // Notificar UI
                 _uiEvents.emit(UiRefreshEvent.PolicyChanged(event.newVersion))
             }
@@ -61,10 +63,10 @@ class RealtimeViewModel @Inject constructor(
             // Cambio de grants
             realtimeManager.grantChange.collect { event ->
                 Log.d(TAG, "Grant ${event.type}: ${event.grantId}")
-                
+
                 // Refrescar grants
                 refreshGrants()
-                
+
                 // Notificar UI
                 _uiEvents.emit(
                     UiRefreshEvent.GrantsChanged(
@@ -82,10 +84,10 @@ class RealtimeViewModel @Inject constructor(
             // Cambio de solicitudes
             realtimeManager.requestChange.collect { event ->
                 Log.d(TAG, "Solicitud ${event.type}: ${event.requestId}")
-                
+
                 // Refrescar solicitudes
                 refreshRequests()
-                
+
                 // Notificar UI
                 _uiEvents.emit(
                     UiRefreshEvent.RequestChanged(
@@ -163,7 +165,7 @@ class RealtimeViewModel @Inject constructor(
  */
 sealed class UiRefreshEvent {
     data class PolicyChanged(val newVersion: Long) : UiRefreshEvent()
-    
+
     data class GrantsChanged(
         val type: ChangeType,
         val grantId: String?
@@ -173,7 +175,7 @@ sealed class UiRefreshEvent {
             REVOKED
         }
     }
-    
+
     data class RequestChanged(
         val type: ChangeType,
         val requestId: String?
@@ -184,6 +186,6 @@ sealed class UiRefreshEvent {
             UPDATED
         }
     }
-    
+
     data object FullRefresh : UiRefreshEvent()
 }

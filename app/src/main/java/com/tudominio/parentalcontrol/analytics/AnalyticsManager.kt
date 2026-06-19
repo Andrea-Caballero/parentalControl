@@ -10,8 +10,8 @@ import com.tudominio.parentalcontrol.time.TimeProvider
 import dagger.hilt.EntryPoint
 import dagger.hilt.InstallIn
 import dagger.hilt.android.EntryPointAccessors
-import dagger.hilt.components.SingletonComponent
 import dagger.hilt.android.qualifiers.ApplicationContext
+import dagger.hilt.components.SingletonComponent
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.CoroutineScope
@@ -117,7 +117,7 @@ class AnalyticsManager @Inject constructor(
     private val eventDao = database.behavioralEventDao()
     private val timeProvider: TimeProvider = DefaultTimeProvider(context)
     private val analyticsScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-    
+
     // Device ID cache
     private var cachedDeviceId: String? = null
 
@@ -126,7 +126,7 @@ class AnalyticsManager @Inject constructor(
      */
     private fun getDeviceId(): String {
         cachedDeviceId?.let { return it }
-        
+
         return try {
             val deviceId = DeviceAuthService.getInstance(context).getDeviceId()
             deviceId?.also { cachedDeviceId = it } ?: "unknown"
@@ -137,7 +137,7 @@ class AnalyticsManager @Inject constructor(
 
     /**
      * Emite un evento de analytics.
-     * 
+     *
      * Siempre encola (no bloquea el enforcement).
      * No incluye contenido del menor (§0.6).
      */
@@ -145,7 +145,7 @@ class AnalyticsManager @Inject constructor(
         analyticsScope.launch {
             try {
                 val now = timeProvider.wallInstant().toString()
-                
+
                 val event = BehavioralEventEntity(
                     event_type = eventType,
                     event_version = EVENT_VERSION,
@@ -155,9 +155,9 @@ class AnalyticsManager @Inject constructor(
                     synced = false,
                     created_at = now
                 )
-                
+
                 eventDao.insert(event)
-                
+
                 Log.d(TAG, "Event tracked: $eventType")
             } catch (e: Exception) {
                 // Nunca fallar el tracking - solo log
@@ -165,7 +165,7 @@ class AnalyticsManager @Inject constructor(
             }
         }
     }
-    
+
     /**
      * Track con propiedades strongly-typed para evitar errores.
      */
@@ -179,15 +179,15 @@ class AnalyticsManager @Inject constructor(
     fun trackOnboardingStep(step: String) {
         track(Events.ONBOARDING_STEP_REACHED, "step" to step)
     }
-    
+
     fun trackOnboardingFirstWin() {
         track(Events.ONBOARDING_FIRST_WIN)
     }
-    
+
     fun trackOnboardingCompleted() {
         track(Events.ONBOARDING_COMPLETED)
     }
-    
+
     fun trackOnboardingAbandoned(reason: String? = null) {
         val props = reason?.let { mapOf("reason" to it) } ?: emptyMap()
         track(Events.ONBOARDING_ABANDONED, props)
@@ -203,31 +203,31 @@ class AnalyticsManager @Inject constructor(
             "issues_count" to issuesCount.toString()
         )
     }
-    
+
     fun trackPermissionGranted(permission: String) {
         track(Events.PERMISSION_GRANTED, "permission" to permission)
     }
-    
+
     fun trackDeviceOwnerOffered() {
         track(Events.DEVICE_OWNER_OFFERED)
     }
-    
+
     fun trackDeviceOwnerAdopted() {
         track(Events.DEVICE_OWNER_ADOPTED)
     }
-    
+
     fun trackDeviceOwnerDeclined() {
         track(Events.DEVICE_OWNER_DECLINED)
     }
-    
+
     fun trackDegradedAlertShown(reasons: List<String>) {
         track(Events.DEGRADED_ALERT_SHOWN, "reasons" to reasons.joinToString(","))
     }
-    
+
     fun trackRepairTapped(issueType: String) {
         track(Events.REPAIR_TAPPED, "issue_type" to issueType)
     }
-    
+
     fun trackProtectionRestored(issueType: String) {
         track(Events.PROTECTION_RESTORED, "issue_type" to issueType)
     }
@@ -238,23 +238,23 @@ class AnalyticsManager @Inject constructor(
     fun trackTimeWarningShown(minutesRemaining: Int) {
         track(Events.TIME_WARNING_SHOWN, "minutes_remaining" to minutesRemaining.toString())
     }
-    
+
     fun trackLimitReached(appPackage: String) {
         track(Events.LIMIT_REACHED, "app_package" to appPackage)
     }
-    
+
     fun trackBlockOverlayShown(reason: String) {
         track(Events.BLOCK_OVERLAY_SHOWN, "reason" to reason)
     }
-    
+
     fun trackAskPermissionTapped(appPackage: String) {
         track(Events.ASK_PERMISSION_TAPPED, "app_package" to appPackage)
     }
-    
+
     fun trackExtraTimeRequested(minutes: Int) {
         track(Events.EXTRA_TIME_REQUESTED, "minutes" to minutes.toString())
     }
-    
+
     fun trackExtraTimeResolved(granted: Boolean, minutes: Int? = null) {
         val props = mutableMapOf("granted" to granted.toString())
         minutes?.let { props["minutes"] = it.toString() }
@@ -267,7 +267,7 @@ class AnalyticsManager @Inject constructor(
     fun trackRewardGranted(minutes: Int) {
         track(Events.REWARD_GRANTED, "minutes" to minutes.toString())
     }
-    
+
     fun trackRewardSeen() {
         track(Events.REWARD_SEEN)
     }
@@ -278,15 +278,15 @@ class AnalyticsManager @Inject constructor(
     fun trackAccessibilityOffDetected() {
         track(Events.ACCESSIBILITY_OFF_DETECTED)
     }
-    
+
     fun trackUninstallAttempt() {
         track(Events.UNINSTALL_ATTEMPT)
     }
-    
+
     fun trackClockTamperSuspected() {
         track(Events.CLOCK_TAMPER_SUSPECTED)
     }
-    
+
     fun trackTimezoneChanged(oldTz: String, newTz: String) {
         track(
             Events.TIMEZONE_CHANGED,
@@ -312,7 +312,7 @@ class AnalyticsManager @Inject constructor(
         comment?.let { props["has_comment"] = "true" }
         periodStart?.let { props["period_start"] = it }
         periodEnd?.let { props["period_end"] = it }
-        
+
         track(Events.PARENT_OUTCOME_CHECKIN, props)
     }
 
@@ -320,9 +320,9 @@ class AnalyticsManager @Inject constructor(
      * Rating del check-in de outcome.
      */
     enum class OutcomeRating {
-        POSITIVE,   // 😊
-        NEUTRAL,    // 😐
-        NEGATIVE    // ☹️
+        POSITIVE, // 😊
+        NEUTRAL, // 😐
+        NEGATIVE // ☹️
     }
 
     /**

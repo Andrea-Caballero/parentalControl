@@ -5,117 +5,34 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
-import androidx.compose.runtime.*
-import androidx.hilt.navigation.compose.hiltViewModel
-import com.tudominio.parentalcontrol.auth.DeviceAuthManager
-import com.tudominio.parentalcontrol.copy.CopyManager
-import com.tudominio.parentalcontrol.data.repository.TimeExtraRepository
-import com.tudominio.parentalcontrol.data.repository.TimeExtraRepositoryEntryPoint
-import com.tudominio.parentalcontrol.pairing.PairingViewModel
-import com.tudominio.parentalcontrol.pairing.ui.PairingScreen
-import com.tudominio.parentalcontrol.ui.child.extra.ExtraTimeScreen
-import com.tudominio.parentalcontrol.ui.child.status.ChildStatusScreen
-import com.tudominio.parentalcontrol.ui.child.status.ChildStatusViewModel
-import com.tudominio.parentalcontrol.ui.parent.screens.DashboardScreen
-import com.tudominio.parentalcontrol.ui.screen.OnboardingScreen
-import com.tudominio.parentalcontrol.ui.screen.apps.AppsViewModel
+import androidx.compose.runtime.mutableStateOf
+import com.tudominio.parentalcontrol.ui.navigation.AppNavHost
 import com.tudominio.parentalcontrol.ui.theme.ParentalControlTheme
-import com.tudominio.parentalcontrol.viewmodel.ParentViewModel
 import dagger.hilt.android.AndroidEntryPoint
-import dagger.hilt.android.EntryPointAccessors
 
+/**
+ * Single-activity host for the ParentalControl app.
+ *
+ * Per the `app-entry-routing` spec (PR 4 of `align-with-guia-fedora44`),
+ * this activity only owns lifecycle + deeplink plumbing. The actual
+ * route selection lives in `ui.navigation.NavGraph`, invoked via
+ * [AppNavHost]. [prefilledPairingCode] is hoisted here so the
+ * `parentalcontrol://pair?code=...` deeplink prefill survives both
+ * `onCreate` (cold start) and `onNewIntent` (warm start) without an
+ * activity restart.
+ */
 @AndroidEntryPoint
 class MainActivity : ComponentActivity() {
 
-    /**
-     * Hoisted state for the deeplink-prefilled pairing code. Updated by
-     * [handlePairingDeeplink] from `onCreate` and `onNewIntent`; consumed by
-     * the `PairingScreen` composable via the `prefilledCode` parameter.
-     */
     private val prefilledPairingCode = mutableStateOf<String?>(null)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         handlePairingDeeplink(intent)
-
-        val authManager = DeviceAuthManager.getInstance(this)
-        val isPaired = authManager.isPaired()
-        val parentId = getSharedPreferences("device_auth_prefs", MODE_PRIVATE)
-            .getString("parent_id", null)
-        val isChildDevice = isPaired && parentId != null
-        val timeExtraRepository = EntryPointAccessors.fromApplication(
-            applicationContext,
-            TimeExtraRepositoryEntryPoint::class.java
-        ).timeExtraRepository()
-
         setContent {
             ParentalControlTheme {
-                when {
-                    !isPaired -> {
-                        var selectedMode by remember { mutableStateOf<String?>(null) }
-                        when (selectedMode) {
-                            "parent" -> {
-                                val parentViewModel: ParentViewModel = hiltViewModel()
-                                val appsViewModel: AppsViewModel = hiltViewModel()
-                                DashboardScreen(
-                                    viewModel = parentViewModel,
-                                    appsViewModel = appsViewModel,
-                                    onNavigateToDevice = { },
-                                    onNavigateToRequests = { }
-                                )
-                            }
-                            "child" -> {
-                                val pairingViewModel: PairingViewModel = hiltViewModel()
-                                PairingScreen(
-                                    viewModel = pairingViewModel,
-                                    onPairingComplete = { restartActivity() },
-                                    onCancel = { selectedMode = null },
-                                    prefilledCode = prefilledPairingCode.value
-                                )
-                            }
-                            null -> {
-                                OnboardingScreen(
-                                    onSelectParent = { selectedMode = "parent" },
-                                    onSelectChild = { selectedMode = "child" }
-                                )
-                            }
-                        }
-                    }
-                    isChildDevice -> {
-                        var showExtraTime by remember { mutableStateOf(false) }
-                        val copyManager = CopyManager.getInstance(this)
-                        val childViewModel: ChildStatusViewModel = hiltViewModel()
-                        val deviceId = authManager.deviceId.value ?: ""
-
-                        if (showExtraTime) {
-                            ExtraTimeScreen(
-                                copyManager = copyManager,
-                                repository = timeExtraRepository,
-                                deviceId = deviceId,
-                                onBack = { showExtraTime = false },
-                                onRequestSent = { showExtraTime = false },
-                                onError = { }
-                            )
-                        } else {
-                            ChildStatusScreen(
-                                viewModel = childViewModel,
-                                copyManager = copyManager,
-                                onRequestExtraTime = { showExtraTime = true }
-                            )
-                        }
-                    }
-                    else -> {
-                        val parentViewModel: ParentViewModel = hiltViewModel()
-                        val appsViewModel: AppsViewModel = hiltViewModel()
-                        DashboardScreen(
-                            viewModel = parentViewModel,
-                            appsViewModel = appsViewModel,
-                            onNavigateToDevice = { },
-                            onNavigateToRequests = { }
-                        )
-                    }
-                }
+                AppNavHost(prefilledPairingCode = prefilledPairingCode.value, onPairingComplete = ::restartActivity)
             }
         }
     }
@@ -127,7 +44,7 @@ class MainActivity : ComponentActivity() {
 
     /**
      * Extracts the `code` query parameter from a `parentalcontrol://pair?code=…`
-     * intent and stashes it in [prefilledPairingCode] for [PairingScreen] to
+     * intent and stashes it in [prefilledPairingCode] for `PairingScreen` to
      * pick up. No-op for intents that don't match the deeplink shape.
      */
     private fun handlePairingDeeplink(intent: Intent?) {
@@ -137,6 +54,12 @@ class MainActivity : ComponentActivity() {
         prefilledPairingCode.value = data.getQueryParameter("code")
     }
 
+    /**
+     * Triggers an activity `recreate()` so the next composition picks up
+     * the freshly persisted pairing state (parent vs child device).
+     * Invoked by `NavGraph` when `PairingScreen` reports success via
+     * its `onPairingComplete` callback.
+     */
     private fun restartActivity() {
         recreate()
     }

@@ -32,21 +32,51 @@ Chain strategy: N/A
 
 **Acceptance**: branch exists at `e2c1000 + 0` (no commits yet), points to master tip.
 
-## Task 2: Verify primary candidate (AGP 8.13.2) bundles kotlin-metadata-jvm ≥ 2.3.0
+## Task 2: Verify primary candidate (AGP 8.13.2) ships R8 with kotlin-metadata ≥ 2.3.0 (bytecode inspection)
 
-- [x] Step 2.1: Run `curl -s https://repo1.maven.org/maven2/com/android/tools/r8/8.13.2/r8-8.13.2.pom | grep -A2 kotlin-metadata-jvm`. Capture stdout. **Outcome: HTTP 404 — `r8/8.13.2` does not exist on Maven Central (R8 lives on Google Maven). The proposal's curl-grep approach is fundamentally broken (R8 POM has zero deps; kotlin-metadata-jvm is shaded into the R8 jar). Pivoted to bytecode-inspection verification — see `verification-evidence.md` for the working mechanism.**
-- [x] Step 2.2: Create `openspec/changes/bump-agp-fix-r8-metadata-warnings/verification-evidence.md` with the header `# Verification — primary path` and paste the curl stdout in a fenced bash block.
-- [x] Step 2.3: IF the stdout shows `kotlin-metadata-jvm` version ≥ 2.3.0 → mark Task 2 complete, proceed to Task 4 with `chosen = "8.13.2"`. **Outcome: Verified via bytecode — AGP 8.13.2 ships R8 8.13.19; R8 8.13.19's `gc2.h = {2, 3, 0}` = max Kotlin metadata v2.3.0. PASS, proceed with `chosen = "8.13.2"`.**
+- [x] Step 2.1: **Bytecode-inspection verification (two steps — see `proposal.md` §"Verification mechanism" for rationale)**:
+  1. Identify the R8 version AGP 8.13.2 ships with — download the AGP `builder` jar from Google Maven and decompile `com.android.builder.dexing.R8Version`:
+     ```bash
+     curl -s -o builder-8.13.2.jar \
+       "https://dl.google.com/dl/android/maven2/com/android/tools/build/builder/8.13.2/builder-8.13.2.jar"
+     javap -p -c -constants -classpath builder-8.13.2.jar \
+       com.android.builder.dexing.R8Version
+     # Expect: public static final java.lang.String VERSION_AGP_WAS_SHIPPED_WITH = "8.13.19";
+     ```
+  2. Find the max supported Kotlin metadata version in that R8 — download the R8 jar, locate the version constant class via `strings`, and decompile it:
+     ```bash
+     curl -s -o r8-8.13.19.jar \
+       "https://dl.google.com/dl/android/maven2/com/android/tools/r8/8.13.19/r8-8.13.19.jar"
+     strings r8-8.13.19.jar | grep "while maximum supported version is"
+     # → identifies the checker class (e.g. com/android/tools/r8/internal/l02.class)
+     javap -c -classpath r8-8.13.19.jar com.android.tools.r8.internal.gc2
+     # Expect: h = gc2(new int[]{2, 3, 0}, false) → max Kotlin metadata v2.3.0
+     ```
+  **Outcome: AGP 8.13.2 ships R8 8.13.19; R8 8.13.19's `gc2.h = {2, 3, 0}` = max Kotlin metadata v2.3.0. PASS. NOTE: the originally-proposed mechanism (`curl ... repo1.maven.org .../r8-8.13.2.pom | grep kotlin-metadata-jvm`) is broken — R8 lives on Google Maven, the POM has zero deps, and AGP/R8 versions are decoupled. The bytecode mechanism above is the working one.**
+- [x] Step 2.2: Create `openspec/changes/bump-agp-fix-r8-metadata-warnings/verification-evidence.md` with the header `# Verification — primary path` and paste the full bytecode-inspection transcript (every `curl` URL, every `javap` invocation, every decompiled constant output) in fenced bash / java blocks.
+- [x] Step 2.3: IF the decompiled `R8Version` constant identifies an R8 whose max Kotlin metadata ≥ 2.3.0 → mark Task 2 complete, proceed to Task 4 with `chosen = "8.13.2"`. **Outcome: Verified — `gc2.h = {2, 3, 0}` → v2.3.0 → PASS, proceed with `chosen = "8.13.2"`.**
 
 **Acceptance**: `verification-evidence.md` exists with the primary-path section; outcome (pass/fail) recorded in the file.
 
-## Task 3: Verify fallback candidate (AGP 9.2.1) — ONLY IF Task 2 failed
+## Task 3: Verify fallback candidate (AGP 9.2.1) via bytecode inspection — ONLY IF Task 2 failed
 
-- [ ] Step 3.1: Run `curl -s https://repo1.maven.org/maven2/com/android/tools/r8/9.2.1/r8-9.2.1.pom | grep -A2 kotlin-metadata-jvm`. Capture stdout.
-- [ ] Step 3.2: Append a section to `verification-evidence.md` with header `# Verification — fallback path` and paste the curl stdout.
-- [ ] Step 3.3: IF the stdout shows `kotlin-metadata-jvm` version ≥ 2.3.0 → `chosen = "9.2.1"`, proceed to Task 4 (Task 5.2 wrapper sub-task also runs). ELSE → abort the change: report both curl outputs, mark Task 3 failed, do not proceed.
+- [ ] Step 3.1: **Bytecode-inspection verification (two steps — same mechanism as Task 2.1)**:
+  1. Identify the R8 version AGP 9.2.1 ships with — download `builder-9.2.1.jar` from Google Maven and decompile `com.android.builder.dexing.R8Version` to read `VERSION_AGP_WAS_SHIPPED_WITH`.
+  2. Find the max supported Kotlin metadata version in that R8 — download `r8-<r8>.jar` from Google Maven, locate the version constant class via `strings`, and decompile it to read the `h = gc2(new int[]{...}, false)` (or equivalent) literal.
+     ```bash
+     curl -s -o builder-9.2.1.jar \
+       "https://dl.google.com/dl/android/maven2/com/android/tools/build/builder/9.2.1/builder-9.2.1.jar"
+     javap -p -c -constants -classpath builder-9.2.1.jar \
+       com.android.builder.dexing.R8Version
+     curl -s -o r8-<r8>.jar \
+       "https://dl.google.com/dl/android/maven2/com/android/tools/r8/<r8>/r8-<r8>.jar"
+     strings r8-<r8>.jar | grep "while maximum supported version is"
+     javap -c -classpath r8-<r8>.jar <version-constant-class>
+     ```
+- [ ] Step 3.2: Append a section to `verification-evidence.md` with header `# Verification — fallback path` and paste the full bytecode-inspection transcript in fenced bash / java blocks.
+- [ ] Step 3.3: IF the decompiled max Kotlin metadata ≥ 2.3.0 → `chosen = "9.2.1"`, proceed to Task 4 (Task 5.2 wrapper sub-task also runs). ELSE → abort the change: report both transcripts, mark Task 3 failed, do not proceed.
 
-**Outcome: Skipped — Task 2 passed with `chosen = "8.13.2"`; fallback path not invoked. Marked not applicable per Task 2.3 branch ("ELSE → leave Task 2 incomplete, proceed to Task 3").**
+**Outcome: Skipped — Task 2 passed with `chosen = "8.13.2"`; fallback path not invoked.**
 
 **Acceptance**: `verification-evidence.md` has both primary and fallback sections if fallback was attempted; outcome recorded.
 
@@ -134,5 +164,5 @@ Chain strategy: N/A
 ## Notes for the apply phase
 
 - The apply agent runs in fresh context; it MUST RE-READ `proposal.md`, `specs/r8-kotlin-metadata-version/spec.md`, `design.md`, AND this `tasks.md` before editing anything.
-- `openspec/config.yaml` has `strict_tdd: true` and `apply.tdd: true`. Per design D6, shell commands ARE the tests for this change: curl-grep is the RED/GREEN for the verification gate, and `:app:minifyReleaseWithR8` plus the post-bump `grep -cE` is the GREEN for the warning-free assertion. No new unit tests are written (no new code surface).
+- `openspec/config.yaml` has `strict_tdd: true` and `apply.tdd: true`. Per design D6, shell commands ARE the tests for this change: bytecode inspection (download `builder-<agp>.jar` + `r8-<r8>.jar` from Google Maven and decompile the `R8Version` + metadata-version constants) is the RED/GREEN for the verification gate, and `:app:minifyReleaseWithR8` plus the post-bump `grep -cE` is the GREEN for the warning-free assertion. No new unit tests are written (no new code surface).
 - The orchestrator routes to `sdd-verify` after apply completes; the verify agent will re-run the gate and the zero-warning grep on the post-bump tree.

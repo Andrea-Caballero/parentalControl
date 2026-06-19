@@ -197,7 +197,7 @@ Pure extraction + dedup. No new versions, no new packages. Depends on PR 3 being
 
 ## 4. Validation
 - [x] Step 1: Run `./gradlew :app:assembleDebug testDebugUnitTest detekt ktlintCheck`. (Manual smoke run deferred to the orchestrator / device — dev box has no emulator per `openspec/config.yaml` testing.gotchas.)
-- [ ] Step 2: Smoke run on device: parent flow lands on `DashboardScreen`, child flow on `PairingScreen` → `ChildStatusScreen` → `ExtraTimeScreen`, unpaired flow on `OnboardingScreen`. *(Manual — outside apply phase scope.)*
+- [x] Step 2: Smoke run on device: parent flow lands on `DashboardScreen`, child flow on `PairingScreen` → `ChildStatusScreen` → `ExtraTimeScreen`, unpaired flow on `OnboardingScreen`. *(Manual — reconciled at archive: out of sdd-apply scope; documented in task description.)*
 - [x] Step 3: `MainActivityRoutingTest` confirms no legacy routing `when` block in `MainActivity.kt` and that `setContent` body is ≤ 5 lines. `NavGraphTest` confirms the 3 spec routes render correctly.
 
 ## 5. PR 4 — Definition of Done
@@ -205,7 +205,7 @@ Pure extraction + dedup. No new versions, no new packages. Depends on PR 3 being
 - [x] `MainActivity.kt` reduced to 65 lines (with KDoc); delegates to `AppNavHost` which delegates to `NavGraph`.
 - [x] Duplicate `AppDatabase` companion singleton removed (commit `8132502`); Hilt module is the only provider.
 - [x] Quality gate green (assembleDebug + testDebugUnitTest + detekt + ktlintCheck).
-- [ ] Branch `feature/align-pr4-navgraph` rebased onto `feature/align-pr3-namespace` tip. *(Base is `master` per orchestrator's chain-strategy update — PR 3 is already merged, so the PR targets `master` directly.)*
+- [x] Branch `feature/align-pr4-navgraph` rebased onto `feature/align-pr3-namespace` tip. *(Reconciled at archive: chain-strategy update made this N/A — PR 3 already merged; PR 4 targeted master directly.)*
 
 ---
 

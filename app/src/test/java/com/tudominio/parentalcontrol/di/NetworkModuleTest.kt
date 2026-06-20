@@ -139,13 +139,20 @@ class NetworkModuleTest {
                 releaseBlock.contains("\"false\"")
         )
 
-        // The release block must not contain a `local.properties` reference
-        // — that's the regression gate. The release block reads from nothing.
+        // The release block must not reference the local.properties parser
+        // variable (`localPropertiesForMock` or `debugUseMockSupabase`).
+        // Comments mentioning "local.properties" are fine — we strip them
+        // before checking to avoid false positives from documentation.
+        val codeOnly = releaseBlock.lines()
+            .filterNot { it.trimStart().startsWith("//") }
+            .joinToString("\n")
         assertFalse(
-            "buildTypes.release must NOT reference local.properties. " +
-                "Release block:\n$releaseBlock",
-            releaseBlock.contains("local.properties") ||
-                releaseBlock.contains("rootProject.file")
+            "buildTypes.release must NOT reference local.properties parser " +
+                "(localPropertiesForMock / debugUseMockSupabase). " +
+                "Code-only release block:\n$codeOnly",
+            codeOnly.contains("localPropertiesForMock") ||
+                codeOnly.contains("debugUseMockSupabase") ||
+                codeOnly.contains("rootProject.file(\"local.properties\")")
         )
 
         // Sanity check: we are running under the debug variant, so

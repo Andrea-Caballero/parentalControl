@@ -20,5 +20,11 @@ SUPABASE_ANON_KEY=your-anon-key
 # bound and the placeholder Supabase config above stops masking real
 # auth/network errors.
 #
-# Per design §D3 of `hotfix-parent-auth-session`.
+# This value is read by Gradle (see `app/build.gradle.kts`) for the
+# `debug` build type only — release builds hardcode `false` regardless
+# of this file. If `USE_MOCK_SUPABASE` is not present here, Gradle
+# falls back to `gradle.properties`.
+#
+# Per design §D3 of `hotfix-parent-auth-session`, modified by
+# `hotfix-parent-auth-cta-reload`.
 USE_MOCK_SUPABASE=true

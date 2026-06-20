@@ -49,6 +49,19 @@ A new `get-devices-for-parent` Supabase edge function (under `supabase/functions
 #### Scenario: Loading and error states have dedicated UI
 - **WHEN** the call is in flight, the dashboard SHALL show a centered progress indicator; **WHEN** the call fails, an inline error banner with a "Retry" action SHALL appear above the list area.
 
+### Requirement: Error banner CTAs adapt to error type
+
+The parent device list's error banner SHALL present an "Iniciar sesión como padre" CTA when the underlying error indicates missing authentication (error message contains "not authenticated"), and SHALL fall back to the standard retry + back CTAs for transient errors.
+
+#### Scenario: Auth-missing error shows the sign-in CTA
+- **WHEN** `DeviceListUiState.Error(DeviceListError.AuthMissing)` is observed,
+- **THEN** the rendered error banner SHALL contain a "Iniciar sesión como padre" CTA,
+- **AND** the banner SHALL NOT show the "Reintentar" or "Volver" CTAs.
+
+#### Scenario: Transient error shows retry + back
+- **WHEN** `DeviceListUiState.Error(DeviceListError.Transient(reason))` is observed (or any non-AuthMissing error),
+- **THEN** the rendered error banner SHALL contain "Reintentar" and "Volver" CTAs as before.
+
 ## Out of scope
 - Initiating a new pairing from the dashboard (covered by `pairing-flow`).
 - Showing per-device live policy or grant state (covered by `app-block-policy` / `time-request-approval`).

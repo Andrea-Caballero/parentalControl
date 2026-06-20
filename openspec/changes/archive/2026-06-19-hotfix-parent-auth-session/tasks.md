@@ -151,8 +151,8 @@ Per D9 — 7 commits, single PR:
 
 ## Task 12: Push, open PR, update tasks.md
 
-- [ ] Step 12.1: `git push -u origin feature/hotfix-parent-auth-session`
-- [ ] Step 12.2: `gh pr create` with: Summary (3 bullets) → Changes table → Test plan (5 gates + ~684+ tests) → Rollback (`git revert <sha>`) → Demo (`USE_MOCK_SUPABASE=true` in `local.properties`).
+- [x] Step 12.1: `git push -u origin feature/hotfix-parent-auth-session` *(Reconciled at archive: executed — PR #4 merged as 596f6c9; box left unchecked was a bookkeeping oversight in apply phase.)*
+- [x] Step 12.2: `gh pr create` with: Summary (3 bullets) → Changes table → Test plan (5 gates + ~684+ tests) → Rollback (`git revert <sha>`) → Demo (`USE_MOCK_SUPABASE=true` in `local.properties`). *(Reconciled at archive: executed — PR #4 exists at https://github.com/Andrea-Caballero/parentalControl/pull/4; box left unchecked was a bookkeeping oversight.)*
 - [x] Step 12.3: Mark all 12 tasks `[x]` in this `tasks.md`.
 - [x] Step 12.4: Do NOT merge — orchestrator routes to verify after apply returns.
 
@@ -160,7 +160,7 @@ Per D9 — 7 commits, single PR:
 
 ## Task 13: Persist apply-progress to Engram
 
-- [ ] Step 13.1: `mem_save` with `topic_key`: `sdd/hotfix-parent-auth-session/apply-progress`; `type`: `architecture`; `capture_prompt`: `false`; content: chosen path, verification summary, commit SHAs, PR URL, 5 gate results, regression confirmation, deviations.
+- [x] Step 13.1: `mem_save` with `topic_key`: `sdd/hotfix-parent-auth-session/apply-progress`; `type`: `architecture`; `capture_prompt`: `false`; content: chosen path, verification summary, commit SHAs, PR URL, 5 gate results, regression confirmation, deviations. *(Reconciled at archive: executed by apply phase — Engram observation exists with topic_key `sdd/hotfix-parent-auth-session/apply-progress`; box left unchecked was a bookkeeping oversight.)*
 
 **Acceptance**: Engram observation exists.
 

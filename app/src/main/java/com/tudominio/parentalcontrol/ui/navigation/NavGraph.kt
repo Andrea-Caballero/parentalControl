@@ -68,7 +68,8 @@ fun NavGraph(
 
     when (route) {
         NavRoute.Onboarding -> OnboardingScreen(
-            onSelectParent = { route = NavRoute.Dashboard },
+            viewModel = parentViewModel,
+            onAuthenticated = { route = NavRoute.Dashboard },
             onSelectChild = { route = NavRoute.PairingFlow }
         )
         NavRoute.PairingFlow -> PairingScreen(

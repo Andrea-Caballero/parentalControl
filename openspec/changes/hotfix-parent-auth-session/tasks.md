@@ -32,105 +32,105 @@ Chain strategy: N/A
 
 ## Task 1: Create working branch
 
-- [ ] Step 1.1: `git checkout master && git pull --ff-only`
-- [ ] Step 1.2: `git checkout -b feature/hotfix-parent-auth-session`
+- [x] Step 1.1: `git checkout master && git pull --ff-only`
+- [x] Step 1.2: `git checkout -b feature/hotfix-parent-auth-session`
 
 **Acceptance**: branch at `41183c0 + 0`.
 
 ## Task 2: Add Role enum (TDD)
 
-- [ ] Step 2.1 (RED): Create `app/src/test/java/com/tudominio/parentalcontrol/auth/RoleTest.kt` asserting `Role.values()` contains `PARENT` and `CHILD`; `Role.valueOf("PARENT")` returns `Role.PARENT`.
-- [ ] Step 2.2: Run; confirm FAIL (no `Role` class yet).
-- [ ] Step 2.3 (GREEN): Create `app/src/main/java/com/tudominio/parentalcontrol/auth/Role.kt` with `enum class Role { PARENT, CHILD }`.
-- [ ] Step 2.4: Re-run; confirm PASS.
+- [x] Step 2.1 (RED): Create `app/src/test/java/com/tudominio/parentalcontrol/auth/RoleTest.kt` asserting `Role.values()` contains `PARENT` and `CHILD`; `Role.valueOf("PARENT")` returns `Role.PARENT`.
+- [x] Step 2.2: Run; confirm FAIL (no `Role` class yet).
+- [x] Step 2.3 (GREEN): Create `app/src/main/java/com/tudominio/parentalcontrol/auth/Role.kt` with `enum class Role { PARENT, CHILD }`.
+- [x] Step 2.4: Re-run; confirm PASS.
 
 **Acceptance**: `Role.kt` exists; `RoleTest.kt` passes.
 
 ## Task 3: Role-aware authenticateOrCreate (TDD)
 
-- [ ] Step 3.1 (RED): Add tests to `app/src/test/java/com/tudominio/parentalcontrol/auth/DeviceAuthManagerTest.kt` (create if absent): `authenticateOrCreate(Role.PARENT)` and `(Role.CHILD)` succeed and persist `role=PARENT|CHILD` to `device_auth_prefs`; `getAccessToken()` non-null after either; `getRole()` returns persisted role.
-- [ ] Step 3.2: Run; confirm FAIL (current overload doesn't take a role).
-- [ ] Step 3.3 (GREEN): Add `suspend fun authenticateOrCreate(role: Role): Result<Unit>` to `DeviceAuthManager.kt`. Per D4: `currentAccessToken = "anon-${role}-${UUID.randomUUID()}"`; persist `"role"` in `device_auth_prefs`; return `Result.success(Unit)`. Remove no-arg overload only if unused (verify first).
-- [ ] Step 3.4: Re-run; confirm PASS.
+- [x] Step 3.1 (RED): Add tests to `app/src/test/java/com/tudominio/parentalcontrol/auth/DeviceAuthManagerTest.kt` (create if absent): `authenticateOrCreate(Role.PARENT)` and `(Role.CHILD)` succeed and persist `role=PARENT|CHILD` to `device_auth_prefs`; `getAccessToken()` non-null after either; `getRole()` returns persisted role.
+- [x] Step 3.2: Run; confirm FAIL (current overload doesn't take a role).
+- [x] Step 3.3 (GREEN): Add `suspend fun authenticateOrCreate(role: Role): Result<Unit>` to `DeviceAuthManager.kt`. Per D4: `currentAccessToken = "anon-${role}-${UUID.randomUUID()}"`; persist `"role"` in `device_auth_prefs`; return `Result.success(Unit)`. Remove no-arg overload only if unused (verify first).
+- [x] Step 3.4: Re-run; confirm PASS.
 
 **Acceptance**: `authenticateOrCreate(role)` exists; PARENT and CHILD paths work.
 
 ## Task 4: BuildConfig.USE_MOCK_SUPABASE flag
 
-- [ ] Step 4.1: In `app/build.gradle.kts` `defaultConfig`: `buildConfigField("boolean", "USE_MOCK_SUPABASE", "${project.findProperty("USE_MOCK_SUPABASE") ?: "false"}")`.
-- [ ] Step 4.2: Add `buildFeatures { buildConfig = true }` if absent; keep `compose = true`.
-- [ ] Step 4.3: Create `local.properties.template` at repo root with `USE_MOCK_SUPABASE=true` and demo/dev comment.
-- [ ] Step 4.4: Verify `.gitignore` excludes `local.properties` (D3 cites lines 3, 15 — verify only).
-- [ ] Step 4.5: `./gradlew :app:generateDebugBuildConfig` — confirm field generated.
+- [x] Step 4.1: In `app/build.gradle.kts` `defaultConfig`: `buildConfigField("boolean", "USE_MOCK_SUPABASE", "${project.findProperty("USE_MOCK_SUPABASE") ?: "false"}")`.
+- [x] Step 4.2: Add `buildFeatures { buildConfig = true }` if absent; keep `compose = true`.
+- [x] Step 4.3: Create `local.properties.template` at repo root with `USE_MOCK_SUPABASE=true` and demo/dev comment.
+- [x] Step 4.4: Verify `.gitignore` excludes `local.properties` (D3 cites lines 3, 15 — verify only).
+- [x] Step 4.5: `./gradlew :app:generateDebugBuildConfig` — confirm field generated.
 
 **Acceptance**: BuildConfig field exists; template documents flag.
 
 ## Task 5: @SupabaseClient NetworkModule + MockSupabaseFixtures (TDD)
 
-- [ ] Step 5.1 (RED): Create `MockSupabaseEngineTest.kt`: `GET /devices` returns ≥ 2 devices; `GET /templates` returns ≥ 1 template; `GET /pending-requests` returns ≥ 1 PENDING. Asserts on JSON parse shape.
-- [ ] Step 5.2: Run; confirm FAIL.
-- [ ] Step 5.3 (GREEN): Create `di/SupabaseClient.kt`:
+- [x] Step 5.1 (RED): Create `MockSupabaseEngineTest.kt`: `GET /devices` returns ≥ 2 devices; `GET /templates` returns ≥ 1 template; `GET /pending-requests` returns ≥ 1 PENDING. Asserts on JSON parse shape.
+- [x] Step 5.2: Run; confirm FAIL.
+- [x] Step 5.3 (GREEN): Create `di/SupabaseClient.kt`:
   ```kotlin
   @Qualifier @Retention(AnnotationRetention.BINARY) annotation class SupabaseClient
   ```
   (D1 — qualifier names consumer target, NOT engine choice.)
-- [ ] Step 5.4: Create/modify `di/NetworkModule.kt`: `@Provides @Singleton @SupabaseClient fun httpClient(@ApplicationContext ctx): HttpClient` — if `BuildConfig.USE_MOCK_SUPABASE`, `MockEngine` reading from `assets/mock-supabase/`; else existing real engine.
-- [ ] Step 5.5: Create `data/remote/MockSupabaseEngine.kt` — Ktor `HttpClient(MockEngine)` dispatcher keyed by URL path; reads JSON via `context.assets.open("mock-supabase/{name}.json")`.
-- [ ] Step 5.6: Create `app/src/main/assets/mock-supabase/{devices,pending-requests,templates}.json` per spec Req 5.
-- [ ] Step 5.7: Re-run; confirm PASS.
+- [x] Step 5.4: Create/modify `di/NetworkModule.kt`: `@Provides @Singleton @SupabaseClient fun httpClient(@ApplicationContext ctx): HttpClient` — if `BuildConfig.USE_MOCK_SUPABASE`, `MockEngine` reading from `assets/mock-supabase/`; else existing real engine.
+- [x] Step 5.5: Create `data/remote/MockSupabaseEngine.kt` — Ktor `HttpClient(MockEngine)` dispatcher keyed by URL path; reads JSON via `context.assets.open("mock-supabase/{name}.json")`.
+- [x] Step 5.6: Create `app/src/main/assets/mock-supabase/{devices,pending-requests,templates}.json` per spec Req 5.
+- [x] Step 5.7: Re-run; confirm PASS.
 
 **Acceptance**: MockSupabaseEngineTest passes; fixtures load; real engine is else-branch.
 
 ## Task 6: DeviceListError + ParentRepository refactor + ParentViewModel.authenticateAsParent
 
-- [ ] Step 6.1: Create `data/repository/DeviceListError.kt`:
+- [x] Step 6.1: Create `data/repository/DeviceListError.kt`:
   ```kotlin
   sealed class DeviceListError {
       object AuthMissing : DeviceListError()
       data class Transient(val reason: String) : DeviceListError()
   }
   ```
-- [ ] Step 6.2: Modify `ParentRepository.kt`: `getDevices()` wraps `IllegalStateException("not authenticated")` → `DeviceListError.AuthMissing`; other failures → `DeviceListError.Transient(reason)`. Preserve literal exception message internally for log compat (D5).
-- [ ] Step 6.3: Update `ParentRepositoryTest.kt` to assert on `DeviceListError` variants. `createPairingCode_returns_failure_when_not_authenticated` now asserts on `AuthMissing`.
-- [ ] Step 6.4: Modify `ParentViewModel.kt`: `DeviceListUiState.Error` carries `DeviceListError` (not `String`); add `suspend fun authenticateAsParent(): Result<Unit>` calling `authManager.authenticateOrCreate(Role.PARENT)`.
-- [ ] Step 6.5: Create `ParentViewModelTest.kt`: `authenticateAsParent()` happy/failure paths; `loadDevices()` null-token → `Error(AuthMissing)`; mock-engine fixture → `Success(devices)`.
+- [x] Step 6.2: Modify `ParentRepository.kt`: `getDevices()` wraps `IllegalStateException("not authenticated")` → `DeviceListError.AuthMissing`; other failures → `DeviceListError.Transient(reason)`. Preserve literal exception message internally for log compat (D5).
+- [x] Step 6.3: Update `ParentRepositoryTest.kt` to assert on `DeviceListError` variants. `createPairingCode_returns_failure_when_not_authenticated` now asserts on `AuthMissing`.
+- [x] Step 6.4: Modify `ParentViewModel.kt`: `DeviceListUiState.Error` carries `DeviceListError` (not `String`); add `suspend fun authenticateAsParent(): Result<Unit>` calling `authManager.authenticateOrCreate(Role.PARENT)`.
+- [x] Step 6.5: Create `ParentViewModelTest.kt`: `authenticateAsParent()` happy/failure paths; `loadDevices()` null-token → `Error(AuthMissing)`; mock-engine fixture → `Success(devices)`.
 
 **Acceptance**: `DeviceListError` exists; `ParentRepository.getDevices()` returns typed errors; `authenticateAsParent()` tested.
 
 ## Task 7: Wire OnboardingScreen.onSelectParent (TDD)
 
-- [ ] Step 7.1 (RED): Create `OnboardingScreenTest.kt` (follow `NavGraphTest` pattern: Robolectric, `@Config(sdk = [33])`, `ParentalControlTheme`): tap "Soy el padre" with mocked `DeviceAuthManager` triggers `authenticateOrCreate(Role.PARENT)` BEFORE nav; tap while in progress shows loading (button disabled, indicator visible); auth failure prevents nav.
-- [ ] Step 7.2: Run; confirm FAIL.
-- [ ] Step 7.3 (GREEN): Modify `OnboardingScreen.kt`: `onSelectParent` calls `viewModel.authenticateAsParent()` first; loading during auth (disabled button + `CircularProgressIndicator`); success → `NavRoute.Dashboard`; failure → surface error inline.
-- [ ] Step 7.4: Modify `NavGraph.kt` plumbing if `onSelectParent` lives there (verify location first).
-- [ ] Step 7.5: Re-run; confirm PASS.
+- [x] Step 7.1 (RED): Create `OnboardingScreenTest.kt` (follow `NavGraphTest` pattern: Robolectric, `@Config(sdk = [33])`, `ParentalControlTheme`): tap "Soy el padre" with mocked `DeviceAuthManager` triggers `authenticateOrCreate(Role.PARENT)` BEFORE nav; tap while in progress shows loading (button disabled, indicator visible); auth failure prevents nav.
+- [x] Step 7.2: Run; confirm FAIL.
+- [x] Step 7.3 (GREEN): Modify `OnboardingScreen.kt`: `onSelectParent` calls `viewModel.authenticateAsParent()` first; loading during auth (disabled button + `CircularProgressIndicator`); success → `NavRoute.Dashboard`; failure → surface error inline.
+- [x] Step 7.4: Modify `NavGraph.kt` plumbing if `onSelectParent` lives there (verify location first).
+- [x] Step 7.5: Re-run; confirm PASS.
 
 **Acceptance**: auth-then-nav works; loading shown; failure prevents nav; tests green.
 
 ## Task 8: DashboardScreen error banner CTA swap (TDD)
 
-- [ ] Step 8.1 (RED): Create `DashboardScreenTest.kt` (Compose + Robolectric): `Error(AuthMissing)` → "Iniciar sesión como padre" CTA only (no retry/back); `Error(Transient)` → "Reintentar" + "Volver" CTAs; tapping sign-in CTA triggers `authenticateAsParent()`.
-- [ ] Step 8.2: Run; confirm FAIL.
-- [ ] Step 8.3 (GREEN): Modify `DashboardScreen.kt`: replace string-match CTA detection with `DeviceListError` pattern matching; `AuthMissing` → sign-in CTA only; `Transient` → retry+back; wire sign-in CTA to `viewModel.authenticateAsParent()`.
-- [ ] Step 8.4: Re-run; confirm PASS.
+- [x] Step 8.1 (RED): Create `DashboardScreenTest.kt` (Compose + Robolectric): `Error(AuthMissing)` → "Iniciar sesión como padre" CTA only (no retry/back); `Error(Transient)` → "Reintentar" + "Volver" CTAs; tapping sign-in CTA triggers `authenticateAsParent()`.
+- [x] Step 8.2: Run; confirm FAIL.
+- [x] Step 8.3 (GREEN): Modify `DashboardScreen.kt`: replace string-match CTA detection with `DeviceListError` pattern matching; `AuthMissing` → sign-in CTA only; `Transient` → retry+back; wire sign-in CTA to `viewModel.authenticateAsParent()`.
+- [x] Step 8.4: Re-run; confirm PASS.
 
 **Acceptance**: Dashboard CTAs match error type; tests green.
 
 ## Task 9: Regression test for child pairing flow
 
-- [ ] Step 9.1: Run `ParentRepositoryTest.kt` — confirm `createPairingCode_returns_failure_when_not_authenticated` still passes (now against `AuthMissing`).
-- [ ] Step 9.2: Add `completePairing_with_role_child_invokes_completePairing` — confirm `authenticateOrCreate(Role.CHILD)` followed by `completePairing(pairingCode)` still hits pairing-completion path (parent_id resolution unchanged).
-- [ ] Step 9.3: Run all existing tests; confirm zero regressions.
+- [x] Step 9.1: Run `ParentRepositoryTest.kt` — confirm `createPairingCode_returns_failure_when_not_authenticated` still passes (now against `AuthMissing`).
+- [x] Step 9.2: Add `completePairing_with_role_child_invokes_completePairing` — confirm `authenticateOrCreate(Role.CHILD)` followed by `completePairing(pairingCode)` still hits pairing-completion path (parent_id resolution unchanged).
+- [x] Step 9.3: Run all existing tests; confirm zero regressions.
 
 **Acceptance**: 604+ baseline tests pass; new regression test green.
 
 ## Task 10: Run full quality gate
 
-- [ ] Step 10.1: `./gradlew :app:assembleDebug :app:testDebugUnitTest detekt ktlintCheck :app:minifyReleaseWithR8`
-- [ ] Step 10.2: All five exit 0.
-- [ ] Step 10.3: `testDebugUnitTest` reports ≥ 604 + ~80 new = ~684+ passing.
-- [ ] Step 10.4: Zero `malformed-kotlin-Metadata` warnings (R8 fix from prior change holds).
-- [ ] Step 10.5: Optional smoke — `USE_MOCK_SUPABASE=true` in `local.properties`, exercise parent flow manually, document result.
+- [x] Step 10.1: `./gradlew :app:assembleDebug :app:testDebugUnitTest detekt ktlintCheck :app:minifyReleaseWithR8`
+- [x] Step 10.2: All five exit 0.
+- [x] Step 10.3: `testDebugUnitTest` reports ≥ 604 + ~80 new = ~684+ passing.
+- [x] Step 10.4: Zero `malformed-kotlin-Metadata` warnings (R8 fix from prior change holds).
+- [x] Step 10.5: Optional smoke — `USE_MOCK_SUPABASE=true` in `local.properties`, exercise parent flow manually, document result.
 
 **Acceptance**: 5 gates green; ~684+ tests pass; no R8 warnings.
 
@@ -138,14 +138,14 @@ Chain strategy: N/A
 
 Per D9 — 7 commits, single PR:
 
-- [ ] Step 11.1: `feat(auth): add Role enum and Role-aware authenticateOrCreate` (Tasks 2 + 3).
-- [ ] Step 11.2: `build(gradle): add BuildConfig.USE_MOCK_SUPABASE flag` (Task 4).
-- [ ] Step 11.3: `feat(network): add @SupabaseClient Ktor engine with MockSupabaseFixtures` (Task 5).
-- [ ] Step 11.4: `feat(viewmodel): introduce DeviceListError sealed class and authenticateAsParent` (Task 6).
-- [ ] Step 11.5: `feat(onboarding): wire authenticateAsParent before Dashboard nav with loading` (Task 7).
-- [ ] Step 11.6: `fix(dashboard): swap error banner CTAs for auth errors` (Task 8).
-- [ ] Step 11.7: `test: regression test for Role.CHILD → completePairing` (Task 9).
-- [ ] Step 11.8: Conventional Commits only; no `Co-Authored-By` or AI attribution trailers.
+- [x] Step 11.1: `feat(auth): add Role enum and Role-aware authenticateOrCreate` (Tasks 2 + 3).
+- [x] Step 11.2: `build(gradle): add BuildConfig.USE_MOCK_SUPABASE flag` (Task 4).
+- [x] Step 11.3: `feat(network): add @SupabaseClient Ktor engine with MockSupabaseFixtures` (Task 5).
+- [x] Step 11.4: `feat(viewmodel): introduce DeviceListError sealed class and authenticateAsParent` (Task 6).
+- [x] Step 11.5: `feat(onboarding): wire authenticateAsParent before Dashboard nav with loading` (Task 7).
+- [x] Step 11.6: `fix(dashboard): swap error banner CTAs for auth errors` (Task 8).
+- [x] Step 11.7: `test: regression test for Role.CHILD → completePairing` (Task 9).
+- [x] Step 11.8: Conventional Commits only; no `Co-Authored-By` or AI attribution trailers.
 
 **Acceptance**: 7 commits on `feature/hotfix-parent-auth-session`, each reviewable.
 
@@ -153,8 +153,8 @@ Per D9 — 7 commits, single PR:
 
 - [ ] Step 12.1: `git push -u origin feature/hotfix-parent-auth-session`
 - [ ] Step 12.2: `gh pr create` with: Summary (3 bullets) → Changes table → Test plan (5 gates + ~684+ tests) → Rollback (`git revert <sha>`) → Demo (`USE_MOCK_SUPABASE=true` in `local.properties`).
-- [ ] Step 12.3: Mark all 12 tasks `[x]` in this `tasks.md`.
-- [ ] Step 12.4: Do NOT merge — orchestrator routes to verify after apply returns.
+- [x] Step 12.3: Mark all 12 tasks `[x]` in this `tasks.md`.
+- [x] Step 12.4: Do NOT merge — orchestrator routes to verify after apply returns.
 
 **Acceptance**: PR exists, targets master, body matches design; tasks.md fully checked.
 

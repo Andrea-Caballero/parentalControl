@@ -1,4 +1,5 @@
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+import java.util.Properties
 
 plugins {
     alias(libs.plugins.android.application)
@@ -12,6 +13,20 @@ plugins {
     alias(libs.plugins.google.services)
 }
 
+// T4.1 of `hotfix-parent-auth-cta-reload` — explicitly read `local.properties`
+// for the `USE_MOCK_SUPABASE` flag. `project.findProperty(...)` only sees
+// `gradle.properties` / CLI `-P` / env vars, NOT `local.properties` — which
+// is the regression this change fixes (see design Decision 2). The flag is
+// scoped to `buildTypes.debug` so a stale `local.properties` cannot
+// accidentally engage the mock engine in release builds.
+val localPropertiesForMock: Properties = Properties().apply {
+    rootProject.file("local.properties").takeIf { it.exists() }?.inputStream()?.use { load(it) }
+}
+val debugUseMockSupabase: String =
+    localPropertiesForMock.getProperty("USE_MOCK_SUPABASE")
+        ?: (project.findProperty("USE_MOCK_SUPABASE") as String?)
+        ?: "false"
+
 android {
     namespace = "com.tudominio.parentalcontrol"
     compileSdk = 36
@@ -23,15 +38,6 @@ android {
         versionCode = 1
         versionName = "1.0"
         testInstrumentationRunner = "com.tudominio.parentalcontrol.MyHiltTestRunner"
-
-        // T4 of `hotfix-parent-auth-session` — toggleable Ktor MockEngine.
-        // `local.properties` sets `USE_MOCK_SUPABASE=true` for demo/dev so
-        // the dashboard renders fixture devices without hitting the
-        // placeholder Supabase URL. Default is `false` (real engine) so
-        // production builds never accidentally serve fixtures.
-        val useMockSupabase: String =
-            (project.findProperty("USE_MOCK_SUPABASE") as String?) ?: "false"
-        buildConfigField("boolean", "USE_MOCK_SUPABASE", useMockSupabase)
     }
 
     buildFeatures {
@@ -57,9 +63,20 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
+            // T4.1 of `hotfix-parent-auth-cta-reload` — release must hardcode
+            // `USE_MOCK_SUPABASE=false` so a stale `local.properties` cannot
+            // silently engage the mock engine in production builds. See
+            // design Decision 2 and spec scenario "Release build does not
+            // honor local.properties USE_MOCK_SUPABASE".
+            buildConfigField("boolean", "USE_MOCK_SUPABASE", "false")
         }
         debug {
             isMinifyEnabled = false
+            // T4.1 of `hotfix-parent-auth-cta-reload` — debug reads
+            // `USE_MOCK_SUPABASE` from `local.properties` (falling back to
+            // `gradle.properties`). See spec scenario "Build reads
+            // USE_MOCK_SUPABASE from local.properties under debug".
+            buildConfigField("boolean", "USE_MOCK_SUPABASE", debugUseMockSupabase)
         }
     }
 

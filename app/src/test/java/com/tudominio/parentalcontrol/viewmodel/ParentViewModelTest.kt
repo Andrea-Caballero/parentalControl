@@ -163,4 +163,71 @@ class ParentViewModelTest {
         val state = viewModel.deviceListState.value
         assertEquals(DeviceListUiState.Empty, state)
     }
+
+    // T1.1 / T1.2 of `hotfix-parent-auth-cta-reload` — `authenticateAsParent()`
+    // must chain `.onSuccess { loadDevices() }` so the dashboard reloads
+    // devices after the user taps "Iniciar sesión como padre". The failure
+    // path must NOT trigger loadDevices (per design Decision 3).
+    @Test
+    fun `authenticateAsParent_success_invokesLoadDevices`() = runTest {
+        var getDevicesCalls = 0
+        coEvery { repository.getDevices() } coAnswers {
+            getDevicesCalls++
+            Result.success(emptyList())
+        }
+        coEvery { authManager.authenticateOrCreate(Role.PARENT) } returns Result.success(Unit)
+
+        val viewModel = ParentViewModel(repository, authManager)
+
+        // init { loadDevices() } fired once. After auth success the VM must
+        // re-invoke loadDevices — exact count becomes 2.
+        assertEquals(
+            "init block must have triggered exactly one loadDevices call",
+            1, getDevicesCalls
+        )
+
+        viewModel.authenticateAsParent()
+
+        assertEquals(
+            "authenticateAsParent on success must trigger loadDevices (init + post-auth)",
+            2, getDevicesCalls
+        )
+    }
+
+    @Test
+    fun `authenticateAsParent_failure_doesNotInvokeLoadDevices`() = runTest {
+        var getDevicesCalls = 0
+        coEvery { repository.getDevices() } coAnswers {
+            getDevicesCalls++
+            Result.failure(IllegalStateException("not authenticated"))
+        }
+        coEvery { authManager.authenticateOrCreate(Role.PARENT) } returns
+            Result.failure(RuntimeException("auth failed"))
+
+        val viewModel = ParentViewModel(repository, authManager)
+
+        // init fired exactly one loadDevices → state = Error(AuthMissing).
+        assertEquals(1, getDevicesCalls)
+        assertTrue(
+            "after init, state must be Error(AuthMissing)",
+            viewModel.deviceListState.value is DeviceListUiState.Error &&
+                (viewModel.deviceListState.value as DeviceListUiState.Error).reason ==
+                DeviceListError.AuthMissing
+        )
+
+        viewModel.authenticateAsParent()
+
+        // Failure path must NOT trigger a second loadDevices call.
+        assertEquals(
+            "authenticateAsParent on failure must NOT trigger loadDevices",
+            1, getDevicesCalls
+        )
+        // And the error banner must remain visible.
+        assertTrue(
+            "after auth failure, state must remain Error(AuthMissing)",
+            viewModel.deviceListState.value is DeviceListUiState.Error &&
+                (viewModel.deviceListState.value as DeviceListUiState.Error).reason ==
+                DeviceListError.AuthMissing
+        )
+    }
 }

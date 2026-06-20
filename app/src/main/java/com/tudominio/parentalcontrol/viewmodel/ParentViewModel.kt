@@ -91,11 +91,19 @@ class ParentViewModel @Inject constructor(
      * always has an access token by the time the device list tries to
      * load.
      *
+     * On success, chains [loadDevices] so the dashboard transitions out
+     * of `Error(AuthMissing)` once auth completes (T2.1 of
+     * `hotfix-parent-auth-cta-reload`). The failure path leaves
+     * `_deviceListState` untouched (design Decision 3): the existing
+     * error banner stays so the user can retry or surface the auth
+     * failure via `clearError()`.
+     *
      * Returns the same [Result] the auth manager returns — success means
-     * a token is now persisted and `getAccessToken()` is non-null.
+     * a token is now persisted, `getAccessToken()` is non-null, and the
+     * device list has been re-fetched.
      */
     suspend fun authenticateAsParent(): Result<Unit> =
-        authManager.authenticateOrCreate(Role.PARENT)
+        authManager.authenticateOrCreate(Role.PARENT).onSuccess { loadDevices() }
 
     fun loadDevices() {
         viewModelScope.launch {

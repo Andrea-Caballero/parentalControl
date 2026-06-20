@@ -23,10 +23,20 @@ android {
         versionCode = 1
         versionName = "1.0"
         testInstrumentationRunner = "com.tudominio.parentalcontrol.MyHiltTestRunner"
+
+        // T4 of `hotfix-parent-auth-session` — toggleable Ktor MockEngine.
+        // `local.properties` sets `USE_MOCK_SUPABASE=true` for demo/dev so
+        // the dashboard renders fixture devices without hitting the
+        // placeholder Supabase URL. Default is `false` (real engine) so
+        // production builds never accidentally serve fixtures.
+        val useMockSupabase: String =
+            (project.findProperty("USE_MOCK_SUPABASE") as String?) ?: "false"
+        buildConfigField("boolean", "USE_MOCK_SUPABASE", useMockSupabase)
     }
 
     buildFeatures {
         compose = true
+        buildConfig = true
     }
 
     compileOptions {
@@ -124,6 +134,11 @@ dependencies {
     implementation("io.ktor:ktor-client-content-negotiation:2.3.4")
     implementation("io.ktor:ktor-serialization-kotlinx-json:2.3.4")
     implementation("io.ktor:ktor-websockets:2.3.4")
+    // T5 of `hotfix-parent-auth-session` — Ktor MockEngine for the
+    // toggleable Supabase mock path. Lives in main classpath so the
+    // `NetworkModule` can bind a MockEngine-backed HttpClient when
+    // `BuildConfig.USE_MOCK_SUPABASE=true`.
+    implementation("io.ktor:ktor-client-mock:2.3.4")
 
     // Lifecycle
     implementation("androidx.lifecycle:lifecycle-process:2.7.0")

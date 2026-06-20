@@ -10,6 +10,7 @@ import dagger.Provides
 import dagger.hilt.InstallIn
 import dagger.hilt.android.qualifiers.ApplicationContext
 import dagger.hilt.components.SingletonComponent
+import io.ktor.client.HttpClient
 import javax.inject.Singleton
 
 /**
@@ -26,6 +27,12 @@ import javax.inject.Singleton
  *
  * Split from the former [AppModule] so DB wiring lives in [DatabaseModule]
  * and the rest of the application infra lives here.
+ *
+ * T5 of `hotfix-parent-auth-session` injects the `@SupabaseClient`
+ * `HttpClient` from `NetworkModule` into the Hilt-managed
+ * [SupabaseClientProvider] so the parent dashboard renders fixture
+ * devices when `BuildConfig.USE_MOCK_SUPABASE=true` (instead of hitting
+ * the placeholder Supabase URL and failing with a network error).
  */
 @Module
 @InstallIn(SingletonComponent::class)
@@ -43,6 +50,18 @@ object RepositoryModule {
 
     @Provides
     @Singleton
-    fun provideSupabaseClientProvider(@ApplicationContext context: Context): SupabaseClientProvider =
-        SupabaseClientProvider.getInstance(context)
+    fun provideSupabaseClientProvider(
+        @ApplicationContext context: Context,
+        @SupabaseClient httpClient: HttpClient
+    ): SupabaseClientProvider {
+        // The Hilt-managed instance uses the @SupabaseClient binding so the
+        // mock engine (when the flag is true) or the real engine (when
+        // false) is bound here. Callers that still use
+        // `SupabaseClientProvider.getInstance(context)` get the legacy
+        // real-engine path via the secondary constructor.
+        return SupabaseClientProvider(
+            context = context,
+            injectedClient = httpClient
+        )
+    }
 }

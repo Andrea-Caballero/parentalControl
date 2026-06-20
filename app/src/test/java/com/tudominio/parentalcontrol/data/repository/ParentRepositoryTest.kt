@@ -170,9 +170,10 @@ class ParentRepositoryTest {
         val result = repository.createPairingCode("S21", "7-12", 10)
 
         assertTrue("Expected failure, got $result", result.isFailure)
-        assertTrue(
-            "Expected IllegalStateException, got ${result.exceptionOrNull()}",
-            result.exceptionOrNull() is IllegalStateException
+        assertEquals(
+            "Expected typed AuthMissing, got ${result.exceptionOrNull()}",
+            DeviceListError.AuthMissing,
+            result.exceptionOrNull()
         )
         assertTrue("Should not have made an HTTP call", captured.isEmpty())
     }
@@ -191,8 +192,12 @@ class ParentRepositoryTest {
         val ex = result.exceptionOrNull()
         assertNotNull("Exception should not be null", ex)
         assertTrue(
-            "Expected RuntimeException mentioning HTTP 500, got ${ex!!.message}",
-            ex.message?.contains("HTTP 500") == true
+            "Expected DeviceListError.Transient, got $ex",
+            ex is DeviceListError.Transient
+        )
+        assertTrue(
+            "Transient reason must mention HTTP 500, got ${(ex as DeviceListError.Transient).reason}",
+            ex.reason.contains("HTTP 500")
         )
 
         failingClient.close()
@@ -353,8 +358,12 @@ class ParentRepositoryTest {
             val ex = result.exceptionOrNull()
             assertNotNull("Exception should not be null", ex)
             assertTrue(
-                "Expected RuntimeException mentioning HTTP 500, got ${ex!!.message}",
-                ex.message?.contains("HTTP 500") == true
+                "Expected DeviceListError.Transient, got $ex",
+                ex is DeviceListError.Transient
+            )
+            assertTrue(
+                "Transient reason must mention HTTP 500, got ${(ex as DeviceListError.Transient).reason}",
+                ex.reason.contains("HTTP 500")
             )
         } finally {
             failingClient.close()
@@ -484,5 +493,35 @@ class ParentRepositoryTest {
         } finally {
             denyClient.close()
         }
+    }
+
+    /**
+     * T9 regression test for `hotfix-parent-auth-session` — confirms the
+     * child pairing flow is NOT broken by the new Role enum. After
+     * `authenticateOrCreate(Role.CHILD)` is called, the existing
+     * `createPairingCode` path must still succeed and return the
+     * parsed `PairingCodeResult`. The Role flag is the seam between the
+     * synthetic hotfix and the formal `parent-auth-flow`; the child
+     * pairing code path must be untouched.
+     */
+    @Test
+    fun createPairingCode_with_role_child_still_works() = runTest {
+        // Simulate the onboarding child flow: auth → createPairingCode.
+        // The auth manager returns a non-null token (the synthetic
+        // "anon-CHILD-..." token from the hotfix), and the repository
+        // must use it for the pairing-code call.
+        every { authManager.getAccessToken() } returns "anon-CHILD-test-uuid"
+
+        val result = repository.createPairingCode("GalaxyTab", "7-12", 10)
+
+        assertTrue("Expected success, got $result", result.isSuccess)
+        val code = result.getOrNull()
+        assertNotNull("PairingCodeResult should not be null", code)
+        assertEquals("ABCDEFGH", code!!.code)
+
+        // The Bearer token MUST be the synthetic child token.
+        assertEquals(1, captured.size)
+        val req = captured.first()
+        assertEquals("Bearer anon-CHILD-test-uuid", req.headers[HttpHeaders.Authorization])
     }
 }

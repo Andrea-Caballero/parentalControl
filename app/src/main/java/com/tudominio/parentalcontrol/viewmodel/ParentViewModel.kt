@@ -2,6 +2,9 @@ package com.tudominio.parentalcontrol.viewmodel
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.tudominio.parentalcontrol.auth.DeviceAuthManager
+import com.tudominio.parentalcontrol.auth.Role
+import com.tudominio.parentalcontrol.data.repository.DeviceListError
 import com.tudominio.parentalcontrol.data.repository.ParentRepository
 import com.tudominio.parentalcontrol.domain.model.ApprovalResult
 import com.tudominio.parentalcontrol.domain.model.ChildDevice
@@ -16,11 +19,23 @@ import javax.inject.Inject
 
 /**
  * ViewModel para la UI del padre.
- * 
- * TODO: Agregar @HiltViewModel cuando Hilt esté configurado.
+ *
+ * T6 of `hotfix-parent-auth-session` adds:
+ *  - [DeviceAuthManager] injection (Hilt-resolved from `RepositoryModule`).
+ *  - [authenticateAsParent] — delegates to
+ *    `authManager.authenticateOrCreate(Role.PARENT)` and returns the
+ *    same [Result]. Called from `OnboardingScreen` before navigating to
+ *    `Dashboard` so the parent always has a session.
+ *  - Typed [DeviceListUiState.Error] carrying a [DeviceListError] instead
+ *    of a raw `String`. The `DashboardScreen` pattern-matches on the
+ *    variant to swap the CTA between "Iniciar sesión como padre" (auth
+ *    missing) and "Reintentar" + "Volver" (transient).
  */
 @HiltViewModel
-class ParentViewModel @Inject constructor(private val repository: ParentRepository) : ViewModel() {
+class ParentViewModel @Inject constructor(
+    private val repository: ParentRepository,
+    private val authManager: DeviceAuthManager
+) : ViewModel() {
 
     // Estado de dispositivos — sealed UI state for the four render branches
     // (Loading / Success / Empty / Error). PR 2 of
@@ -68,6 +83,20 @@ class ParentViewModel @Inject constructor(private val repository: ParentReposito
         loadPendingRequests()
     }
 
+    /**
+     * Issues a synthetic anonymous parent session via
+     * [DeviceAuthManager.authenticateOrCreate] with [Role.PARENT]. The
+     * hotfix path: no real Supabase call, no sign-up form. Called from
+     * `OnboardingScreen` before navigating to `Dashboard` so the parent
+     * always has an access token by the time the device list tries to
+     * load.
+     *
+     * Returns the same [Result] the auth manager returns — success means
+     * a token is now persisted and `getAccessToken()` is non-null.
+     */
+    suspend fun authenticateAsParent(): Result<Unit> =
+        authManager.authenticateOrCreate(Role.PARENT)
+
     fun loadDevices() {
         viewModelScope.launch {
             _isLoading.value = true
@@ -84,17 +113,27 @@ class ParentViewModel @Inject constructor(private val repository: ParentReposito
                         DeviceListUiState.Success(list)
                     }
                 } else {
-                    val msg = result.exceptionOrNull()?.message ?: "Unknown error"
-                    _error.value = "Error cargando dispositivos: $msg"
-                    _deviceListState.value = DeviceListUiState.Error(msg)
+                    val errorReason = mapToDeviceListError(result.exceptionOrNull())
+                    _error.value = "Error cargando dispositivos: ${describe(errorReason)}"
+                    _deviceListState.value = DeviceListUiState.Error(errorReason)
                 }
             } catch (e: Exception) {
-                _error.value = "Error cargando dispositivos: ${e.message}"
-                _deviceListState.value = DeviceListUiState.Error(e.message ?: "Unknown error")
+                val errorReason = mapToDeviceListError(e)
+                _error.value = "Error cargando dispositivos: ${describe(errorReason)}"
+                _deviceListState.value = DeviceListUiState.Error(errorReason)
             } finally {
                 _isLoading.value = false
             }
         }
+    }
+
+    private fun mapToDeviceListError(throwable: Throwable?): DeviceListError {
+        if (throwable is DeviceListError) return throwable
+        val message = throwable?.message
+        if (message != null && message.contains("not authenticated")) {
+            return DeviceListError.AuthMissing
+        }
+        return DeviceListError.Transient(message ?: "Unknown error")
     }
 
     fun loadPendingRequests() {
@@ -253,6 +292,11 @@ class ParentViewModel @Inject constructor(private val repository: ParentReposito
     fun clearPairingCode() {
         _pairingCode.value = null
     }
+
+    private fun describe(error: DeviceListError): String = when (error) {
+        DeviceListError.AuthMissing -> "not authenticated"
+        is DeviceListError.Transient -> error.reason
+    }
 }
 
 data class PairingCodeResult(
@@ -269,11 +313,14 @@ data class PairingCodeResult(
  * - [Success]: the call returned a non-empty list; render `DeviceCard`s.
  * - [Empty]: the call returned an empty list; show the "Pair a new device"
  *   CTA (per `parent-device-list/spec.md`).
- * - [Error]: the call failed; show the error banner with a Retry action.
+ * - [Error]: the call failed; show the error banner. The [Error.reason] is
+ *   a typed [DeviceListError] — `DashboardScreen` pattern-matches on it
+ *   to choose the CTA (auth-missing → "Iniciar sesión como padre";
+ *   transient → retry/back).
  */
 sealed interface DeviceListUiState {
-    object Loading : DeviceListUiState
+    data object Loading : DeviceListUiState
     data class Success(val items: List<ChildDevice>) : DeviceListUiState
-    object Empty : DeviceListUiState
-    data class Error(val message: String) : DeviceListUiState
+    data object Empty : DeviceListUiState
+    data class Error(val reason: DeviceListError) : DeviceListUiState
 }

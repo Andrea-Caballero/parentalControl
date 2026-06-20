@@ -49,7 +49,10 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.launch
+import com.tudominio.parentalcontrol.data.repository.DeviceListError
 import com.tudominio.parentalcontrol.domain.model.ChildDevice
 import com.tudominio.parentalcontrol.domain.model.TimeRequest
 import com.tudominio.parentalcontrol.ui.parent.components.DeviceCard
@@ -220,6 +223,7 @@ private fun DashboardScaffold(
 
             when (selectedTab) {
                 0 -> DevicesTab(
+                    viewModel = viewModel,
                     devices = devices,
                     listState = deviceListState,
                     onDeviceClick = onNavigateToDevice,
@@ -255,6 +259,7 @@ private fun DashboardScaffold(
 
 @Composable
 private fun DevicesTab(
+    viewModel: ParentViewModel,
     devices: List<ChildDevice>,
     listState: DeviceListUiState,
     onDeviceClick: (String) -> Unit,
@@ -263,6 +268,7 @@ private fun DevicesTab(
     onRetry: () -> Unit,
     onClearError: () -> Unit
 ) {
+    val scope = androidx.compose.runtime.rememberCoroutineScope()
     when (listState) {
         DeviceListUiState.Loading -> {
             if (devices.isEmpty()) {
@@ -291,11 +297,21 @@ private fun DevicesTab(
             )
         }
         is DeviceListUiState.Error -> {
-            ErrorBanner(
-                message = listState.message,
-                onRetry = onRetry,
-                onDismiss = onClearError
-            )
+            // T8 of `hotfix-parent-auth-session` — pattern-match on the
+            // typed reason. Auth-missing swaps retry/back for a single
+            // sign-in CTA; transient keeps the retry/back CTAs.
+            when (val reason = listState.reason) {
+                DeviceListError.AuthMissing -> AuthMissingErrorBanner(
+                    onSignIn = {
+                        scope.launch { viewModel.authenticateAsParent() }
+                    }
+                )
+                is DeviceListError.Transient -> TransientErrorBanner(
+                    message = reason.reason,
+                    onRetry = onRetry,
+                    onDismiss = onClearError
+                )
+            }
         }
         is DeviceListUiState.Success -> {
             DeviceList(
@@ -402,12 +418,71 @@ private fun EmptyState(
 }
 
 /**
- * Inline error banner with a Retry action. Used by the Devices tab when
- * the `get-devices-for-parent` call fails — per `parent-device-list/spec.md`
- * "Loading and error states have dedicated UI".
+ * Auth-missing variant of the dashboard error banner. Per the spec delta
+ * at
+ * `openspec/changes/hotfix-parent-auth-session/specs/parent-device-list/spec.md`:
+ * when the parent has no session, the banner shows a single
+ * "Iniciar sesión como padre" CTA. Retry/back are intentionally absent —
+ * retrying a missing-auth call just produces the same error, and there
+ * is no previous screen to go back to from this state.
+ *
+ * Tapping the CTA calls [ParentViewModel.authenticateAsParent] which
+ * issues a synthetic anonymous session and (on success) triggers a
+ * device-list reload via the same channel the onboarding flow uses.
  */
 @Composable
-private fun ErrorBanner(
+private fun AuthMissingErrorBanner(
+    onSignIn: () -> Unit
+) {
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(16.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Card(
+            colors = CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.errorContainer,
+                contentColor = MaterialTheme.colorScheme.onErrorContainer
+            )
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Default.Warning, contentDescription = null)
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        "Error cargando dispositivos",
+                        style = MaterialTheme.typography.titleMedium
+                    )
+                }
+                Text(
+                    "not authenticated",
+                    style = MaterialTheme.typography.bodyMedium
+                )
+                Button(
+                    onClick = onSignIn,
+                    modifier = Modifier.testTag("auth_missing_sign_in_cta")
+                ) {
+                    Text("Iniciar sesión como padre")
+                }
+            }
+        }
+    }
+}
+
+/**
+ * Transient-error variant of the dashboard error banner. Same shape as
+ * the pre-hotfix `ErrorBanner` — retry + dismiss CTAs — but kept as a
+ * separate composable so the call site pattern-matches on
+ * [DeviceListError] instead of string-matching the error message.
+ */
+@Composable
+private fun TransientErrorBanner(
     message: String,
     onRetry: () -> Unit,
     onDismiss: () -> Unit

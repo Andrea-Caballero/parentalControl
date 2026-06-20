@@ -154,6 +154,60 @@ class DeviceAuthManager private constructor(
         }
     }
 
+    /**
+     * Role-aware synthetic anonymous auth.
+     *
+     * Issues a local JWT-shaped token of the form `anon-${role}-${uuid}` and
+     * persists the [role] in `device_auth_prefs` so [getRole] can return it
+     * after a process restart. This is the hotfix path described in design
+     * §D4 of `openspec/changes/hotfix-parent-auth-session/design.md`: it
+     * does NOT call Supabase, so it works even when `SUPABASE_URL` is a
+     * placeholder (the current `local.properties` state).
+     *
+     * The synthetic token is acknowledged throwaway; the eventual
+     * `parent-auth-flow` change will replace this with real sign-up/sign-in.
+     * The [Role] flag is the seam between the synthetic hotfix and the
+     * formal flow.
+     *
+     * Kept as an overload (alongside the no-arg `authenticateOrCreate()`
+     * above) because [com.tudominio.parentalcontrol.network.SupabaseClientProvider]
+     * and [DeviceAuthService] still call the no-arg shape.
+     */
+    suspend fun authenticateOrCreate(role: Role): Result<Unit> = sessionMutex.withLock {
+        withContext(Dispatchers.IO) {
+            try {
+                val token = "anon-${role.name}-${java.util.UUID.randomUUID()}"
+                currentAccessToken = token
+                currentRefreshToken = ""
+                sessionExpiresAt = 0
+                _deviceId.value = null
+                _sessionState.value = SessionState.ANONYMOUS
+
+                context.getSharedPreferences("device_auth_prefs", Context.MODE_PRIVATE)
+                    .edit()
+                    .putString("role", role.name)
+                    .apply()
+
+                Result.success(Unit)
+            } catch (e: Exception) {
+                Result.failure(e)
+            }
+        }
+    }
+
+    /**
+     * Returns the role persisted by [authenticateOrCreate] (PARENT or CHILD),
+     * or `null` if no role has been persisted yet (fresh install, or only
+     * the no-arg `authenticateOrCreate()` was used and it has not stored
+     * a `role` key). The role is the only key written by the synthetic
+     * hotfix path; it survives a process restart via SharedPreferences.
+     */
+    fun getRole(): Role? {
+        val name = context.getSharedPreferences("device_auth_prefs", Context.MODE_PRIVATE)
+            .getString("role", null) ?: return null
+        return runCatching { Role.valueOf(name) }.getOrNull()
+    }
+
     suspend fun createAnonymousSession(): AuthResult = withContext(Dispatchers.IO) {
         try {
             val response = httpClient.post("${SUPABASE_URL}/auth/v1/token?grant_type=password") {
@@ -299,14 +353,14 @@ class DeviceAuthManager private constructor(
     suspend fun savePairedSession(deviceId: String, parentId: String?) {
         _deviceId.value = deviceId
         _sessionState.value = SessionState.PAIRED
-        
+
         context.getSharedPreferences("device_auth_prefs", Context.MODE_PRIVATE)
             .edit()
             .putBoolean("is_paired", true)
             .putString("device_id", deviceId)
             .putString("parent_id", parentId)
             .apply()
-        
+
         currentAccessToken?.let { access ->
             currentRefreshToken?.let { refresh ->
                 persistSession(

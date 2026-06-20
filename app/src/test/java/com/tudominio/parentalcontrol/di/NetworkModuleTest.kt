@@ -179,7 +179,8 @@ class NetworkModuleTest {
 
     private fun extractBuildTypeBlock(source: String, name: String): String? {
         val marker = Regex("""\b$name\s*\{\s*""")
-        val match = marker.find(source) ?: return null
+        val match = marker.find(source)
+        if (match == null) return null
         val openIdx = match.range.last
         var depth = 1
         var i = openIdx + 1
@@ -190,7 +191,6 @@ class NetworkModuleTest {
             }
             i++
         }
-        if (depth != 0) return null
-        return source.substring(openIdx, i)
+        return if (depth != 0) null else source.substring(openIdx, i)
     }
 }

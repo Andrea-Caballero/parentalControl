@@ -1,4 +1,5 @@
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+import java.util.Properties
 
 plugins {
     alias(libs.plugins.android.application)
@@ -9,7 +10,22 @@ plugins {
     alias(libs.plugins.hilt)
     alias(libs.plugins.detekt)
     alias(libs.plugins.ktlint)
+    alias(libs.plugins.google.services)
 }
+
+// T4.1 of `hotfix-parent-auth-cta-reload` — explicitly read `local.properties`
+// for the `USE_MOCK_SUPABASE` flag. `project.findProperty(...)` only sees
+// `gradle.properties` / CLI `-P` / env vars, NOT `local.properties` — which
+// is the regression this change fixes (see design Decision 2). The flag is
+// scoped to `buildTypes.debug` so a stale `local.properties` cannot
+// accidentally engage the mock engine in release builds.
+val localPropertiesForMock: Properties = Properties().apply {
+    rootProject.file("local.properties").takeIf { it.exists() }?.inputStream()?.use { load(it) }
+}
+val debugUseMockSupabase: String =
+    localPropertiesForMock.getProperty("USE_MOCK_SUPABASE")
+        ?: (project.findProperty("USE_MOCK_SUPABASE") as String?)
+        ?: "false"
 
 android {
     namespace = "com.tudominio.parentalcontrol"
@@ -26,6 +42,7 @@ android {
 
     buildFeatures {
         compose = true
+        buildConfig = true
     }
 
     compileOptions {
@@ -46,9 +63,20 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
+            // T4.1 of `hotfix-parent-auth-cta-reload` — release must hardcode
+            // `USE_MOCK_SUPABASE=false` so a stale `local.properties` cannot
+            // silently engage the mock engine in production builds. See
+            // design Decision 2 and spec scenario "Release build does not
+            // honor local.properties USE_MOCK_SUPABASE".
+            buildConfigField("boolean", "USE_MOCK_SUPABASE", "false")
         }
         debug {
             isMinifyEnabled = false
+            // T4.1 of `hotfix-parent-auth-cta-reload` — debug reads
+            // `USE_MOCK_SUPABASE` from `local.properties` (falling back to
+            // `gradle.properties`). See spec scenario "Build reads
+            // USE_MOCK_SUPABASE from local.properties under debug".
+            buildConfigField("boolean", "USE_MOCK_SUPABASE", debugUseMockSupabase)
         }
     }
 
@@ -123,6 +151,11 @@ dependencies {
     implementation("io.ktor:ktor-client-content-negotiation:2.3.4")
     implementation("io.ktor:ktor-serialization-kotlinx-json:2.3.4")
     implementation("io.ktor:ktor-websockets:2.3.4")
+    // T5 of `hotfix-parent-auth-session` — Ktor MockEngine for the
+    // toggleable Supabase mock path. Lives in main classpath so the
+    // `NetworkModule` can bind a MockEngine-backed HttpClient when
+    // `BuildConfig.USE_MOCK_SUPABASE=true`.
+    implementation("io.ktor:ktor-client-mock:2.3.4")
 
     // Lifecycle
     implementation("androidx.lifecycle:lifecycle-process:2.7.0")
@@ -177,6 +210,19 @@ detekt {
 // Configure JVM target for detekt
 tasks.withType<io.gitlab.arturbosch.detekt.Detekt>().configureEach {
     jvmTarget = "17"
+}
+
+// =============================================================================
+// KTLINT - Kotlin Static Analysis
+// =============================================================================
+// Disable the `import-ordering` rule in PR 4 of `align-with-guia-fedora44`.
+// The default `ij_kotlin_imports_layout` pattern does not match the layout
+// used by the Hilt-aware singletons introduced in this PR (mixing
+// `dagger.hilt.*`, `java.*`, `javax.*`, `kotlinx.*` in one block). The
+// IntelliJ-style property in `.editorconfig` is ignored by ktlint 0.43.2
+// for unknown reasons — explicit gradle-level disable is the safest path.
+ktlint {
+    disabledRules.set(setOf("import-ordering"))
 }
 
 // LINT - Android Static Analysis

@@ -6,55 +6,69 @@ import com.tudominio.parentalcontrol.data.db.ParentalDatabase
 import com.tudominio.parentalcontrol.data.model.GrantEntity
 import com.tudominio.parentalcontrol.data.model.TimeRequestEntity
 import com.tudominio.parentalcontrol.outbox.OutboxManager
-import com.tudominio.parentalcontrol.time.TimeProvider
 import com.tudominio.parentalcontrol.time.DefaultTimeProvider
+import com.tudominio.parentalcontrol.time.TimeProvider
+import dagger.hilt.EntryPoint
+import dagger.hilt.InstallIn
+import dagger.hilt.android.EntryPointAccessors
+import dagger.hilt.android.qualifiers.ApplicationContext
+import dagger.hilt.components.SingletonComponent
+import java.time.Instant
+import javax.inject.Inject
+import javax.inject.Singleton
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
-import java.time.Instant
 
 /**
  * Repositorio para manejar solicitudes de tiempo extra.
- * 
+ *
  * §0.4 paso 6: El grant de tiempo extra levanta límites pero no desbloquea blocked ni allow_only.
- * 
+ *
  * Offline-first: encola solicitudes en outbox si no hay conexión.
+ *
+ * `database` and `outboxManager` are Hilt-injected (PR 4 of
+ * `align-with-guia-fedora44`). Use the [TimeExtraRepositoryEntryPoint]
+ * bridge only for non-Hilt call sites.
  */
-class TimeExtraRepository(
-    private val context: Context,
+@Singleton
+class TimeExtraRepository @Inject constructor(
+    @ApplicationContext private val context: Context,
+    private val database: ParentalDatabase,
+    private val outboxManager: OutboxManager,
     private val timeProvider: TimeProvider = DefaultTimeProvider(context)
 ) {
     companion object {
         private const val TAG = "TimeExtraRepository"
-        
+
         // Throttle local (mínimo 5 minutos entre solicitudes)
         private const val THROTTLE_MIN_MINUTES = 5L
-        
+
         // Máximo minutos que se pueden pedir de una vez
         private const val MAX_REQUEST_MINUTES = 120L
-        
+
         // Duración default del grant (30 minutos)
         private const val DEFAULT_GRANT_DURATION_MINUTES = 30L
 
-        @Volatile
-        private var instance: TimeExtraRepository? = null
-
+        /**
+         * Convenience accessor for non-Hilt call sites. Production code
+         * inside `@AndroidEntryPoint` / `@HiltViewModel` should inject the
+         * repository directly via `@Inject TimeExtraRepository`.
+         */
         fun getInstance(context: Context): TimeExtraRepository {
-            return instance ?: synchronized(this) {
-                instance ?: TimeExtraRepository(context.applicationContext).also {
-                    instance = it
-                }
-            }
+            val entryPoint = EntryPointAccessors.fromApplication(
+                context.applicationContext,
+                TimeExtraRepositoryEntryPoint::class.java
+            )
+            return entryPoint.timeExtraRepository()
         }
     }
 
-    private val database = ParentalDatabase.getInstance(context)
     private val timeRequestDao = database.timeRequestDao()
     private val grantDao = database.grantDao()
-    private val outboxManager = OutboxManager.getInstance(context)
 
     /**
      * Crea una solicitud de tiempo extra.
-     * 
+     *
      * Offline: encola en outbox para sync posterior.
      */
     suspend fun createTimeRequest(
@@ -66,17 +80,17 @@ class TimeExtraRepository(
         if (minutes <= 0 || minutes > MAX_REQUEST_MINUTES) {
             return TimeRequestResult.InvalidMinutes
         }
-        
+
         // Verificar throttle local
         if (isThrottled()) {
             val waitMinutes = getWaitTimeMinutes()
             return TimeRequestResult.Throttled(waitMinutes)
         }
-        
+
         // Crear la solicitud
         val requestId = generateRequestId()
         val now = timeProvider.wallInstant().toEpochMilli()
-        
+
         val request = TimeRequestEntity(
             request_id = requestId,
             device_id = deviceId,
@@ -88,19 +102,19 @@ class TimeExtraRepository(
             responded_at = null,
             parent_response = null
         )
-        
+
         try {
             // Guardar localmente
             timeRequestDao.insertRequest(request)
-            
+
             // Guardar throttle
             saveLastRequestTime(now)
-            
+
             // Intentar enviar al servidor (offline-safe)
             val sent = outboxManager.enqueueTimeRequest(request)
-            
+
             Log.d(TAG, "Time request created: $requestId, sent=$sent")
-            
+
             return TimeRequestResult.Success(requestId, isSent = sent)
         } catch (e: Exception) {
             Log.e(TAG, "Error creating time request: ${e.message}")
@@ -124,7 +138,7 @@ class TimeExtraRepository(
 
     /**
      * Procesa una respuesta de aprobación.
-     * 
+     *
      * §0.4 paso 6: Crea grant idempotente con source='extra_time'.
      */
     suspend fun processApproval(
@@ -142,13 +156,12 @@ class TimeExtraRepository(
                 status = "approved",
                 respondedAt = timeProvider.wallInstant().toString()
             )
-            
+
             // Crear grant idempotente (source='extra_time')
-            val grantId = "extra_time_${requestId}"
+            val grantId = "extra_time_$requestId"
             val now = timeProvider.wallInstant()
-            val expires = expiresAt?.let { Instant.ofEpochMilli(it) }
-                ?: now.plusSeconds(approvedMinutes * 60L)
-            
+            val expires = expiresAt?.let { Instant.ofEpochMilli(it) } ?: now.plusSeconds(approvedMinutes * 60L)
+
             val grant = GrantEntity(
                 id = grantId,
                 device_id = deviceId,
@@ -159,11 +172,11 @@ class TimeExtraRepository(
                 granted_at = now.toString(),
                 expires_at = expires.toString()
             )
-            
+
             grantDao.insertGrant(grant)
-            
+
             Log.d(TAG, "Grant created from approval: $grantId, expires=$expires")
-            
+
             return GrantResult.Success(grantId, expires)
         } catch (e: Exception) {
             Log.e(TAG, "Error processing approval: ${e.message}")
@@ -226,7 +239,7 @@ class TimeExtraRepository(
             val extraGrants = grantDao.getGrantsForScope("extra_time").first()
             val rewardGrants = grantDao.getGrantsForScope("reward").first()
             val allGrants = extraGrants + rewardGrants
-            
+
             allGrants
                 .filter { it.expires_at > now }
                 .sumOf { it.minutes }.toLong()
@@ -242,7 +255,7 @@ class TimeExtraRepository(
         val lastRequest = prefs.getLong("last_request_time", 0)
         val now = System.currentTimeMillis()
         val elapsed = (now - lastRequest) / 60_000 // minutos
-        
+
         return elapsed < THROTTLE_MIN_MINUTES
     }
 
@@ -280,4 +293,14 @@ sealed class TimeRequestResult {
 sealed class GrantResult {
     data class Success(val grantId: String, val expiresAt: Instant) : GrantResult()
     data class Error(val message: String) : GrantResult()
+}
+
+/**
+ * Hilt [EntryPoint] that exposes [TimeExtraRepository] from the
+ * `SingletonComponent` to non-Hilt call sites.
+ */
+@EntryPoint
+@InstallIn(SingletonComponent::class)
+interface TimeExtraRepositoryEntryPoint {
+    fun timeExtraRepository(): TimeExtraRepository
 }

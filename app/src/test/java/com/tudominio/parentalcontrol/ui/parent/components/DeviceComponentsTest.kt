@@ -3,6 +3,7 @@ package com.tudominio.parentalcontrol.ui.parent.components
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
+import com.tudominio.parentalcontrol.auth.DeviceAuthManager
 import com.tudominio.parentalcontrol.data.repository.ParentRepository
 import com.tudominio.parentalcontrol.ui.theme.ParentalControlTheme
 import com.tudominio.parentalcontrol.viewmodel.PairingCodeResult
@@ -51,7 +52,8 @@ class DeviceComponentsTest {
                 deeplink = "parentalcontrol://pair?code=ABCDEFGH"
             )
         )
-        viewModel = ParentViewModel(mockRepository)
+        val mockAuthManager = mockk<DeviceAuthManager>(relaxed = true)
+        viewModel = ParentViewModel(mockRepository, mockAuthManager)
     }
 
     @After

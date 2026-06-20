@@ -47,7 +47,10 @@ class DeviceDetailScreenTest {
     @Before
     fun setUp() {
         Dispatchers.setMain(UnconfinedTestDispatcher())
-        viewModel = ParentViewModel(mockk<ParentRepository>(relaxed = true))
+        viewModel = ParentViewModel(
+            mockk<ParentRepository>(relaxed = true),
+            mockk<com.tudominio.parentalcontrol.auth.DeviceAuthManager>(relaxed = true)
+        )
     }
 
     @After

@@ -2,40 +2,41 @@ package com.tudominio.parentalcontrol.security
 
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.AccessibilityServiceInfo
-import android.content.Intent
-import android.content.pm.PackageManager
-import android.provider.Settings
 import android.view.accessibility.AccessibilityEvent
 import com.tudominio.parentalcontrol.accessibility.AppMonitorService
 import com.tudominio.parentalcontrol.data.db.ParentalDatabase
 import com.tudominio.parentalcontrol.time.DefaultTimeProvider
 import com.tudominio.parentalcontrol.time.TimeProvider
+import dagger.hilt.android.AndroidEntryPoint
+import javax.inject.Inject
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
-import java.time.ZoneId
 
 /**
  * Servicio anti-evasión que monitorea intentos de manipulación.
  * Se integra con el servicio de accesibilidad para detectar eventos.
  */
+@AndroidEntryPoint
 class AntiEvasionService : AccessibilityService() {
 
     companion object {
         private var instance: AntiEvasionService? = null
-        
+
         fun isActive(): Boolean = instance != null
-        
+
         fun getInstance(): AntiEvasionService? = instance
     }
 
     private lateinit var tamperDetector: TamperDetector
     private lateinit var timeProvider: TimeProvider
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+
+    // Injected by Hilt before onCreate() (see @AndroidEntryPoint).
+    @Inject lateinit var database: ParentalDatabase
 
     // Package del sistema que no deben generar alertas
     private val safePackages = setOf(
@@ -58,8 +59,7 @@ class AntiEvasionService : AccessibilityService() {
     override fun onCreate() {
         super.onCreate()
         instance = this
-        
-        val database = ParentalDatabase.getInstance(this)
+
         timeProvider = DefaultTimeProvider(this)
         tamperDetector = TamperDetector.getInstance(this, database, timeProvider)
 
@@ -74,10 +74,10 @@ class AntiEvasionService : AccessibilityService() {
 
     override fun onServiceConnected() {
         super.onServiceConnected()
-        
+
         serviceInfo = AccessibilityServiceInfo().apply {
             eventTypes = AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED or
-                    AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED
+                AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED
             feedbackType = AccessibilityServiceInfo.FEEDBACK_GENERIC
             flags = AccessibilityServiceInfo.DEFAULT
             notificationTimeout = 100
@@ -116,8 +116,9 @@ class AntiEvasionService : AccessibilityService() {
         }
 
         // Detectar intento de desinstalar nuestra app
-        if (packageName == "com.android.packageinstaller" || 
-            packageName == "com.google.android.packageinstaller") {
+        if (packageName == "com.android.packageinstaller" ||
+            packageName == "com.google.android.packageinstaller"
+        ) {
             checkForUninstallAttempt(event)
         }
     }
@@ -127,12 +128,13 @@ class AntiEvasionService : AccessibilityService() {
      */
     private fun handleContentChanged(event: AccessibilityEvent) {
         val packageName = event.packageName?.toString() ?: return
-        
+
         // Detectar texto relacionado con desinstalar
         val content = event.text?.joinToString(" ") ?: return
-        
+
         if (content.contains("Desinstalar", ignoreCase = true) ||
-            content.contains("Uninstall", ignoreCase = true)) {
+            content.contains("Uninstall", ignoreCase = true)
+        ) {
             tamperDetector.onUninstallAttempt(packageName)
         }
     }
@@ -143,7 +145,7 @@ class AntiEvasionService : AccessibilityService() {
     private fun checkForSuspiciousSettings() {
         // Obtener la actividad actual
         val currentPackage = AppMonitorService.appInForeground.value
-        
+
         // Si viene de nuestra app, podría ser un intento de evadir
         // (aunque en realidad el usuario tiene derecho a abrir ajustes)
         // El tamper se detecta cuando intenta cambiar la accesibilidad
@@ -155,9 +157,10 @@ class AntiEvasionService : AccessibilityService() {
     private fun checkForUninstallAttempt(event: AccessibilityEvent) {
         // Verificar si nuestra app está siendo desinstalada
         val content = event.text?.joinToString(" ") ?: ""
-        
+
         if (content.contains("Control Parental", ignoreCase = true) ||
-            content.contains(packageName, ignoreCase = false)) {
+            content.contains(packageName, ignoreCase = false)
+        ) {
             tamperDetector.onUninstallAttempt(packageName)
         }
     }

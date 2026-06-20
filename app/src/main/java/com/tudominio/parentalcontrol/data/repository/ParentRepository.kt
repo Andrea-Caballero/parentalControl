@@ -59,13 +59,16 @@ class ParentRepository @Inject constructor(
      * `parent_id` from the client because RLS is the security boundary.
      *
      * Returns [Result.success] with the parsed list on a 2xx response,
-     * [Result.failure] on a non-2xx response or on any network exception
-     * (including the "not authenticated" case).
+     * [Result.failure] with a typed [DeviceListError] otherwise:
+     *  - [DeviceListError.AuthMissing] when the parent has no session
+     *    (the synthetic hotfix path from `hotfix-parent-auth-session`).
+     *  - [DeviceListError.Transient] for any other failure (network,
+     *    HTTP non-2xx, parse error).
      */
     suspend fun getDevices(): Result<List<ChildDevice>> = withContext(Dispatchers.IO) {
         try {
             val token = authManager.getAccessToken()
-                ?: return@withContext Result.failure(IllegalStateException("not authenticated"))
+                ?: return@withContext Result.failure(DeviceListError.AuthMissing)
 
             val response = clientProvider.httpClient.post(
                 "${SupabaseClientProvider.SUPABASE_URL}/functions/v1/get-devices-for-parent"
@@ -78,14 +81,23 @@ class ParentRepository @Inject constructor(
 
             if (!response.status.isSuccess()) {
                 return@withContext Result.failure(
-                    RuntimeException("HTTP ${response.status}")
+                    DeviceListError.Transient("HTTP ${response.status}")
                 )
             }
 
             val body = json.decodeFromString<List<DeviceDto>>(response.bodyAsText())
             Result.success(body.map { it.toChildDevice() })
+        } catch (e: IllegalStateException) {
+            // Preserve the typed AuthMissing contract for any IllegalStateException
+            // that bubbles up with the "not authenticated" message (e.g., from
+            // the Ktor engine's internal checks).
+            if (e.message?.contains("not authenticated") == true) {
+                Result.failure(DeviceListError.AuthMissing)
+            } else {
+                Result.failure(DeviceListError.Transient(e.message ?: "Unknown error"))
+            }
         } catch (e: Exception) {
-            Result.failure(e)
+            Result.failure(DeviceListError.Transient(e.message ?: "Unknown error"))
         }
     }
 
@@ -107,7 +119,7 @@ class ParentRepository @Inject constructor(
     suspend fun getPendingRequests(): Result<List<TimeRequest>> = withContext(Dispatchers.IO) {
         try {
             val token = authManager.getAccessToken()
-                ?: return@withContext Result.failure(IllegalStateException("not authenticated"))
+                ?: return@withContext Result.failure(DeviceListError.AuthMissing)
 
             val response = clientProvider.httpClient.get(
                 "${SupabaseClientProvider.SUPABASE_URL}/rest/v1/time_requests?" +
@@ -119,14 +131,14 @@ class ParentRepository @Inject constructor(
 
             if (!response.status.isSuccess()) {
                 return@withContext Result.failure(
-                    RuntimeException("HTTP ${response.status}")
+                    DeviceListError.Transient("HTTP ${response.status}")
                 )
             }
 
             val body = json.decodeFromString<List<TimeRequestDto>>(response.bodyAsText())
             Result.success(body.map { it.toTimeRequest() })
         } catch (e: Exception) {
-            Result.failure(e)
+            Result.failure(DeviceListError.Transient(e.message ?: "Unknown error"))
         }
     }
 
@@ -184,7 +196,7 @@ class ParentRepository @Inject constructor(
     ): Result<ApprovalResult> = withContext(Dispatchers.IO) {
         try {
             val token = authManager.getAccessToken()
-                ?: return@withContext Result.failure(IllegalStateException("not authenticated"))
+                ?: return@withContext Result.failure(DeviceListError.AuthMissing)
 
             val responseText = jsonStringOrNull(response)
             val body = "{\"request_id\":\"$requestId\",\"minutes\":$minutes,\"response_text\":$responseText}"
@@ -200,7 +212,7 @@ class ParentRepository @Inject constructor(
 
             if (!httpResponse.status.isSuccess()) {
                 return@withContext Result.failure(
-                    RuntimeException("HTTP ${httpResponse.status}")
+                    DeviceListError.Transient("HTTP ${httpResponse.status}")
                 )
             }
 
@@ -214,7 +226,7 @@ class ParentRepository @Inject constructor(
                 )
             )
         } catch (e: Exception) {
-            Result.failure(e)
+            Result.failure(DeviceListError.Transient(e.message ?: "Unknown error"))
         }
     }
 
@@ -234,7 +246,7 @@ class ParentRepository @Inject constructor(
         withContext(Dispatchers.IO) {
             try {
                 val token = authManager.getAccessToken()
-                    ?: return@withContext Result.failure(IllegalStateException("not authenticated"))
+                    ?: return@withContext Result.failure(DeviceListError.AuthMissing)
 
                 val responseText = jsonStringOrNull(reason)
                 val body = "{\"request_id\":\"$requestId\",\"minutes\":0,\"action\":\"DENY\"," +
@@ -251,13 +263,13 @@ class ParentRepository @Inject constructor(
 
                 if (!httpResponse.status.isSuccess()) {
                     return@withContext Result.failure(
-                        RuntimeException("HTTP ${httpResponse.status}")
+                        DeviceListError.Transient("HTTP ${httpResponse.status}")
                     )
                 }
 
                 Result.success(true)
             } catch (e: Exception) {
-                Result.failure(e)
+                Result.failure(DeviceListError.Transient(e.message ?: "Unknown error"))
             }
         }
 
@@ -276,7 +288,7 @@ class ParentRepository @Inject constructor(
     ): Result<PairingCodeResult> = withContext(Dispatchers.IO) {
         try {
             val token = authManager.getAccessToken()
-                ?: return@withContext Result.failure(IllegalStateException("not authenticated"))
+                ?: return@withContext Result.failure(DeviceListError.AuthMissing)
 
             val response = clientProvider.httpClient.post(
                 "${SupabaseClientProvider.SUPABASE_URL}/functions/v1/create-pairing-code"
@@ -291,7 +303,7 @@ class ParentRepository @Inject constructor(
 
             if (!response.status.isSuccess()) {
                 return@withContext Result.failure(
-                    RuntimeException("HTTP ${response.status}")
+                    DeviceListError.Transient("HTTP ${response.status}")
                 )
             }
 
@@ -304,7 +316,7 @@ class ParentRepository @Inject constructor(
                 )
             )
         } catch (e: Exception) {
-            Result.failure(e)
+            Result.failure(DeviceListError.Transient(e.message ?: "Unknown error"))
         }
     }
 

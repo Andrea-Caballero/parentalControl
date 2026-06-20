@@ -1,8 +1,6 @@
 package com.tudominio.parentalcontrol.data.db
 
-import android.content.Context
 import androidx.room.Database
-import androidx.room.Room
 import androidx.room.RoomDatabase
 import androidx.room.TypeConverters
 import androidx.room.migration.Migration
@@ -21,6 +19,13 @@ import com.tudominio.parentalcontrol.data.model.UsageTodayEntity
  * Entities live under `data.model`, DAOs under `data.db`. The `@Database`
  * definition stays in this file because Room generates code for the
  * implementing class and needs the entity list co-located.
+ *
+ * Construction is owned by `DatabaseModule.provideDatabase(@ApplicationContext)`
+ * (Hilt). The companion holds only the **constants** that the migration
+ * tests (`OutboxMigrationTest`, `AppPolicyMigrationTest`) and the Hilt
+ * provider need to reference — there is NO `getInstance(Context)` or
+ * `INSTANCE` field. PR 4 of `align-with-guia-fedora44` removed the
+ * duplicate provider so callers must receive the database via Hilt.
  */
 @Database(
     entities = [
@@ -94,23 +99,6 @@ abstract class ParentalDatabase : RoomDatabase() {
                 )
                 db.execSQL("DROP TABLE app_policies")
                 db.execSQL("ALTER TABLE app_policies_new RENAME TO app_policies")
-            }
-        }
-
-        @Volatile
-        private var INSTANCE: ParentalDatabase? = null
-
-        fun getInstance(context: Context): ParentalDatabase {
-            return INSTANCE ?: synchronized(this) {
-                val instance = Room.databaseBuilder(
-                    context.applicationContext,
-                    ParentalDatabase::class.java,
-                    DATABASE_NAME
-                )
-                    .addMigrations(MIGRATION_4_5, MIGRATION_5_6)
-                    .build()
-                INSTANCE = instance
-                instance
             }
         }
     }

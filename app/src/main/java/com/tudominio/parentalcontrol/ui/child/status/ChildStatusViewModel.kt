@@ -3,7 +3,6 @@ package com.tudominio.parentalcontrol.ui.child.status
 import android.content.Context
 import android.util.Log
 import androidx.lifecycle.ViewModel
-import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.tudominio.parentalcontrol.data.db.ParentalDatabase
 import com.tudominio.parentalcontrol.data.model.TimeRequestEntity
@@ -25,33 +24,24 @@ import javax.inject.Inject
 @HiltViewModel
 class ChildStatusViewModel @Inject constructor(
     @ApplicationContext private val context: Context,
+    private val database: ParentalDatabase,
+    private val rewardManager: RewardManager,
+    private val degradationAlertManager: DegradationAlertManager,
     private val timeProvider: TimeProvider = DefaultTimeProvider(context)
 ) : ViewModel() {
 
     companion object {
         private const val TAG = "ChildStatusViewModel"
-        
+
         const val WARNING_THRESHOLD_10 = 10L
         const val WARNING_THRESHOLD_5 = 5L
-        
+
         private const val DEGRADATION_CHECK_INTERVAL_MS = 30_000L
-        
-        fun factory(context: Context): ViewModelProvider.Factory {
-            return object : ViewModelProvider.Factory {
-                @Suppress("UNCHECKED_CAST")
-                override fun <T : ViewModel> create(modelClass: Class<T>): T {
-                    return ChildStatusViewModel(context) as T
-                }
-            }
-        }
     }
 
-    private val database = ParentalDatabase.getInstance(context)
     private val usageDao = database.usageDao()
     private val timeRequestDao = database.timeRequestDao()
-    private val rewardManager = RewardManager.getInstance(context)
     private val healthChecker = HealthChecker(context)
-    private val degradationAlertManager = DegradationAlertManager.getInstance(context)
 
     private val _uiState = MutableStateFlow<ChildStatusUiState>(ChildStatusUiState.Loading)
     val uiState: StateFlow<ChildStatusUiState> = _uiState.asStateFlow()
@@ -184,19 +174,19 @@ class ChildStatusViewModel @Inject constructor(
     private fun calculateTimeRemaining() {
         val remaining = maxOf(0, _dailyLimit.value - _timeUsedToday.value)
         _timeRemaining.value = remaining
-        
+
         if (remaining > 0) {
             _nextBlockTime.value = timeProvider.wallInstant().plusSeconds(remaining * 60)
         } else {
             _nextBlockTime.value = timeProvider.wallInstant()
         }
-        
+
         updateWarningLevel()
     }
 
     private fun updateWarningLevel() {
         val remaining = _timeRemaining.value
-        
+
         _warningLevel.value = when {
             remaining <= 0 -> WarningLevel.BLOCKED
             remaining <= WARNING_THRESHOLD_5 -> WarningLevel.CRITICAL
@@ -242,7 +232,7 @@ class ChildStatusViewModel @Inject constructor(
             try {
                 val balance = rewardManager.getRewardBalance()
                 _rewardBalance.value = balance
-                
+
                 if (balance > _lastKnownRewardBalance && _lastKnownRewardBalance > 0) {
                     val newRewardMinutes = (balance - _lastKnownRewardBalance).toInt()
                     _events.emit(ChildStatusEvent.NewRewardReceived(newRewardMinutes, balance))
@@ -266,10 +256,10 @@ class ChildStatusViewModel @Inject constructor(
             _dailyLimit.value = data.dailyLimitMinutes
             _allowedAppsNow.value = data.allowedApps
             _pendingTimeRequest.value = data.pendingRequest
-            
+
             calculateTimeRemaining()
             updateUiState()
-            
+
             if (data.warningTriggered != null) {
                 _events.emit(ChildStatusEvent.ShowWarning(data.warningTriggered))
             }
@@ -290,10 +280,10 @@ class ChildStatusViewModel @Inject constructor(
                     responded_at = null,
                     parent_response = null
                 )
-                
+
                 timeRequestDao.insertRequest(request)
                 _pendingTimeRequest.value = request
-                
+
                 _events.emit(ChildStatusEvent.TimeRequestSent)
                 updateUiState()
             } catch (e: Exception) {
@@ -341,7 +331,7 @@ class ChildStatusViewModel @Inject constructor(
 
 sealed class ChildStatusUiState {
     data object Loading : ChildStatusUiState()
-    
+
     data class Content(
         val timeRemaining: Long,
         val timeUsedToday: Long,
@@ -351,7 +341,7 @@ sealed class ChildStatusUiState {
         val hasPendingRequest: Boolean,
         val allowedAppsNow: List<String>
     ) : ChildStatusUiState()
-    
+
     data class Error(val message: String) : ChildStatusUiState()
 }
 

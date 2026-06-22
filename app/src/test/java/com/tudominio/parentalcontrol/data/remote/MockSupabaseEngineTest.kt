@@ -2,7 +2,11 @@ package com.tudominio.parentalcontrol.data.remote
 
 import androidx.test.core.app.ApplicationProvider
 import io.ktor.client.request.get
+import io.ktor.client.request.post
+import io.ktor.client.request.setBody
 import io.ktor.client.statement.bodyAsText
+import io.ktor.http.ContentType
+import io.ktor.http.contentType
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
@@ -128,6 +132,57 @@ class MockSupabaseEngineTest {
         assertTrue(
             "templates body must be non-empty",
             templatesResponse.bodyAsText().isNotBlank()
+        )
+    }
+
+    /**
+     * Regression: `MockSupabaseEngine.when` block must route
+     * `POST /functions/v1/create-pairing-code` to the pairing-code fixture.
+     * Without this branch the parent's "Generar código" call returns HTTP 404
+     * in debug builds (`USE_MOCK_SUPABASE=true`), the ViewModel never sets
+     * `_pairingCode`, and `PairingBottomSheet` step 2 renders empty. See
+     * `openspec/changes/wire-pairing-and-approval-end-to-end` PR 2 (the mock
+     * engine was added in commit `2d17041` AFTER PR 1 wired the repository
+     * call — the fixture case was simply forgotten in that PR).
+     */
+    @Test
+    fun `create-pairing-code POST returns pairing code response shape`() = runTest {
+        val client = engine.httpClient
+
+        val response = client.post("/functions/v1/create-pairing-code") {
+            contentType(ContentType.Application.Json)
+            setBody(
+                "{\"device_name\":\"Test\",\"age_band\":\"6-8\",\"ttl_minutes\":15}"
+            )
+        }
+
+        assertEquals(
+            "create-pairing-code must return 200, got ${response.status}",
+            200,
+            response.status.value
+        )
+
+        val body = response.bodyAsText()
+        assertTrue(
+            "body must contain \"code\" field, got: $body",
+            body.contains("\"code\"")
+        )
+        assertTrue(
+            "body must contain \"expires_at\" field, got: $body",
+            body.contains("\"expires_at\"")
+        )
+        assertTrue(
+            "body must contain \"deeplink\" field, got: $body",
+            body.contains("\"deeplink\"")
+        )
+
+        // Extract the deeplink value (lenient: find first "deeplink":"..." run).
+        val deeplinkMatch = Regex("\"deeplink\"\\s*:\\s*\"([^\"]+)\"").find(body)
+        assertNotNull("deeplink value must be present, got: $body", deeplinkMatch)
+        val deeplink = deeplinkMatch!!.groupValues[1]
+        assertTrue(
+            "deeplink must start with parentalcontrol://pair?code=, got: $deeplink",
+            deeplink.startsWith("parentalcontrol://pair?code=")
         )
     }
 }

@@ -370,6 +370,17 @@ fun PairingBottomSheet(
     var selectedAgeBand by remember { mutableStateOf("7-12") }
     var step by remember { mutableIntStateOf(initialStep) }
 
+    // Step transition is reactive on `pairingCode` becoming non-null.
+    // Replacing the previous eager `step = 2` on click, which left the
+    // sheet stuck on an empty step-2 card whenever the pairing-code
+    // request failed (real backend 5xx, timeout, etc.) while the error
+    // snackbar was already cleared by `LaunchedEffect(error) { ... }`.
+    // On failure `_pairingCode.value` stays null and the sheet stays on
+    // step 1 where the snackbar can surface the problem.
+    LaunchedEffect(pairingCode) {
+        if (pairingCode != null) step = 2
+    }
+
     val ageBands = listOf(
         "0-6" to "0-6 años",
         "7-12" to "7-12 años",
@@ -430,7 +441,6 @@ fun PairingBottomSheet(
                     Button(
                         onClick = {
                             viewModel.createPairingCode(deviceName, selectedAgeBand)
-                            step = 2
                         },
                         enabled = deviceName.isNotBlank() && !isLoading,
                         modifier = Modifier.fillMaxWidth()

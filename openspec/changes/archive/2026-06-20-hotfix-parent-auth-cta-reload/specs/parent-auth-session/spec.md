@@ -1,48 +1,14 @@
-# Spec: parent-auth-session
+# Delta: parent-auth-session
 
-## Purpose
-
-Gives the parent role a synthetic anonymous auth session and a toggleable Ktor `MockEngine` so the dashboard renders fixture devices without depending on a real Supabase instance. Replaced by `parent-auth-flow` once real parent sign-up/sign-in lands.
-
-## ADDED Requirements
-
-### Requirement: Role-aware authenticateOrCreate issues a session with the correct role flag
-
-`DeviceAuthManager.authenticateOrCreate(role)` SHALL create an auth session and persist `role` to `device_auth_prefs`.
-
-#### Scenario: Parent role flag is persisted
-- **WHEN** `authManager.authenticateOrCreate(Role.PARENT)` is called,
-- **THEN** a session SHALL be created,
-- **AND** the role `PARENT` SHALL be persisted to `device_auth_prefs`.
-
-#### Scenario: Child role flag is persisted
-- **WHEN** `authManager.authenticateOrCreate(Role.CHILD)` is called,
-- **THEN** a session SHALL be created,
-- **AND** the role `CHILD` SHALL be persisted to `device_auth_prefs`.
-
-### Requirement: OnboardingScreen wires authenticateAsParent before navigating to Dashboard
-
-`OnboardingScreen` SHALL call `authenticateAsParent()` and SHALL only navigate to `Dashboard` on success. During auth the parent button SHALL be disabled and a loading indicator SHALL be visible.
-
-#### Scenario: Parent button triggers auth before nav
-- **WHEN** the user taps "Soy el padre" in `OnboardingScreen`,
-- **THEN** `authenticateAsParent()` SHALL be called and complete,
-- **AND THEN** navigation to `Dashboard` SHALL occur.
-
-#### Scenario: Loading state shown during auth
-- **WHILE** `authenticateAsParent()` is in progress,
-- **THEN** the parent button SHALL be disabled and a loading indicator SHALL be shown.
-
-#### Scenario: Auth failure does not navigate
-- **WHEN** `authenticateAsParent()` fails,
-- **THEN** navigation to `Dashboard` SHALL NOT occur,
-- **AND** an error SHALL be surfaced to the user.
+## MODIFIED Requirements
 
 ### Requirement: Mock Supabase engine is toggleable via BuildConfig.USE_MOCK_SUPABASE
 
 The Ktor `HttpClient` SHALL bind to `MockEngine` when `BuildConfig.USE_MOCK_SUPABASE == true` and SHALL bind to the real engine otherwise. The mock engine SHALL return fixture JSON for `/devices`, `/pending-requests`, and `/templates`.
 
 **AND** under the `debug` build type, the build SHALL read the `USE_MOCK_SUPABASE` flag from `local.properties` (falling back to `gradle.properties`) so the documented developer workflow takes effect.
+
+(Previously: defined only the runtime flag semantics; did not specify the Gradle source for the flag, which caused `USE_MOCK_SUPABASE=true` in `local.properties` to be ignored and the real engine to be bound.)
 
 #### Scenario: Mock engine used when flag is true
 - **WHEN** `BuildConfig.USE_MOCK_SUPABASE == true`,
@@ -70,6 +36,8 @@ The parent dashboard's error banner SHALL present an "Iniciar sesión como padre
 
 **AND THEN**, when the user taps the "Iniciar sesión como padre" CTA and authentication succeeds, `loadDevices()` SHALL be re-invoked automatically so the device list transitions out of the `Error(AuthMissing)` state.
 
+(Previously: defined the CTA swap but did not specify reload behavior after auth, leaving the banner stuck in `Error(AuthMissing)` even when auth completed successfully.)
+
 #### Scenario: "Iniciar sesión como padre" CTA for auth errors
 - **WHEN** the error message contains "not authenticated",
 - **THEN** the error banner SHALL show a single "Iniciar sesión como padre" CTA (not retry/back),
@@ -94,31 +62,9 @@ The parent dashboard's error banner SHALL present an "Iniciar sesión como padre
 - **THEN** `loadDevices()` SHALL NOT be invoked,
 - **AND** the error banner SHALL remain visible.
 
-### Requirement: MockSupabaseFixtures contract returns realistic data
-
-`MockSupabaseFixtures` SHALL expose ready-to-parse JSON payloads for `/devices`, `/pending-requests`, and `/templates`.
-
-#### Scenario: Device list fixture
-- **WHEN** the mock engine handles `GET /devices` for an authenticated parent,
-- **THEN** it SHALL return JSON with a list of ≥ 2 child devices, each with `deviceId`, `displayName`, `lastSeen`, `status`.
-
-#### Scenario: Templates fixture
-- **WHEN** the mock engine handles `GET /templates`,
-- **THEN** it SHALL return JSON with a list of ≥ 1 policy templates, each with `templateId`, `name`, `policyJson`.
-
-## Out of scope
-
-- Real parent sign-up/sign-in (formal `parent-auth-flow`).
-- Real Supabase backend integration (archived `supabase-backend-integration`).
-- Removing the 5 TODOs in `ParentRepository.kt`.
-- Token refresh logic; changes to the child pairing flow.
-
 ## Verification hooks
 
 | Req | Test |
 |---|---|
-| 1 | `DeviceAuthManagerTest` — `authenticateOrCreate_persistsParentRole`, `..._persistsChildRole` |
-| 2 | `OnboardingViewModelTest` — `parent_tap_triggers_auth_then_navigates`; Compose UI test for loading + failure |
 | 3 (modified) | `NetworkModuleTest` — add `debug_buildtype_reads_useMockSupabase_from_localProperties`, `release_buildtype_ignores_localProperties_useMockSupabase` |
 | 4 (modified) | `ParentViewModelTest` — add `authenticateAsParent_success_invokesLoadDevices`, `authenticateAsParent_failure_doesNotInvokeLoadDevices` |
-| 5 | `MockSupabaseFixturesTest` — `devices_returnsAtLeastTwoChildDevices`, `..._templates_returnsAtLeastOne` |

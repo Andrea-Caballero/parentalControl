@@ -66,13 +66,15 @@ class MockSupabaseEngine(private val context: Context) {
         engine = MockEngine { request ->
             val path = request.url.encodedPath
             val body: String = when {
+                path.endsWith("/functions/v1/create-pairing-code") ->
+                    readAsset("mock-supabase/create-pairing-code.json")
                 path.endsWith("/functions/v1/get-devices-for-parent") ->
                     readAsset("mock-supabase/devices.json")
-                path.startsWith("/rest/v1/time_requests") ->
-                    readAsset("mock-supabase/pending-requests.json")
                 path.endsWith("/functions/v1/get-templates") ||
                     path.endsWith("/rest/v1/templates") ->
                     readAsset("mock-supabase/templates.json")
+                path.startsWith("/rest/v1/time_requests") ->
+                    readAsset("mock-supabase/pending-requests.json")
                 else ->
                     """{"error":"unknown route $path"}"""
             }

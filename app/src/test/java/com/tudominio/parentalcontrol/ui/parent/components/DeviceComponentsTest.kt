@@ -11,6 +11,7 @@ import com.tudominio.parentalcontrol.viewmodel.ParentViewModel
 import io.mockk.coEvery
 import io.mockk.mockk
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.setMain
@@ -31,7 +32,7 @@ import org.robolectric.annotation.Config
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [33])
-@OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+@OptIn(ExperimentalCoroutinesApi::class)
 class DeviceComponentsTest {
 
     @get:Rule
@@ -116,5 +117,76 @@ class DeviceComponentsTest {
         composeTestRule.onNodeWithText("XYZ12345").assertExists()
         // And the "Válido por 10 minutos" caption
         composeTestRule.onNodeWithText("Válido por 10 minutos").assertExists()
+    }
+
+    /**
+     * RED coverage for the UX race in [PairingBottomSheet] step 1.
+     *
+     * The bug: the "Generar código" button sets `step = 2` synchronously
+     * on click, advancing the sheet BEFORE the pairing-code request
+     * completes. On any failure path (5xx, timeout) the sheet renders an
+     * empty step-2 card with `pairingCode == null`, and the existing
+     * error snackbar gets cleared by `LaunchedEffect(error) { ... }` —
+     * the parent has no idea anything went wrong.
+     *
+     * The fix: replace the eager `step = 2` with a reactive transition —
+     * `LaunchedEffect(pairingCode) { if (pairingCode != null) step = 2 }`.
+     * The step only advances when an actual `PairingCodeResult` arrives
+     * from the viewModel. On failure, `pairingCode` stays null and the
+     * sheet stays on step 1 where the snackbar surfaces the error.
+     *
+     * This test exercises the reactive transition directly: it starts the
+     * sheet at `initialStep = 1`, then pre-seeds `pairingCode` via
+     * reflection on the viewModel's private StateFlow (the same pattern
+     * already used by [qr_renders_for_pairing_step_2] and
+     * [eight_char_code_still_shown_below_qr] to dodge the
+     * viewModelScope coroutine timing). After `waitForIdle`, the
+     * step-2 heading MUST be on screen — proving the LaunchedEffect
+     * fired.
+     *
+     * Test interaction note: we do NOT click the "Generar código" button
+     * here. The button is wrapped in a Material 3 ModalBottomSheet whose
+     * scrim layer swallows test clicks (verified via a separate
+     * diagnostic — `performClick` on the button's testTag inside the
+     * sheet is a no-op even on the unfixed build; the same Button
+     * outside the sheet dispatches fine). The reactive transition is
+     * identical regardless of how `pairingCode` becomes non-null — we
+     * simulate the "arrival" by seeding the StateFlow directly.
+     *
+     * RED: today's code does not run a LaunchedEffect on `pairingCode`,
+     * so the step stays at 1 and the assertion fails.
+     * GREEN (after the fix): the LaunchedEffect advances step to 2.
+     */
+    @Test
+    fun step_advances_when_pairing_code_arrives_reactively() {
+        // Pre-populate the viewmodel's pairingCode state via reflection on the
+        // private MutableStateFlow — same pattern used by the QR tests
+        // above so the test doesn't depend on viewModelScope coroutine
+        // timing.
+        val codeField = ParentViewModel::class.java.getDeclaredField("_pairingCode")
+        codeField.isAccessible = true
+        val codeState = codeField.get(viewModel) as kotlinx.coroutines.flow.MutableStateFlow<PairingCodeResult?>
+        codeState.value = PairingCodeResult(
+            code = "ABCDEFGH",
+            expiresAt = "2026-06-04T12:10:00Z",
+            deeplink = "parentalcontrol://pair?code=ABCDEFGH"
+        )
+
+        composeTestRule.setContent {
+            ParentalControlTheme {
+                PairingBottomSheet(
+                    viewModel = viewModel,
+                    onDismiss = {},
+                    initialStep = 1
+                )
+            }
+        }
+        composeTestRule.waitForIdle()
+
+        // The step-2 heading MUST be on screen — proving the
+        // LaunchedEffect fired in response to `pairingCode` becoming
+        // non-null. Before the fix, `step` stays at 1 and this
+        // assertion fails.
+        composeTestRule.onNodeWithText("Código de emparejamiento").assertExists()
     }
 }

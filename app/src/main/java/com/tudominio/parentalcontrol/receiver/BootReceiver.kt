@@ -5,9 +5,12 @@ import android.content.Context
 import android.content.Intent
 import android.os.Build
 import android.util.Log
+import com.tudominio.parentalcontrol.auth.DeviceAuthManager
 import com.tudominio.parentalcontrol.service.MonitorForegroundService
 import com.tudominio.parentalcontrol.workers.WorkScheduler
 import com.tudominio.parentalcontrol.workers.WorkerInitializer
+import kotlinx.coroutines.GlobalScope
+import kotlinx.coroutines.launch
 
 /**
  * Receiver para re-armar los servicios tras boot o actualización.
@@ -53,8 +56,17 @@ class BootReceiver : BroadcastReceiver() {
         //    replace an already-scheduled instance.
         WorkScheduler.scheduleOutboxDrainer(context)
 
-        // 3. Inicializar todos los workers restantes (T20)
-        WorkerInitializer.initialize(context, isAfterBoot = true)
+        // 3. Inicializar todos los workers restantes (T20) — gate on a
+        //    successfully restored session so the boot sync chain does
+        //    not run against a DISCONNECTED SupabaseClient.
+        GlobalScope.launch {
+            val session = DeviceAuthManager.getInstance(context).restoreSession()
+            if (session != null) {
+                WorkerInitializer.initialize(context, isAfterBoot = true)
+            } else {
+                Log.w(TAG, "no stored session, skipping sync chain")
+            }
+        }
 
         Log.d(TAG, "Inicialización post-boot completada")
     }

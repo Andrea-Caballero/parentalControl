@@ -434,7 +434,10 @@ class DeviceAuthManager private constructor(
             .apply()
     }
 
-    private fun restoreSession(): StoredSession? {
+    /**
+     * No network, no side effects; returns the stored session if any, null on missing/expired/decryption-failed.
+     */
+    internal fun restoreSession(): StoredSession? {
         val encrypted = context.getSharedPreferences("device_auth_prefs", Context.MODE_PRIVATE)
             .getString("encrypted_session", null) ?: return null
 

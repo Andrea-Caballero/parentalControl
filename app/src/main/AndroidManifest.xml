@@ -109,6 +109,25 @@
         </intent-filter>
     </service>
 
+    <!--
+      Disable WorkManager auto-init so ParentalControlApp.workManagerConfiguration
+      (with HiltWorkerFactory) is consulted on first WorkManager.getInstance() call.
+      Without this override, androidx.work.WorkManagerInitializer runs at app start
+      via androidx.startup and uses the default Configuration, causing @HiltWorker
+      classes (SyncWorker, HeartbeatWorker, ReconciliationWorker) to fail with
+      NoSuchMethodException when instantiated by reflection.
+    -->
+    <provider
+        android:name="androidx.startup.InitializationProvider"
+        android:authorities="${applicationId}.androidx-startup"
+        android:exported="false"
+        tools:node="merge">
+        <meta-data
+            android:name="androidx.work.WorkManagerInitializer"
+            android:value="androidx.startup"
+            tools:node="remove" />
+    </provider>
+
 </application>
 
 </manifest>

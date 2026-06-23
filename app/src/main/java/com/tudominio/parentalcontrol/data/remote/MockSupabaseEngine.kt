@@ -73,6 +73,8 @@ class MockSupabaseEngine(private val context: Context) {
                 path.endsWith("/functions/v1/get-templates") ||
                     path.endsWith("/rest/v1/templates") ->
                     readAsset("mock-supabase/templates.json")
+                path.endsWith("/functions/v1/pairing") ->
+                    readAsset("mock-supabase/pairing.json")
                 path.startsWith("/rest/v1/time_requests") ->
                     readAsset("mock-supabase/pending-requests.json")
                 else ->

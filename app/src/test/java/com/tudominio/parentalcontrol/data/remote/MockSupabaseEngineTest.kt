@@ -185,4 +185,39 @@ class MockSupabaseEngineTest {
             deeplink.startsWith("parentalcontrol://pair?code=")
         )
     }
+
+    /**
+     * Regression: `MockSupabaseEngine.when` block must route
+     * `POST /functions/v1/pairing` to the pairing-success fixture. Without
+     * this branch the child's "Emparejar" call returns HTTP 404 in debug
+     * builds (`USE_MOCK_SUPABASE=true`), `PairingManager.parsePairingResponse`
+     * (`pairing/PairingManager.kt:231`) maps it to `INVALID_CODE`, and
+     * `PairingViewModel` renders "Error de emparejamiento". Mirrors the
+     * 22/06 `create-pairing-code` fix on the parent side (obs #82).
+     */
+    @Test
+    fun `pairing POST returns device_id and parent_id response shape`() = runTest {
+        val client = engine.httpClient
+
+        val response = client.post("/functions/v1/pairing") {
+            contentType(ContentType.Application.Json)
+            setBody("{\"code\":\"ABCDEFGH\"}")
+        }
+
+        assertEquals(
+            "pairing must return 200, got ${response.status}",
+            200,
+            response.status.value
+        )
+
+        val body = response.bodyAsText()
+        assertTrue(
+            "body must contain \"device_id\" field, got: $body",
+            body.contains("\"device_id\"")
+        )
+        assertTrue(
+            "body must contain \"parent_id\" field, got: $body",
+            body.contains("\"parent_id\"")
+        )
+    }
 }

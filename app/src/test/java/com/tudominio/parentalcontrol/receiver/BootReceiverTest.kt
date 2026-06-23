@@ -122,9 +122,13 @@ class BootReceiverTest {
             .getWorkInfosForUniqueWork("${SyncWorker.WORK_NAME}_after_boot")
             .get()
 
+        // WorkScheduler.scheduleSyncAfterBoot enqueues a 3-step chain
+        // (SyncWorker -> HeartbeatWorker -> OutboxDrainer) under the
+        // unique-work name "sync_work_after_boot"; getWorkInfosForUniqueWork
+        // returns one WorkInfo per chain step.
         assertEquals(
-            "Expected exactly one sync_work_after_boot work to be enqueued when restoreSession returns a session",
-            1,
+            "Expected the sync_work_after_boot chain (3 steps) to be enqueued when restoreSession returns a session",
+            3,
             infos.size
         )
     }

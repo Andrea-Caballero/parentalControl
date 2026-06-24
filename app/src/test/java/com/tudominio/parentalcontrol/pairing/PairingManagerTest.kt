@@ -1,6 +1,7 @@
 package com.tudominio.parentalcontrol.pairing
 
 import android.content.Context
+import com.tudominio.parentalcontrol.auth.AuthResult
 import com.tudominio.parentalcontrol.auth.DeviceAuthManager
 import com.tudominio.parentalcontrol.network.SupabaseClientProvider
 import io.ktor.client.HttpClient
@@ -25,6 +26,8 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
+import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicReference
 
 /**
  * Tests for [PairingManager.pairWithCode] (PR 1 task #6 of
@@ -111,14 +114,106 @@ class PairingManagerTest {
     }
 
     @Test
-    fun pairWithCode_returns_session_error_when_no_token() = runTest {
-        every { mockAuthManager.getAccessToken() } returns null
+    fun pairWithCode_obtains_session_on_demand_when_no_token() = runTest {
+        // Pre-fix: this test FAILS because the production code short-circuits
+        // to SESSION_ERROR at PairingManager.kt:74-80 when getAccessToken() is
+        // null, never calling authenticateOrCreate() or the HTTP edge function.
+        // Post-fix: production code calls authenticateOrCreate(), the
+        // anonymous session is used as the bearer, and pairing succeeds.
+        every { mockAuthManager.getAccessToken() } returnsMany listOf(null, "test-jwt-token")
+        coEvery { mockAuthManager.authenticateOrCreate() } returns AuthResult.Success(
+            deviceId = "anonymous",
+            accessToken = "test-jwt-token",
+            refreshToken = "",
+            expiresAt = 0L
+        )
+
+        val capturedAuth = AtomicReference<String?>(null)
+        val successEngine = MockEngine { request ->
+            capturedAuth.set(request.headers["Authorization"])
+            respond(
+                content = ByteReadChannel(
+                    """{"device_id":"<uuid-device>","parent_id":"<uuid-parent>"}"""
+                ),
+                status = HttpStatusCode.OK,
+                headers = headersOf(HttpHeaders.ContentType, "application/json")
+            )
+        }
+        val successClient = HttpClient(successEngine) {
+            install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
+        }
+        every { mockClientProvider.httpClient } returns successClient
+
         val manager = PairingManager.getInstance(context)
+        manager.deviceInfoProvider = {
+            DeviceInfo(
+                deviceName = "TestManufacturer TestModel",
+                deviceModel = "TestModel",
+                osVersion = "33",
+                appVersion = "1.0.0",
+                ageBand = null
+            )
+        }
 
         val result = manager.pairWithCode("ABCDEFGH")
 
-        assertTrue("Expected SESSION_ERROR, got $result", result is PairingResult.Error)
-        assertEquals(PairingErrorType.SESSION_ERROR, (result as PairingResult.Error).type)
+        assertTrue("Expected Success, got $result", result is PairingResult.Success)
+        val success = result as PairingResult.Success
+        assertEquals("<uuid-device>", success.deviceId)
+        assertEquals("<uuid-parent>", success.parentId)
+        assertEquals("Bearer test-jwt-token", capturedAuth.get())
+        coVerify { mockAuthManager.authenticateOrCreate() }
+        coVerify { mockAuthManager.savePairedSession("<uuid-device>", "<uuid-parent>") }
+
+        successClient.close()
+    }
+
+    @Test
+    fun pairWithCode_returns_network_error_when_authenticateOrCreate_fails() = runTest {
+        // Pre-fix: this test FAILS because the production code returns
+        // SESSION_ERROR (not NETWORK_ERROR) when getAccessToken() is null,
+        // regardless of what authenticateOrCreate() would have returned.
+        // Post-fix: production code calls authenticateOrCreate(), the
+        // failure surfaces as NETWORK_ERROR, and the HTTP edge function is
+        // NOT called.
+        every { mockAuthManager.getAccessToken() } returns null
+        coEvery { mockAuthManager.authenticateOrCreate() } returns AuthResult.Error("network down")
+
+        val engineCalls = AtomicInteger(0)
+        val neverEngine = MockEngine { _ ->
+            engineCalls.incrementAndGet()
+            respond(
+                content = ByteReadChannel("""{"device_id":"x","parent_id":"y"}"""),
+                status = HttpStatusCode.OK,
+                headers = headersOf(HttpHeaders.ContentType, "application/json")
+            )
+        }
+        val neverClient = HttpClient(neverEngine) {
+            install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
+        }
+        every { mockClientProvider.httpClient } returns neverClient
+
+        val manager = PairingManager.getInstance(context)
+        manager.deviceInfoProvider = {
+            DeviceInfo(
+                deviceName = "TestManufacturer TestModel",
+                deviceModel = "TestModel",
+                osVersion = "33",
+                appVersion = "1.0.0",
+                ageBand = null
+            )
+        }
+
+        val result = manager.pairWithCode("ABCDEFGH")
+
+        assertTrue("Expected Error, got $result", result is PairingResult.Error)
+        val err = result as PairingResult.Error
+        assertEquals(PairingErrorType.NETWORK_ERROR, err.type)
+        assertEquals("Error de conexión. Verifica tu conexión a internet.", err.message)
+        coVerify { mockAuthManager.authenticateOrCreate() }
+        assertEquals("HTTP edge function must not be called when auth preflight fails", 0, engineCalls.get())
+
+        neverClient.close()
     }
 
     @Test

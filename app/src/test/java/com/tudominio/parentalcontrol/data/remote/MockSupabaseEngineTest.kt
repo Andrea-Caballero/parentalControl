@@ -220,4 +220,55 @@ class MockSupabaseEngineTest {
             body.contains("\"parent_id\"")
         )
     }
+
+    /**
+     * Regression: `MockSupabaseEngine.when` block must route
+     * `POST /auth/v1/token?grant_type=password` to the
+     * `auth-anonymous.json` fixture. Without this branch the legacy
+     * `DeviceAuthManager.httpClient` (which is now also routed through
+     * the mock per the `fix-supabase-client-provider-legacy-mock-gate`
+     * family) gets a 404 for the anonymous-session POST, the auth call
+     * returns `AuthResult.NeedsPairing`, and `PairingManager.pairWithCode`
+     * short-circuits to `NETWORK_ERROR` before the pairing call can even
+     * be made. See `DeviceAuthManager.createAnonymousSession`
+     * (`auth/DeviceAuthManager.kt:213`).
+     */
+    @Test
+    fun `auth anonymous POST returns SupabaseAuthResponse shape`() = runTest {
+        val client = engine.httpClient
+
+        val response = client.post("/auth/v1/token?grant_type=password") {
+            contentType(ContentType.Application.Json)
+            setBody(
+                "{\"email\":\"anonymous@test.local\",\"password\":\"test-pass\"}"
+            )
+        }
+
+        assertEquals(
+            "auth/v1/token must return 200, got ${response.status}",
+            200,
+            response.status.value
+        )
+
+        val body = response.bodyAsText()
+        // The fixture is parsed by kotlinx.serialization into
+        // `SupabaseAuthResponse` inside `DeviceAuthManager.handleAuthSuccess`
+        // (`auth/DeviceAuthManager.kt:237`). Every field referenced there
+        // MUST be present in the JSON, or the deserializer throws and the
+        // auth call falls back to `AuthResult.Error` (caller sees
+        // `NETWORK_ERROR`).
+        for (field in listOf("access_token", "refresh_token", "expires_in", "user")) {
+            assertTrue(
+                "body must contain \"$field\" field, got: $body",
+                body.contains("\"$field\"")
+            )
+        }
+        // The `user.app_metadata.device_id` is what `handleAuthSuccess` uses
+        // to set `_deviceId.value` (line 242); without it the device id
+        // chain downstream of the auth call breaks.
+        assertTrue(
+            "body must contain user.app_metadata.device_id, got: $body",
+            body.contains("\"device_id\"")
+        )
+    }
 }

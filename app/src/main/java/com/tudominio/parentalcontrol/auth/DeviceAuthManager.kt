@@ -4,6 +4,8 @@ import android.content.Context
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import android.util.Base64
+import com.tudominio.parentalcontrol.BuildConfig
+import com.tudominio.parentalcontrol.data.remote.MockSupabaseEngine
 import com.tudominio.parentalcontrol.keystore.SecureStorage
 import io.ktor.client.*
 import io.ktor.client.call.*
@@ -106,13 +108,25 @@ class DeviceAuthManager private constructor(
         isLenient = true
     }
 
-    private val httpClient = HttpClient(OkHttp) {
-        install(ContentNegotiation) {
-            json(json)
-        }
-        install(HttpTimeout) {
-            requestTimeoutMillis = 30000
-            connectTimeoutMillis = 15000
+    private val httpClient: HttpClient = if (BuildConfig.USE_MOCK_SUPABASE) {
+        // Per `fix-supabase-client-provider-legacy-mock-gate` family: every
+        // legacy `getInstance` path in the project must honor the same flag
+        // the Hilt `@SupabaseClient` binding honors in `NetworkModule`.
+        // `DeviceAuthManager` has its own private `httpClient` (used by
+        // `createAnonymousSession` and `completePairing`); without this
+        // branch the auth call hits the placeholder Supabase URL and
+        // surfaces as `NETWORK_ERROR` in `PairingManager` before the
+        // pairing call can use the (already-mock'd) `SupabaseClientProvider`.
+        MockSupabaseEngine(context).httpClient
+    } else {
+        HttpClient(OkHttp) {
+            install(ContentNegotiation) {
+                json(json)
+            }
+            install(HttpTimeout) {
+                requestTimeoutMillis = 30000
+                connectTimeoutMillis = 15000
+            }
         }
     }
 

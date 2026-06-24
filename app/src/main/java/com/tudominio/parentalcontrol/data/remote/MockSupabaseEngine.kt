@@ -66,6 +66,13 @@ class MockSupabaseEngine(private val context: Context) {
         engine = MockEngine { request ->
             val path = request.url.encodedPath
             val body: String = when {
+                path.endsWith("/auth/v1/token") ->
+                    // Per `fix-supabase-client-provider-legacy-mock-gate`
+                    // family: the legacy `DeviceAuthManager.httpClient` now
+                    // routes through this mock too, so `createAnonymousSession`
+                    // gets a parseable `SupabaseAuthResponse` instead of a
+                    // placeholder-URL connection error.
+                    readAsset("mock-supabase/auth-anonymous.json")
                 path.endsWith("/functions/v1/create-pairing-code") ->
                     readAsset("mock-supabase/create-pairing-code.json")
                 path.endsWith("/functions/v1/get-devices-for-parent") ->

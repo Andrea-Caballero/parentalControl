@@ -71,12 +71,16 @@ class PairingManager private constructor(
         return withContext(Dispatchers.IO) {
             Log.d(TAG, "Intentando emparejar con código: ${code.take(4)}...")
 
-            val token = authManager.getAccessToken()
+            var token = authManager.getAccessToken()
             if (token == null) {
-                return@withContext PairingResult.Error(
-                    PairingErrorType.SESSION_ERROR,
-                    "No autenticado"
-                )
+                token = when (val authResult = authManager.authenticateOrCreate()) {
+                    is AuthResult.Success -> authResult.accessToken
+                    is AuthResult.Error,
+                    is AuthResult.NeedsPairing -> return@withContext PairingResult.Error(
+                        PairingErrorType.NETWORK_ERROR,
+                        "Error de conexión. Verifica tu conexión a internet."
+                    )
+                }
             }
 
             try {

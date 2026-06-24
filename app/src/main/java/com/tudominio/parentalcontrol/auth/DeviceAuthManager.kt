@@ -4,6 +4,7 @@ import android.content.Context
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import android.util.Base64
+import android.util.Log
 import com.tudominio.parentalcontrol.BuildConfig
 import com.tudominio.parentalcontrol.data.remote.MockSupabaseEngine
 import com.tudominio.parentalcontrol.keystore.SecureStorage
@@ -26,6 +27,7 @@ import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import java.security.InvalidKeyException
 import java.security.KeyStore
 import javax.crypto.Cipher
 import javax.crypto.KeyGenerator
@@ -87,6 +89,7 @@ class DeviceAuthManager private constructor(
     private val context: Context
 ) {
     companion object {
+        private const val TAG = "DeviceAuthManager"
         const val SUPABASE_URL = "https://your-project.supabase.co"
         const val SUPABASE_ANON_KEY = "your-anon-key"
 
@@ -242,8 +245,10 @@ class DeviceAuthManager private constructor(
                 return@withContext handleAuthSuccess(authResponse)
             }
 
+            Log.w(TAG, "Auth no exitoso: ${response.status}")
             AuthResult.Error("Error creando sesión: ${response.status}")
         } catch (e: Exception) {
+            Log.e(TAG, "Excepción en createAnonymousSession", e)
             AuthResult.Error("Error creando sesión: ${e.message}")
         }
     }
@@ -483,10 +488,7 @@ class DeviceAuthManager private constructor(
     }
 
     private fun encryptWithKeystore(data: String): String {
-        val keyStore = KeyStore.getInstance("AndroidKeyStore")
-        keyStore.load(null)
-        val secretKey = keyStore.getKey(AUTH_KEY_ALIAS, null) as? SecretKey
-            ?: createAuthKey()
+        val secretKey = getOrCreateAuthKey()
 
         val cipher = Cipher.getInstance("AES/GCM/NoPadding")
         cipher.init(Cipher.ENCRYPT_MODE, secretKey)
@@ -505,10 +507,7 @@ class DeviceAuthManager private constructor(
         val iv = combined.copyOfRange(0, 12)
         val encrypted = combined.copyOfRange(12, combined.size)
 
-        val keyStore = KeyStore.getInstance("AndroidKeyStore")
-        keyStore.load(null)
-        val secretKey = keyStore.getKey(AUTH_KEY_ALIAS, null) as? SecretKey
-            ?: createAuthKey()
+        val secretKey = getOrCreateAuthKey()
 
         val cipher = Cipher.getInstance("AES/GCM/NoPadding")
         val spec = GCMParameterSpec(128, iv)
@@ -517,7 +516,52 @@ class DeviceAuthManager private constructor(
         return String(cipher.doFinal(encrypted), Charsets.UTF_8)
     }
 
+    /**
+     * Returns a working AES/GCM SecretKey for the auth storage.
+     *
+     * Pre-fix builds stored the key without `setEncryptionPaddings(
+     * ENCRYPTION_PADDING_NONE)`, which makes it incompatible with the
+     * `AES/GCM/NoPadding` cipher — `Cipher.init` then throws
+     * `InvalidKeyException` → `KeyStoreException: Incompatible padding mode`.
+     * A plain `getKey(...)` still returns the bad key (it's a valid SecretKey
+     * instance), so the bug only surfaces on first cipher init. We detect
+     * that here with a test init and migrate by deleting and re-creating.
+     */
+    private fun getOrCreateAuthKey(): SecretKey {
+        val keyStore = KeyStore.getInstance("AndroidKeyStore")
+        keyStore.load(null)
+
+        val existingKey = keyStore.getKey(AUTH_KEY_ALIAS, null) as? SecretKey
+        if (existingKey != null) {
+            val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+            try {
+                cipher.init(Cipher.ENCRYPT_MODE, existingKey)
+                return existingKey
+            } catch (e: InvalidKeyException) {
+                Log.w(TAG, "Auth key has incompatible parameters, recreating", e)
+                keyStore.deleteEntry(AUTH_KEY_ALIAS)
+            }
+        }
+
+        return createAuthKey()
+    }
+
     private fun createAuthKey(): SecretKey {
+        val keyStore = KeyStore.getInstance("AndroidKeyStore")
+        keyStore.load(null)
+        // If a previous build of this app created the key WITHOUT
+        // `setEncryptionPaddings(ENCRYPTION_PADDING_NONE)`, the key is
+        // stored with a default padding (PKCS7) that's incompatible with
+        // the `AES/GCM/NoPadding` cipher we use in `encryptWithKeystore`.
+        // The cipher init then throws `INCOMPATIBLE_PADDING_MODE`
+        // (`KeyStoreException: Incompatible padding mode`) and
+        // `persistSession` fails, which `handleAuthSuccess` doesn't
+        // recover from. Force-delete any pre-existing key so we always
+        // create a fresh one with the correct spec on app start.
+        if (keyStore.containsAlias(AUTH_KEY_ALIAS)) {
+            keyStore.deleteEntry(AUTH_KEY_ALIAS)
+        }
+
         val keyGenerator = KeyGenerator.getInstance(
             KeyProperties.KEY_ALGORITHM_AES,
             "AndroidKeyStore"
@@ -528,6 +572,11 @@ class DeviceAuthManager private constructor(
             KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT
         )
             .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
+            // GCM mode requires `ENCRYPTION_PADDING_NONE` on the key spec
+            // to match the `NoPadding` on the cipher. Without this, the
+            // Keystore silently stores the key with the default padding and
+            // the cipher init throws on first use.
+            .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
             .setKeySize(256)
             .setUserAuthenticationRequired(false)
             .build()

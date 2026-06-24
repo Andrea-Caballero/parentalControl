@@ -272,8 +272,10 @@ class PairingManager private constructor(
      */
     private fun extractDeviceId(json: String): String? {
         return try {
-            // Simple extraction
-            val pattern = "\"device_id\":\"([^\"]+)\"".toRegex()
+            // Tolerates compact ("device_id":"x") and pretty ("device_id": "x")
+            // JSON, since real Supabase responses are compact but the mock
+            // fixtures may be pretty-printed.
+            val pattern = "\"device_id\"\\s*:\\s*\"([^\"]+)\"".toRegex()
             pattern.find(json)?.groupValues?.get(1)
         } catch (e: Exception) {
             null
@@ -285,7 +287,7 @@ class PairingManager private constructor(
      */
     private fun extractParentId(json: String): String? {
         return try {
-            val pattern = "\"parent_id\":\"([^\"]+)\"".toRegex()
+            val pattern = "\"parent_id\"\\s*:\\s*\"([^\"]+)\"".toRegex()
             pattern.find(json)?.groupValues?.get(1)
         } catch (e: Exception) {
             null
@@ -297,7 +299,7 @@ class PairingManager private constructor(
      */
     private fun extractErrorMessage(json: String): String? {
         return try {
-            val pattern = "\"error\":\"([^\"]+)\"".toRegex()
+            val pattern = "\"error\"\\s*:\\s*\"([^\"]+)\"".toRegex()
             pattern.find(json)?.groupValues?.get(1)
         } catch (e: Exception) {
             null

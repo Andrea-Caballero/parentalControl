@@ -1,6 +1,7 @@
 package com.tudominio.parentalcontrol.data.remote
 
 import androidx.test.core.app.ApplicationProvider
+import io.ktor.client.call.body
 import io.ktor.client.request.get
 import io.ktor.client.request.post
 import io.ktor.client.request.setBody
@@ -16,6 +17,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
+import kotlinx.serialization.Serializable
 
 /**
  * Tests for the [MockSupabaseEngine] and the fixture JSON it serves (T5 of
@@ -269,6 +271,77 @@ class MockSupabaseEngineTest {
         assertTrue(
             "body must contain user.app_metadata.device_id, got: $body",
             body.contains("\"device_id\"")
+        )
+    }
+
+    /**
+     * Regression: `MockSupabaseEngine.httpClient` MUST install
+     * `ContentNegotiation` so `response.body<T>()` deserializes typed
+     * responses (the path used by `DeviceAuthManager.createAnonymousSession`
+     * for `SupabaseAuthResponse`). Without `ContentNegotiation`, the
+     * engine can't decode the raw body into a typed object, throws
+     * `JsonConvertException`, the auth call returns `AuthResult.Error`,
+     * and `PairingManager` surfaces `NETWORK_ERROR` even though the
+     * mock fixture is reachable. Mirrors the real-client behavior
+     * (see `NetworkModule.buildRealHttpClient` which installs the same
+     * `ContentNegotiation` with the same lenient `Json` config).
+     */
+    @Serializable
+    data class AuthAnonymousResponse(
+        val access_token: String,
+        val refresh_token: String,
+        val expires_in: Long,
+        val expires_at: Long? = null,
+        val user: AuthAnonymousUser? = null
+    )
+
+    @Serializable
+    data class AuthAnonymousUser(
+        val id: String,
+        val email: String? = null,
+        val app_metadata: Map<String, String>? = null
+    )
+
+    @Test
+    fun `auth anonymous POST deserializes into typed response`() = runTest {
+        val client = engine.httpClient
+
+        val response = client.post("/auth/v1/token?grant_type=password") {
+            contentType(ContentType.Application.Json)
+            setBody(
+                "{\"email\":\"anonymous@test.local\",\"password\":\"test-pass\"}"
+            )
+        }
+
+        assertEquals(
+            "auth/v1/token must return 200, got ${response.status}",
+            200,
+            response.status.value
+        )
+
+        // The crucial assertion: this `body<T>()` call is what the prod
+        // `DeviceAuthManager.createAnonymousSession` does. If
+        // `ContentNegotiation` is missing, Ktor throws and this test
+        // fails with `NoTransformationFoundException` /
+        // `JsonConvertException` — exactly the prod symptom.
+        val typed: AuthAnonymousResponse = response.body()
+
+        assertEquals(
+            "access_token must be the mock fixture value",
+            "mock-access-token-anonymous-session-001",
+            typed.access_token
+        )
+        assertEquals(
+            "refresh_token must be the mock fixture value",
+            "mock-refresh-token-anonymous-session-001",
+            typed.refresh_token
+        )
+        assertEquals(3600L, typed.expires_in)
+        assertNotNull("user must be non-null", typed.user)
+        assertEquals(
+            "device_id from app_metadata must be the fixture value",
+            "device-anonymous-001",
+            typed.user?.app_metadata?.get("device_id")
         )
     }
 }

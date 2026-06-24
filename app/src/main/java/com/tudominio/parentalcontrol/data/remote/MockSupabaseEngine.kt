@@ -4,9 +4,11 @@ import android.content.Context
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.mock.MockEngine
 import io.ktor.client.engine.mock.respond
+import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.headersOf
+import io.ktor.serialization.kotlinx.json.json
 import io.ktor.utils.io.ByteReadChannel
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
@@ -98,7 +100,28 @@ class MockSupabaseEngine(private val context: Context) {
                 headers = headersOf(HttpHeaders.ContentType, "application/json")
             )
         }
-    )
+    ) {
+        // Without `ContentNegotiation` installed, `response.body<T>()` throws
+        // `JsonConvertException` because the engine can't decode the raw body
+        // into a typed object. The legacy `DeviceAuthManager.httpClient` is
+        // now wired to this mock (per the `fix-supabase-client-provider-legacy-
+        // mock-gate` family), and `createAnonymousSession` does
+        // `response.body<SupabaseAuthResponse>()` — without this install, the
+        // auth call throws, falls back to `AuthResult.Error`, and the
+        // `PairingManager` shows `NETWORK_ERROR` to the user even though the
+        // mock fixture is reachable. Adding `ContentNegotiation` here makes
+        // the mock client a drop-in replacement for the real engine in any
+        // caller that does typed deserialization. `bodyAsText()`-style callers
+        // (the existing `MockSupabaseEngineTest`) are unaffected.
+        install(ContentNegotiation) {
+            json(
+                Json {
+                    ignoreUnknownKeys = true
+                    isLenient = true
+                }
+            )
+        }
+    }
 
     private fun readAsset(path: String): String =
         context.assets.open(path).bufferedReader(Charsets.UTF_8).use { it.readText() }

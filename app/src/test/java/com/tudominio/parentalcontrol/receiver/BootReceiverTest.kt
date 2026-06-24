@@ -2,6 +2,10 @@ package com.tudominio.parentalcontrol.receiver
 
 import androidx.test.core.app.ApplicationProvider
 import androidx.work.Configuration
+import androidx.work.ExistingPeriodicWorkPolicy
+import androidx.work.ExistingWorkPolicy
+import androidx.work.OneTimeWorkRequestBuilder
+import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.testing.WorkManagerTestInitHelper
 import com.tudominio.parentalcontrol.auth.DeviceAuthManager
@@ -26,6 +30,7 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 import org.robolectric.shadows.ShadowLog
+import java.util.concurrent.TimeUnit
 
 /**
  * Unit tests for [BootReceiver].
@@ -34,8 +39,11 @@ import org.robolectric.shadows.ShadowLog
  * work scheduled from [BootReceiver.onBootCompleted] MUST be gated on
  * a restored session. With a non-null session the boot path enqueues
  * the periodic OutboxDrainer re-arm and the after-boot sync chain;
- * with a null session it cancels the three persisted unique works
- * (sync_work_after_boot, reconciliation_work, outbox_drain_periodic).
+ * with a null session it cancels ONLY the persisted after-boot sync
+ * chain (`sync_work_after_boot`) — NOT the periodic OutboxDrainer /
+ * ReconciliationWorker (those are configured with `KEEP` and MUST
+ * survive across reboots per spec) and NOT the after-pairing schedule
+ * (`sync_work_after_pairing`, distinct unique-work name).
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [33])
@@ -224,21 +232,26 @@ class BootReceiverTest {
     /**
      * Pins the `boot-worker-lifecycle` spec scenario "No session cancels
      * persisted works and skips scheduling" plus the `outbox-drain` delta
-     * scenarios "No session at boot skips the OutboxDrainer re-arm" and
-     * "Cancellation at boot with no session".
+     * scenario "Cancellation at boot with no session".
      *
      * GIVEN the device has just emitted BOOT_COMPLETED
      * AND DeviceAuthManager.restoreSession() returns null
      * WHEN BootReceiver.onBootCompleted runs
-     * THEN WorkScheduler.cancelWork MUST be called for the three persisted
-     *      unique works: `${SyncWorker.WORK_NAME}_after_boot`,
-     *      ReconciliationWorker.WORK_NAME, OutboxDrainer.WORK_NAME.
+     * THEN WorkScheduler.cancelWork MUST be called EXACTLY ONCE, with the
+     *      unique-work name `${SyncWorker.WORK_NAME}_after_boot`
+     *      (the post-boot sync chain — its only step on the boot path is
+     *      one-shot; the periodic OutboxDrainer / ReconciliationWorker
+     *      AND the after-pairing schedule MUST be left alone per spec
+     *      scenarios "Periodic workers stay scheduled across reboots" and
+     *      "After-pairing schedule survives a reboot").
      *
-     * Before the fix, the else branch only logged a warning — cancelWork
-     * was never invoked — so this test fails — RED.
+     * Before the fix, the else branch cancelled three names — including the
+     * two periodic unique-work names that the spec says MUST be preserved —
+     * so the `verify(exactly = 0) { WorkScheduler.cancelWork(context, any()) }`
+     * negative assertion below fails — RED.
      */
     @Test
-    fun onBootCompleted_without_session_cancels_three_boot_unique_works() {
+    fun onBootCompleted_without_session_cancels_only_after_boot_chain() {
         val context = ApplicationProvider.getApplicationContext<android.content.Context>()
         val receiver = BootReceiver()
         val mockAuthManager: DeviceAuthManager = mockk()
@@ -256,19 +269,269 @@ class BootReceiverTest {
         // before verifying.
         Thread.sleep(1000L)
 
-        // The boot path MUST cancel the three persisted unique works.
-        // Names match WorkScheduler.scheduleSyncAfterBoot
-        // (${SyncWorker.WORK_NAME}_after_boot), WorkScheduler.scheduleReconciliation
-        // (ReconciliationWorker.WORK_NAME), and WorkScheduler.scheduleOutboxDrainer
-        // (OutboxDrainer.WORK_NAME).
+        // 1. The boot path MUST cancel the after-boot sync chain (its
+        //    unique-work name is "${SyncWorker.WORK_NAME}_after_boot").
         verify(exactly = 1) {
             WorkScheduler.cancelWork(context, "${SyncWorker.WORK_NAME}_after_boot")
         }
-        verify(exactly = 1) {
+        // 2. The boot path MUST NOT cancel the periodic reconciliation
+        //    schedule (its unique-work name is ReconciliationWorker.WORK_NAME).
+        verify(exactly = 0) {
             WorkScheduler.cancelWork(context, ReconciliationWorker.WORK_NAME)
         }
-        verify(exactly = 1) {
+        // 3. The boot path MUST NOT cancel the periodic outbox drainer
+        //    schedule (its unique-work name is OutboxDrainer.WORK_NAME).
+        verify(exactly = 0) {
             WorkScheduler.cancelWork(context, OutboxDrainer.WORK_NAME)
         }
+        // 4. Total cancel calls bounded: exactly 1, no extra cancels.
+        verify(exactly = 1) { WorkScheduler.cancelWork(context, any()) }
+    }
+
+    /**
+     * Pins the `boot-worker-lifecycle` spec scenario "After-pairing schedule
+     * survives a reboot".
+     *
+     * GIVEN the user paired the device before the last reboot
+     *  AND `scheduleSyncAfterPairing` enqueued `${SyncWorker.WORK_NAME}_after_pairing`
+     *  AND DeviceAuthManager.restoreSession() returns null at this boot
+     * WHEN BootReceiver.onBootCompleted runs
+     * THEN `${SyncWorker.WORK_NAME}_after_pairing` SHALL remain scheduled
+     *      in the WorkManager database
+     * AND WorkScheduler.cancelWork SHALL NOT be called for the
+     *      `${SyncWorker.WORK_NAME}_after_pairing` name.
+     *
+     * BootReceiver cancels the after-boot chain by name. The after-pairing
+     * chain uses a DISTINCT unique-work name (`${SyncWorker.WORK_NAME}_after_pairing`)
+     * and MUST be left alone. WorkScheduler is mocked so the cancel call
+     * surface can be asserted at the API level (the underlying
+     * WorkManager.cancelUniqueWork would otherwise be a no-op on this name
+     * since the production cancel list never targets it).
+     *
+     * Note on RED signal: this test does NOT fail under the current buggy
+     * code — the bug cancels `sync_work_after_boot`, `reconciliation_work`,
+     * and `outbox_drain_periodic`, none of which targets
+     * `${SyncWorker.WORK_NAME}_after_pairing`. The test serves as a
+     * regression guard: a future change that adds `after_pairing` to the
+     * cancel list would be caught here.
+     */
+    @Test
+    fun onBootCompleted_without_session_preserves_after_pairing_work() {
+        val context = ApplicationProvider.getApplicationContext<android.content.Context>()
+        val workManager = WorkManager.getInstance(context)
+
+        // Pre-condition: simulate the after-pairing schedule that survived
+        // the reboot by enqueuing the after_pairing unique work.
+        val afterPairingRequest = OneTimeWorkRequestBuilder<SyncWorker>().build()
+        workManager.enqueueUniqueWork(
+            "${SyncWorker.WORK_NAME}_after_pairing",
+            ExistingWorkPolicy.REPLACE,
+            afterPairingRequest
+        )
+
+        // Sanity check: the pre-condition is satisfied — the work is in the DB.
+        val preInfos = workManager
+            .getWorkInfosForUniqueWork("${SyncWorker.WORK_NAME}_after_pairing")
+            .get()
+        assertEquals(
+            "Test pre-condition: after_pairing work should be enqueued before boot",
+            1,
+            preInfos.size
+        )
+
+        // Trigger boot with no session. WorkScheduler is mocked so we can
+        // verify the call surface at the API level.
+        mockkObject(WorkScheduler)
+        val receiver = BootReceiver()
+        val mockAuthManager: DeviceAuthManager = mockk()
+        mockkObject(DeviceAuthManager.Companion)
+        every { DeviceAuthManager.getInstance(any()) } returns mockAuthManager
+        every { mockAuthManager.restoreSession() } returns null
+
+        val bootIntent = android.content.Intent(BootReceiver.ACTION_BOOT_COMPLETED)
+        receiver.onReceive(context, bootIntent)
+
+        // Wait for the GlobalScope coroutine in the else branch.
+        Thread.sleep(1000L)
+
+        // 1. WorkScheduler.cancelWork MUST NOT be called for the
+        //    after_pairing name (it is a distinct schedule that the boot
+        //    cancel MUST leave alone).
+        verify(exactly = 0) {
+            WorkScheduler.cancelWork(context, "${SyncWorker.WORK_NAME}_after_pairing")
+        }
+        // 2. The after_pairing work MUST still be in the WorkManager DB.
+        val postInfos = workManager
+            .getWorkInfosForUniqueWork("${SyncWorker.WORK_NAME}_after_pairing")
+            .get()
+        assertEquals(
+            "Expected after_pairing schedule to survive boot without session",
+            1,
+            postInfos.size
+        )
+    }
+
+    /**
+     * Pins the `boot-worker-lifecycle` spec scenario "Periodic workers stay
+     * scheduled across reboots" and the `outbox-drain` delta scenario
+     * "Periodic OutboxDrainer schedule is preserved across reboot".
+     *
+     * GIVEN `OutboxDrainer` is scheduled as a periodic worker with
+     *      ExistingPeriodicWorkPolicy.KEEP (its WORK_NAME is the unique
+     *      periodic entry name `outbox_drain_periodic`)
+     *  AND DeviceAuthManager.restoreSession() returns null at this boot
+     * WHEN BootReceiver.onBootCompleted runs
+     * THEN WorkScheduler.cancelWork SHALL NOT be called for
+     *      `OutboxDrainer.WORK_NAME`
+     * AND the periodic `OutboxDrainer` entry SHALL remain in the
+     *      WorkManager database.
+     *
+     * WorkScheduler is mocked so the cancel call surface can be asserted
+     * at the API level (asserting against the real WorkManager DB is
+     * unreliable in this test harness: the periodic OutboxDrainer worker
+     * fails on enqueue because Hilt is not initialised in unit tests,
+     * so the WorkInfo state transitions to FAILED, which is a terminal
+     * state — `cancelUniqueWork` is a no-op on terminal states and the
+     * state never transitions to CANCELLED, so a real-DB cancel assertion
+     * would not RED-fail under the buggy code).
+     *
+     * Under the current buggy implementation the else branch cancels
+     * `outbox_drain_periodic`, so the `verify(exactly = 0)` below fails — RED.
+     */
+    @Test
+    fun onBootCompleted_without_session_preserves_periodic_outbox_drainer() {
+        val context = ApplicationProvider.getApplicationContext<android.content.Context>()
+        val workManager = WorkManager.getInstance(context)
+
+        // Pre-condition: enqueue the periodic OutboxDrainer via the SAME
+        // unique-periodic name and policy used by WorkScheduler.scheduleOutboxDrainer.
+        val periodicRequest = PeriodicWorkRequestBuilder<OutboxDrainer>(
+            15, TimeUnit.MINUTES
+        ).build()
+        workManager.enqueueUniquePeriodicWork(
+            OutboxDrainer.WORK_NAME,
+            ExistingPeriodicWorkPolicy.KEEP,
+            periodicRequest
+        )
+
+        // Sanity check: the pre-condition is satisfied — the entry is in the DB.
+        val preInfos = workManager
+            .getWorkInfosForUniqueWork(OutboxDrainer.WORK_NAME)
+            .get()
+        assertEquals(
+            "Test pre-condition: OutboxDrainer periodic should be enqueued before boot",
+            1,
+            preInfos.size
+        )
+
+        // Trigger boot with no session. WorkScheduler is mocked so we can
+        // verify the cancel call surface at the API level.
+        mockkObject(WorkScheduler)
+        val receiver = BootReceiver()
+        val mockAuthManager: DeviceAuthManager = mockk()
+        mockkObject(DeviceAuthManager.Companion)
+        every { DeviceAuthManager.getInstance(any()) } returns mockAuthManager
+        every { mockAuthManager.restoreSession() } returns null
+
+        val bootIntent = android.content.Intent(BootReceiver.ACTION_BOOT_COMPLETED)
+        receiver.onReceive(context, bootIntent)
+
+        // Wait for the GlobalScope coroutine in the else branch.
+        Thread.sleep(1000L)
+
+        // 1. WorkScheduler.cancelWork MUST NOT be called for the periodic
+        //    OutboxDrainer name (the periodic schedule MUST survive across
+        //    reboots per spec).
+        verify(exactly = 0) {
+            WorkScheduler.cancelWork(context, OutboxDrainer.WORK_NAME)
+        }
+        // 2. The periodic OutboxDrainer entry MUST still be in the
+        //    WorkManager DB.
+        val postInfos = workManager
+            .getWorkInfosForUniqueWork(OutboxDrainer.WORK_NAME)
+            .get()
+        assertEquals(
+            "Expected periodic OutboxDrainer to survive boot without session",
+            1,
+            postInfos.size
+        )
+    }
+
+    /**
+     * Pins the `boot-worker-lifecycle` spec scenario "Periodic workers stay
+     * scheduled across reboots" applied to the periodic ReconciliationWorker.
+     *
+     * GIVEN `ReconciliationWorker` is scheduled as a periodic worker with
+     *      ExistingPeriodicWorkPolicy.KEEP (its WORK_NAME is the unique
+     *      periodic entry name `reconciliation_work`)
+     *  AND DeviceAuthManager.restoreSession() returns null at this boot
+     * WHEN BootReceiver.onBootCompleted runs
+     * THEN WorkScheduler.cancelWork SHALL NOT be called for
+     *      `ReconciliationWorker.WORK_NAME`
+     * AND the periodic `ReconciliationWorker` entry SHALL remain in the
+     *      WorkManager database.
+     *
+     * WorkScheduler is mocked so the cancel call surface can be asserted
+     * at the API level. Under the current buggy implementation the else
+     * branch cancels `reconciliation_work`, so the `verify(exactly = 0)`
+     * below fails — RED.
+     */
+    @Test
+    fun onBootCompleted_without_session_preserves_periodic_reconciliation() {
+        val context = ApplicationProvider.getApplicationContext<android.content.Context>()
+        val workManager = WorkManager.getInstance(context)
+
+        // Pre-condition: enqueue the periodic ReconciliationWorker via the
+        // SAME unique-periodic name and policy used by
+        // WorkScheduler.scheduleReconciliation.
+        val periodicRequest = PeriodicWorkRequestBuilder<ReconciliationWorker>(
+            15, TimeUnit.MINUTES
+        ).build()
+        workManager.enqueueUniquePeriodicWork(
+            ReconciliationWorker.WORK_NAME,
+            ExistingPeriodicWorkPolicy.KEEP,
+            periodicRequest
+        )
+
+        // Sanity check: the pre-condition is satisfied — the entry is in the DB.
+        val preInfos = workManager
+            .getWorkInfosForUniqueWork(ReconciliationWorker.WORK_NAME)
+            .get()
+        assertEquals(
+            "Test pre-condition: ReconciliationWorker periodic should be enqueued before boot",
+            1,
+            preInfos.size
+        )
+
+        // Trigger boot with no session. WorkScheduler is mocked so we can
+        // verify the cancel call surface at the API level.
+        mockkObject(WorkScheduler)
+        val receiver = BootReceiver()
+        val mockAuthManager: DeviceAuthManager = mockk()
+        mockkObject(DeviceAuthManager.Companion)
+        every { DeviceAuthManager.getInstance(any()) } returns mockAuthManager
+        every { mockAuthManager.restoreSession() } returns null
+
+        val bootIntent = android.content.Intent(BootReceiver.ACTION_BOOT_COMPLETED)
+        receiver.onReceive(context, bootIntent)
+
+        // Wait for the GlobalScope coroutine in the else branch.
+        Thread.sleep(1000L)
+
+        // 1. WorkScheduler.cancelWork MUST NOT be called for the periodic
+        //    ReconciliationWorker name.
+        verify(exactly = 0) {
+            WorkScheduler.cancelWork(context, ReconciliationWorker.WORK_NAME)
+        }
+        // 2. The periodic ReconciliationWorker entry MUST still be in the
+        //    WorkManager DB.
+        val postInfos = workManager
+            .getWorkInfosForUniqueWork(ReconciliationWorker.WORK_NAME)
+            .get()
+        assertEquals(
+            "Expected periodic ReconciliationWorker to survive boot without session",
+            1,
+            postInfos.size
+        )
     }
 }

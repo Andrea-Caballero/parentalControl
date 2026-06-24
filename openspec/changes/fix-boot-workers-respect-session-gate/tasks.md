@@ -29,8 +29,8 @@ Reasoning: 2 files, 2 commits (RED + GREEN), no chained concerns. Well under the
 
 ## Phase 2: GREEN — Move schedule + add cancels (commit 2, prod-only)
 
-- [ ] 2.1 In `app/src/main/java/com/tudominio/parentalcontrol/receiver/BootReceiver.kt`, MOVE `WorkScheduler.scheduleOutboxDrainer(context)` from current line 57 INTO the existing `if (session != null)` branch (alongside `WorkerInitializer.initialize`).
-- [ ] 2.2 In the `else` branch of `BootReceiver.kt`, ADD three `WorkScheduler.cancelWork(context, name)` calls for `${SyncWorker.WORK_NAME}_after_boot`, `ReconciliationWorker.WORK_NAME`, `OutboxDrainer.WORK_NAME`; keep existing `Log.w`.
-- [ ] 2.3 Run `./gradlew testDebugUnitTest` — both new tests MUST pass (GREEN); all pre-existing unit tests MUST still pass.
-- [ ] 2.4 Run `./gradlew detekt ktlintCheck assembleDebug` — all MUST pass.
-- [ ] 2.5 Commit: `fix(receiver): gate boot-time workers on restored session`.
+- [x] 2.1 In `app/src/main/java/com/tudominio/parentalcontrol/receiver/BootReceiver.kt`, MOVE `WorkScheduler.scheduleOutboxDrainer(context)` from current line 57 INTO the existing `if (session != null)` branch (alongside `WorkerInitializer.initialize`).
+- [x] 2.2 In the `else` branch of `BootReceiver.kt`, ADD three `WorkScheduler.cancelWork(context, name)` calls for `${SyncWorker.WORK_NAME}_after_boot`, `ReconciliationWorker.WORK_NAME`, `OutboxDrainer.WORK_NAME`; keep existing `Log.w`.
+- [x] 2.3 Run `./gradlew testDebugUnitTest` — both new tests MUST pass (GREEN); all pre-existing unit tests MUST still pass.
+- [x] 2.4 Run `./gradlew detekt ktlintCheck assembleDebug` — all MUST pass.
+- [x] 2.5 Commit: `fix(receiver): gate boot-time workers on restored session`.

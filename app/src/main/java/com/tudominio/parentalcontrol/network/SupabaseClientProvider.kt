@@ -2,7 +2,9 @@ package com.tudominio.parentalcontrol.network
 
 import android.content.Context
 import android.util.Log
+import com.tudominio.parentalcontrol.BuildConfig
 import com.tudominio.parentalcontrol.auth.DeviceAuthManager
+import com.tudominio.parentalcontrol.data.remote.MockSupabaseEngine
 import com.tudominio.parentalcontrol.security.network.NetworkSecurityConfig
 import io.ktor.client.*
 import io.ktor.client.engine.okhttp.*
@@ -66,17 +68,27 @@ class SupabaseClientProvider internal constructor(
             // The Hilt-managed instance (RepositoryModule) passes the injected
             // @SupabaseClient client, so this branch is only hit from the
             // non-Hilt callers (PairingManager, RealtimeManager, etc.).
-            val okHttpClient = NetworkSecurityConfig.createSecureOkHttpClient(context)
-            HttpClient(OkHttp) {
-                engine {
-                    preconfigured = okHttpClient
-                }
-                install(ContentNegotiation) {
-                    json(this@SupabaseClientProvider.json)
-                }
-                install(HttpTimeout) {
-                    requestTimeoutMillis = 30000
-                    connectTimeoutMillis = 15000
+            //
+            // Per `fix-supabase-client-provider-legacy-mock-gate`: the legacy
+            // path must honor `BuildConfig.USE_MOCK_SUPABASE` (the same flag the
+            // Hilt `@SupabaseClient` binding already honors in `NetworkModule`),
+            // so debug builds wired to the mock engine don't surface as
+            // `NETWORK_ERROR` against the placeholder Supabase URL.
+            if (BuildConfig.USE_MOCK_SUPABASE) {
+                MockSupabaseEngine(context).httpClient
+            } else {
+                val okHttpClient = NetworkSecurityConfig.createSecureOkHttpClient(context)
+                HttpClient(OkHttp) {
+                    engine {
+                        preconfigured = okHttpClient
+                    }
+                    install(ContentNegotiation) {
+                        json(this@SupabaseClientProvider.json)
+                    }
+                    install(HttpTimeout) {
+                        requestTimeoutMillis = 30000
+                        connectTimeoutMillis = 15000
+                    }
                 }
             }
         }

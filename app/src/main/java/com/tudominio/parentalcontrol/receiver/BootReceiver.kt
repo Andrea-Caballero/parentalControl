@@ -7,8 +7,6 @@ import android.os.Build
 import android.util.Log
 import com.tudominio.parentalcontrol.auth.DeviceAuthManager
 import com.tudominio.parentalcontrol.service.MonitorForegroundService
-import com.tudominio.parentalcontrol.workers.OutboxDrainer
-import com.tudominio.parentalcontrol.workers.ReconciliationWorker
 import com.tudominio.parentalcontrol.workers.SyncWorker
 import com.tudominio.parentalcontrol.workers.WorkScheduler
 import com.tudominio.parentalcontrol.workers.WorkerInitializer
@@ -57,9 +55,15 @@ class BootReceiver : BroadcastReceiver() {
         // 2. Gate every WorkManager work scheduled at boot on a successfully
         //    restored session. With a session, re-arm the periodic
         //    OutboxDrainer so the drain survives the reboot and kick off
-        //    the after-boot sync chain. Without a session, cancel the
-        //    three persisted unique works that would otherwise retry
-        //    indefinitely against a DISCONNECTED SupabaseClient.
+        //    the after-boot sync chain. Without a session, cancel ONLY
+        //    the post-boot sync chain (`${SyncWorker.WORK_NAME}_after_boot`)
+        //    that the boot path itself enqueued — DO NOT cancel the
+        //    periodic OutboxDrainer / ReconciliationWorker schedules
+        //    (they are configured with `ExistingPeriodicWorkPolicy.KEEP`
+        //    and must survive across reboots per spec scenarios 5 and 6
+        //    of `boot-worker-lifecycle/spec.md`) and DO NOT cancel the
+        //    after-pairing schedule (`${SyncWorker.WORK_NAME}_after_pairing`,
+        //    a distinct unique-work name).
         //    KEEP + a unique work name ensures we do not replace an
         //    already-scheduled OutboxDrainer instance.
         GlobalScope.launch {
@@ -69,8 +73,6 @@ class BootReceiver : BroadcastReceiver() {
                 WorkerInitializer.initialize(context, isAfterBoot = true)
             } else {
                 WorkScheduler.cancelWork(context, "${SyncWorker.WORK_NAME}_after_boot")
-                WorkScheduler.cancelWork(context, ReconciliationWorker.WORK_NAME)
-                WorkScheduler.cancelWork(context, OutboxDrainer.WORK_NAME)
                 Log.w(TAG, "no stored session, skipping sync chain")
             }
         }

@@ -245,10 +245,8 @@ class DeviceAuthManager private constructor(
                 return@withContext handleAuthSuccess(authResponse)
             }
 
-            Log.w(TAG, "Auth no exitoso: ${response.status}")
             AuthResult.Error("Error creando sesión: ${response.status}")
         } catch (e: Exception) {
-            Log.e(TAG, "Excepción en createAnonymousSession", e)
             AuthResult.Error("Error creando sesión: ${e.message}")
         }
     }

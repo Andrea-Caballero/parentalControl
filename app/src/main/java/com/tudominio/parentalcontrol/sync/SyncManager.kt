@@ -7,6 +7,7 @@ import com.tudominio.parentalcontrol.data.model.AppPolicyEntity
 import com.tudominio.parentalcontrol.data.model.OutboxEntity
 import com.tudominio.parentalcontrol.data.model.PolicyEntity
 import com.tudominio.parentalcontrol.data.model.WindowEntity
+import com.tudominio.parentalcontrol.di.SupabaseClient
 import com.tudominio.parentalcontrol.network.ConnectionState
 import com.tudominio.parentalcontrol.network.SupabaseClientProvider
 import dagger.hilt.EntryPoint
@@ -89,6 +90,7 @@ data class AppPolicyResponse(
 @Singleton
 class SyncManager @Inject constructor(
     @ApplicationContext private val context: Context,
+    @SupabaseClient private val httpClient: HttpClient,
     private var database: ParentalDatabase
 ) {
     companion object {
@@ -129,18 +131,6 @@ class SyncManager @Inject constructor(
 
     private var syncJob: Job? = null
     private var periodicSyncJob: Job? = null
-
-    /**
-     * The Ktor HTTP client used to talk to Supabase. Public so the
-     * [com.tudominio.parentalcontrol.workers.OutboxDrainer] can guard against
-     * a not-yet-initialized client and return `Result.retry()` instead of
-     * silently no-op'ing the send.
-     *
-     * The `setHttpClient` accessor is auto-generated from this property;
-     * callers that previously used the explicit setter should now write to
-     * the property directly (`syncManager.httpClient = client`).
-     */
-    var httpClient: HttpClient? = null
 
     init {
         scope.launch { updatePendingCount() }
@@ -213,10 +203,10 @@ class SyncManager @Inject constructor(
         return@withContext try {
             val localVersion = database.policyDao().getLocalVersion(deviceId) ?: 0L
 
-            val response = httpClient?.get("${SupabaseClientProvider.SUPABASE_URL}/functions/v1/get-policy") {
+            val response = httpClient.get("${SupabaseClientProvider.SUPABASE_URL}/functions/v1/get-policy") {
                 header("Authorization", "Bearer $accessToken")
                 header("apikey", SupabaseClientProvider.SUPABASE_ANON_KEY)
-            } ?: return@withContext SyncResult.Error("HTTP client no configurado")
+            }
 
             when {
                 response.status == HttpStatusCode.NotModified -> {
@@ -327,7 +317,7 @@ class SyncManager @Inject constructor(
                 put("client_ts", java.time.Instant.now().toString())
             }
 
-            val response = httpClient?.post("${SupabaseClientProvider.SUPABASE_URL}/functions/v1/heartbeat") {
+            val response = httpClient.post("${SupabaseClientProvider.SUPABASE_URL}/functions/v1/heartbeat") {
                 header("Authorization", "Bearer $accessToken")
                 header("apikey", SupabaseClientProvider.SUPABASE_ANON_KEY)
                 contentType(ContentType.Application.Json)
@@ -372,23 +362,9 @@ class SyncManager @Inject constructor(
      * Sends a single outbox row to Supabase. Returns a structured result so
      * callers (notably [com.tudominio.parentalcontrol.workers.OutboxDrainer])
      * can branch on retryable vs permanent failure.
-     *
-     * **Null [httpClient] contract**: if the client has not been initialized
-     * (e.g., the app is starting up and `setHttpClient` has not been called
-     * yet), this method returns [OutboxSendResult.RetryableFailure] wrapping
-     * an [IllegalStateException] so the worker can map it to
-     * `Result.retry()`. It does NOT silently no-op (the previous
-     * implementation returned `false`, which looked like a real failure but
-     * was indistinguishable from a network drop).
      */
     suspend fun sendOutboxItem(item: OutboxEntity, accessToken: String? = null): OutboxSendResult {
         val client = httpClient
-        if (client == null) {
-            return OutboxSendResult.RetryableFailure(
-                IllegalStateException("httpClient not initialized")
-            )
-        }
-
         val endpoint = when (item.tipo) {
             "USAGE_LOG" -> "/rest/v1/usage_logs"
             "DEVICE_ALERT" -> "/rest/v1/device_alerts"

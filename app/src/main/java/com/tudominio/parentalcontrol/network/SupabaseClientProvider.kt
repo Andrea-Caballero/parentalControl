@@ -98,6 +98,28 @@ class SupabaseClientProvider internal constructor(
     val isInitialized: StateFlow<Boolean> = _isInitialized.asStateFlow()
 
     private val _connectionState = MutableStateFlow(ConnectionState.DISCONNECTED)
+
+    init {
+        // The field initializer above runs BEFORE the `authManager` field is
+        // assigned (Kotlin initialization order). The `authManager` field
+        // triggers `DeviceAuthManager.init { loadPersistedState() }` which
+        // restores the persisted session from disk; once that returns,
+        // `authManager.isPaired()` reflects the on-disk reality. Sync
+        // workers, however, race this init against WorkManager's first
+        // invocation, so they can observe `DISCONNECTED` even when a valid
+        // session was restored moments earlier. To avoid that race, we
+        // explicitly transition to CONNECTED here when the disk has a
+        // session, so the first worker tick sees the correct state.
+        //
+        // The other writers to `_connectionState` (initializeAndAuthenticate,
+        // refreshIfNeeded, completePairing) are still authoritative for
+        // interactive flows — this init just covers the boot/relaunch path.
+        _connectionState.value = if (authManager.isPaired()) {
+            ConnectionState.CONNECTED
+        } else {
+            ConnectionState.DISCONNECTED
+        }
+    }
     val connectionState: StateFlow<ConnectionState> = _connectionState.asStateFlow()
 
     /**

@@ -26,10 +26,6 @@ import java.time.Instant
  *    WorkManager applies its exponential backoff
  *  - PermanentFailure (4xx other than 408/429) → mark processed and log
  *    a warning so the row does not loop forever
- *
- * If [SyncManager.httpClient] is null (the app is still starting up), the
- * worker short-circuits with `Result.retry()` rather than silently
- * succeeding — see the `null_http_client` test in [OutboxDrainerTest].
  */
 @HiltWorker
 class OutboxDrainer @AssistedInject constructor(
@@ -50,14 +46,12 @@ class OutboxDrainer @AssistedInject constructor(
     override suspend fun doWork(): Result = withContext(Dispatchers.IO) {
         Log.d(TAG, "Iniciando drain de outbox")
 
-        // Gate 1: the HTTP client must be initialized. Without it, every send
-        // would return RetryableFailure(httpClient not initialized) and the
-        // worker would burn through the retry budget on a row that never had
-        // a chance. Short-circuit with a retry so WorkManager backs off.
-        if (syncManager.httpClient == null) {
-            Log.w(TAG, "httpClient no inicializado, retry")
-            return@withContext Result.retry()
-        }
+        // `syncManager.httpClient` is injected via Hilt (`@SupabaseClient`
+        // binding from `NetworkModule`); it cannot be null at runtime. The
+        // previous null-check defended against a regression where
+        // `SyncManager.httpClient` was a `var HttpClient? = null` that no
+        // caller ever wrote to (see SyncManager.kt history). With the Hilt
+        // injection that regression is closed at the type level.
 
         val pending = outboxManager.getPendingItems(
             maxAttempts = MAX_RETRY_ATTEMPTS,

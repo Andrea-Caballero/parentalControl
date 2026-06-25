@@ -32,10 +32,16 @@ import java.util.UUID
  * hands them to [SyncManager.sendOutboxItem], and marks the row state
  * according to the result (processed / retries++ / processed-on-permanent).
  *
- * Mocks: [SyncManager] (its sealed-result `sendOutboxItem` and the
- * `httpClient` field) is stubbed via mockk so each branch is driven
- * deterministically. A real in-memory Room database backs the outbox table
- * so the DAO queries the worker triggers see realistic data.
+ * Mocks: [SyncManager] (its sealed-result `sendOutboxItem`) is stubbed via
+ * mockk so each branch is driven deterministically. A real in-memory Room
+ * database backs the outbox table so the DAO queries the worker triggers
+ * see realistic data.
+ *
+ * The `SyncManager.httpClient` mock that used to live here is gone:
+ * `httpClient` is now Hilt-injected (`@SupabaseClient` binding) and the
+ * OutboxDrainer no longer reads it directly — `sendOutboxItem` does. The
+ * old `drainOutbox_throws_retryable_failure_when_http_client_is_null`
+ * test was deleted alongside the null-check it pinned.
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [33])
@@ -106,7 +112,6 @@ class OutboxDrainerTest {
     fun drainOutbox_marks_items_as_processed_on_success() = runBlocking {
         insertOutboxItem()
         val syncManager: SyncManager = mockk(relaxed = false)
-        coEvery { syncManager.httpClient } returns mockk(relaxed = true)
         coEvery { syncManager.sendOutboxItem(any()) } returns OutboxSendResult.Success
 
         val worker = newWorker(syncManager)
@@ -122,7 +127,6 @@ class OutboxDrainerTest {
     fun drainOutbox_increments_retries_on_retryable_failure() = runBlocking {
         insertOutboxItem(retries = 0)
         val syncManager: SyncManager = mockk(relaxed = false)
-        coEvery { syncManager.httpClient } returns mockk(relaxed = true)
         coEvery { syncManager.sendOutboxItem(any()) } returns
             OutboxSendResult.RetryableFailure(IllegalStateException("network down"))
 
@@ -140,7 +144,6 @@ class OutboxDrainerTest {
     fun drainOutbox_marks_items_as_processed_on_permanent_failure() = runBlocking {
         insertOutboxItem()
         val syncManager: SyncManager = mockk(relaxed = false)
-        coEvery { syncManager.httpClient } returns mockk(relaxed = true)
         coEvery { syncManager.sendOutboxItem(any()) } returns
             OutboxSendResult.PermanentFailure(statusCode = 400)
 
@@ -150,19 +153,5 @@ class OutboxDrainerTest {
         assertEquals(ListenableWorker.Result.success(), result)
         val pending = db.outboxDao().getPendingItems(10, 50)
         assertEquals(0, pending.size)
-    }
-
-    @Test
-    fun drainOutbox_throws_retryable_failure_when_http_client_is_null() = runBlocking {
-        insertOutboxItem()
-        val syncManager: SyncManager = mockk(relaxed = false)
-        coEvery { syncManager.httpClient } returns null
-
-        val worker = newWorker(syncManager)
-        val result = worker.doWork()
-
-        // The worker must NOT silently succeed when the HTTP client is null;
-        // it must return Result.retry() so WorkManager backs off and retries.
-        assertEquals(ListenableWorker.Result.retry(), result)
     }
 }

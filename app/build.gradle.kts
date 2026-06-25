@@ -1,5 +1,4 @@
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
-import java.util.Properties
 
 plugins {
     alias(libs.plugins.android.application)
@@ -13,19 +12,25 @@ plugins {
     alias(libs.plugins.google.services)
 }
 
-// T4.1 of `hotfix-parent-auth-cta-reload` — explicitly read `local.properties`
-// for the `USE_MOCK_SUPABASE` flag. `project.findProperty(...)` only sees
-// `gradle.properties` / CLI `-P` / env vars, NOT `local.properties` — which
-// is the regression this change fixes (see design Decision 2). The flag is
-// scoped to `buildTypes.debug` so a stale `local.properties` cannot
-// accidentally engage the mock engine in release builds.
-val localPropertiesForMock: Properties = Properties().apply {
-    rootProject.file("local.properties").takeIf { it.exists() }?.inputStream()?.use { load(it) }
-}
+// T4.1 of `hotfix-parent-auth-cta-reload` (revisited) — `USE_MOCK_SUPABASE`
+// now defaults to `true` in debug builds so the dev experience works out
+// of the box. Historically this flag was read from `local.properties`, but
+// Android Studio regenerates that file on every Gradle sync and the
+// `USE_MOCK_SUPABASE=true` line silently disappears between sessions —
+// the next "Run" ships a debug APK that talks to the placeholder Supabase
+// URL (`https://your-project.supabase.co`), producing confusing
+// `NETWORK_ERROR` on the first pairing attempt on a physical device.
+//
+// To test against the real backend from a debug build, pass the explicit
+// override on the command line:
+//   ./gradlew installDebug -PuseRealSupabase=true
+//
+// Release builds are unaffected — they hardcode `USE_MOCK_SUPABASE=false`
+// below, which is the contract enforced by Play Store and the
+// supabase-backend-integration spec ("Release build does not honor
+// local.properties USE_MOCK_SUPABASE").
 val debugUseMockSupabase: String =
-    localPropertiesForMock.getProperty("USE_MOCK_SUPABASE")
-        ?: (project.findProperty("USE_MOCK_SUPABASE") as String?)
-        ?: "false"
+    if (project.findProperty("useRealSupabase") == "true") "false" else "true"
 
 android {
     namespace = "com.tudominio.parentalcontrol"

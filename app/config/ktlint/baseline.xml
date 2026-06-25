@@ -488,11 +488,11 @@
 		<error line="14" column="1" source="no-wildcard-imports" />
 		<error line="15" column="1" source="no-wildcard-imports" />
 		<error line="16" column="1" source="no-wildcard-imports" />
-		<error line="203" column="45" source="string-template" />
-		<error line="223" column="31" source="string-template" />
-		<error line="243" column="31" source="string-template" />
-		<error line="273" column="46" source="string-template" />
-		<error line="301" column="31" source="string-template" />
+		<error line="225" column="45" source="string-template" />
+		<error line="245" column="31" source="string-template" />
+		<error line="265" column="31" source="string-template" />
+		<error line="295" column="46" source="string-template" />
+		<error line="323" column="31" source="string-template" />
 	</file>
 	<file name="src/main/java/com/tudominio/parentalcontrol/onboarding/OnboardingScreen.kt">
 		<error line="3" column="1" source="no-unused-imports" />
@@ -912,15 +912,15 @@
 		<error line="285" column="1" source="indent" />
 	</file>
 	<file name="src/main/java/com/tudominio/parentalcontrol/sync/SyncManager.kt">
-		<error line="17" column="1" source="no-wildcard-imports" />
 		<error line="18" column="1" source="no-wildcard-imports" />
 		<error line="19" column="1" source="no-wildcard-imports" />
 		<error line="20" column="1" source="no-wildcard-imports" />
 		<error line="21" column="1" source="no-wildcard-imports" />
 		<error line="22" column="1" source="no-wildcard-imports" />
-		<error line="27" column="1" source="no-wildcard-imports" />
+		<error line="23" column="1" source="no-wildcard-imports" />
 		<error line="28" column="1" source="no-wildcard-imports" />
-		<error line="31" column="1" source="no-wildcard-imports" />
+		<error line="29" column="1" source="no-wildcard-imports" />
+		<error line="32" column="1" source="no-wildcard-imports" />
 	</file>
 	<file name="src/main/java/com/tudominio/parentalcontrol/time/TimeProvider.kt">
 		<error line="7" column="1" source="no-unused-imports" />

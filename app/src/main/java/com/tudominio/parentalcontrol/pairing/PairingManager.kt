@@ -14,6 +14,8 @@ import io.ktor.http.ContentType
 import io.ktor.http.contentType
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.Json
 
 /**
  * Manager para el emparejamiento de dispositivos.
@@ -215,15 +217,14 @@ class PairingManager private constructor(
         return when (statusCode) {
             200, 201 -> {
                 // Éxito
-                val deviceId = extractDeviceId(responseBody)
-                val parentId = extractParentId(responseBody)
-                
-                if (deviceId != null) {
+                val resp = PairingResponseParser.parseSuccess(responseBody)
+
+                if (resp != null) {
                     // Guardar la sesión emparejada
-                    authManager.savePairedSession(deviceId, parentId)
-                    
-                    Log.d(TAG, "Emparejamiento exitoso: deviceId=$deviceId")
-                    PairingResult.Success(deviceId, parentId)
+                    authManager.savePairedSession(resp.device_id, resp.parent_id)
+
+                    Log.d(TAG, "Emparejamiento exitoso: deviceId=${resp.device_id}")
+                    PairingResult.Success(resp.device_id, resp.parent_id)
                 } else {
                     PairingResult.Error(
                         PairingErrorType.INVALID_RESPONSE,
@@ -231,7 +232,7 @@ class PairingManager private constructor(
                     )
                 }
             }
-            
+
             404 -> {
                 Log.w(TAG, "Código inválido o no encontrado")
                 PairingResult.Error(
@@ -239,7 +240,7 @@ class PairingManager private constructor(
                     "El código no es válido"
                 )
             }
-            
+
             410 -> {
                 Log.w(TAG, "Código expirado")
                 PairingResult.Error(
@@ -247,7 +248,7 @@ class PairingManager private constructor(
                     "El código ha expirado. Solicita uno nuevo desde el panel parental."
                 )
             }
-            
+
             409 -> {
                 Log.w(TAG, "Código ya usado")
                 PairingResult.Error(
@@ -255,9 +256,9 @@ class PairingManager private constructor(
                     "Este código ya fue utilizado"
                 )
             }
-            
+
             else -> {
-                val errorMessage = extractErrorMessage(responseBody)
+                val errorMessage = PairingResponseParser.parseError(responseBody)
                 Log.e(TAG, "Error de emparejamiento: $statusCode - $errorMessage")
                 PairingResult.Error(
                     PairingErrorType.SERVER_ERROR,
@@ -266,44 +267,69 @@ class PairingManager private constructor(
             }
         }
     }
+}
 
-    /**
-     * Extrae el device_id de la respuesta JSON.
-     */
-    private fun extractDeviceId(json: String): String? {
-        return try {
-            // Tolerates compact ("device_id":"x") and pretty ("device_id": "x")
-            // JSON, since real Supabase responses are compact but the mock
-            // fixtures may be pretty-printed.
-            val pattern = "\"device_id\"\\s*:\\s*\"([^\"]+)\"".toRegex()
-            pattern.find(json)?.groupValues?.get(1)
-        } catch (e: Exception) {
-            null
-        }
+/**
+ * Wire-shape DTOs for the `POST /functions/v1/pairing` endpoint.
+ *
+ * Mirrors the production Supabase edge-function response. Lives here
+ * (not in `data.repository`) because the pairing flow has its own
+ * transport-shape contract distinct from the parent-side DTOs.
+ *
+ * SUGGESTION #2 of `verify-report.md`: replaces the three hand-rolled
+ * regex extractors that used to live in `PairingManager.parsePairingResponse`.
+ * kotlinx-serialization gives us typed field access and free pretty-vs-compact
+ * tolerance — no more `\s*:\s*` in regex strings, no more silent misses on
+ * unexpected whitespace.
+ */
+@Serializable
+data class PairingResponse(
+    val device_id: String,
+    val parent_id: String? = null
+)
+
+/**
+ * Wire shape for the error body returned alongside non-2xx responses
+ * (the `else` branch in `parsePairingResponse`). The Supabase edge
+ * function returns `{ "error": "<human-readable message>" }`.
+ */
+@Serializable
+data class PairingErrorBody(
+    val error: String
+)
+
+/**
+ * Pure-function parser that turns the raw response body string into
+ * a typed DTO. Kept as an internal `object` so unit tests can exercise
+ * it without spinning up the full `PairingManager` (which needs Hilt,
+ * `Context`, `DeviceAuthManager`, and `SupabaseClientProvider`).
+ *
+ * Returns `null` instead of throwing on malformed input so callers can
+ * distinguish "valid JSON but wrong shape" (e.g. a 200 with a body the
+ * function doesn't recognize → `INVALID_RESPONSE`) from "valid shape"
+ * (the happy path).
+ *
+ * The lenient config (`ignoreUnknownKeys`, `isLenient`) means a real
+ * Supabase response with extra fields (e.g. `request_id`, `created_at`)
+ * won't break the parser, and the parser tolerates JSON that doesn't
+ * strictly conform to RFC 8259 (e.g. unquoted control chars).
+ */
+internal object PairingResponseParser {
+    private val json = Json {
+        ignoreUnknownKeys = true
+        isLenient = true
     }
 
-    /**
-     * Extrae el parent_id de la respuesta JSON.
-     */
-    private fun extractParentId(json: String): String? {
-        return try {
-            val pattern = "\"parent_id\"\\s*:\\s*\"([^\"]+)\"".toRegex()
-            pattern.find(json)?.groupValues?.get(1)
-        } catch (e: Exception) {
-            null
-        }
+    fun parseSuccess(body: String): PairingResponse? = try {
+        json.decodeFromString<PairingResponse>(body)
+    } catch (e: Exception) {
+        null
     }
 
-    /**
-     * Extrae el mensaje de error de la respuesta JSON.
-     */
-    private fun extractErrorMessage(json: String): String? {
-        return try {
-            val pattern = "\"error\"\\s*:\\s*\"([^\"]+)\"".toRegex()
-            pattern.find(json)?.groupValues?.get(1)
-        } catch (e: Exception) {
-            null
-        }
+    fun parseError(body: String): String? = try {
+        json.decodeFromString<PairingErrorBody>(body).error
+    } catch (e: Exception) {
+        null
     }
 }
 

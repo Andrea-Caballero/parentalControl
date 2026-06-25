@@ -10,6 +10,7 @@ import io.ktor.http.ContentType
 import io.ktor.http.contentType
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -343,5 +344,121 @@ class MockSupabaseEngineTest {
             "device-anonymous-001",
             typed.user?.app_metadata?.get("device_id")
         )
+    }
+
+    // ---------------------------------------------------------------
+    // SUGGESTION #1 follow-up: centralize JSON minification so a
+    // future hand-rolled regex consumer can stay strict against the
+    // compact shape Supabase actually returns. The fixture files in
+    // `assets/mock-supabase/` stay pretty-printed for review, and
+    // [MockSupabaseEngine.minifyJsonIfNeeded] rewrites them on read.
+    // ---------------------------------------------------------------
+
+    @Test
+    fun `minifyJsonIfNeeded strips whitespace from pretty-printed object`() {
+        val pretty = """
+            {
+              "device_id": "device-child-emulator-001",
+              "parent_id": "parent-uuid-aaaa-bbbb-cccc"
+            }
+        """.trimIndent()
+
+        val minified = engine.minifyJsonIfNeeded(pretty)
+
+        assertEquals(
+            "object must be minified to a single line with no extra whitespace",
+            """{"device_id":"device-child-emulator-001","parent_id":"parent-uuid-aaaa-bbbb-cccc"}""",
+            minified
+        )
+        assertFalse(
+            "minified output must not contain newlines",
+            minified.contains('\n')
+        )
+        assertFalse(
+            "minified output must not contain the ': ' separator (colon-then-space)",
+            minified.contains(": ")
+        )
+    }
+
+    @Test
+    fun `minifyJsonIfNeeded strips whitespace from pretty-printed array`() {
+        val pretty = """
+            [
+              { "id": "a", "name": "first" },
+              { "id": "b", "name": "second" }
+            ]
+        """.trimIndent()
+
+        val minified = engine.minifyJsonIfNeeded(pretty)
+
+        assertEquals(
+            "array must be minified",
+            """[{"id":"a","name":"first"},{"id":"b","name":"second"}]""",
+            minified
+        )
+    }
+
+    @Test
+    fun `minifyJsonIfNeeded is a no-op on already-compact JSON`() {
+        val compact = """{"device_id":"x","parent_id":"y"}"""
+
+        val minified = engine.minifyJsonIfNeeded(compact)
+
+        assertEquals(
+            "compact JSON must round-trip unchanged",
+            compact,
+            minified
+        )
+    }
+
+    @Test
+    fun `minifyJsonIfNeeded preserves string contents with special chars`() {
+        // Supabase JWTs, URLs, deeplinks and similar wire values contain
+        // characters that look like JSON syntax (`://`, dots, slashes) but
+        // are inside string literals. The minifier must NOT touch them.
+        val pretty = """
+            {
+              "deeplink": "parentalcontrol://pair?code=ABCDEFGH",
+              "url": "https://example.com/path?x=1&y=2"
+            }
+        """.trimIndent()
+
+        val minified = engine.minifyJsonIfNeeded(pretty)
+
+        assertTrue(
+            "deeplink value must survive minification intact, got: $minified",
+            minified.contains("\"deeplink\":\"parentalcontrol://pair?code=ABCDEFGH\"")
+        )
+        assertTrue(
+            "url value must survive minification intact, got: $minified",
+            minified.contains("\"url\":\"https://example.com/path?x=1&y=2\"")
+        )
+    }
+
+    @Test
+    fun `minifyJsonIfNeeded returns the raw text on invalid input`() {
+        // If a fixture becomes malformed (broken JSON), we don't want the
+        // mock engine to mask that — let the caller surface the parse error
+        // with the original text, not a half-cooked re-serialization.
+        val broken = "{ this is not json"
+
+        val result = engine.minifyJsonIfNeeded(broken)
+
+        assertEquals(
+            "malformed JSON must fall through to the raw text",
+            broken,
+            result
+        )
+    }
+
+    @Test
+    fun `minifyJsonIfNeeded returns non-JSON input unchanged`() {
+        // A path that happens to not start with `{` or `[` (e.g. an XML
+        // body or a plain-text 404 page) is passed through verbatim. Today
+        // every fixture is JSON, but this keeps the helper safe for future
+        // non-JSON endpoints.
+        val plain = "hello world"
+
+        assertEquals(plain, engine.minifyJsonIfNeeded(plain))
     }
 }

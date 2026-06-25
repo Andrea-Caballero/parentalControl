@@ -123,8 +123,54 @@ class MockSupabaseEngine(private val context: Context) {
         }
     }
 
-    private fun readAsset(path: String): String =
-        context.assets.open(path).bufferedReader(Charsets.UTF_8).use { it.readText() }
+    private fun readAsset(path: String): String {
+        val raw = context.assets.open(path).bufferedReader(Charsets.UTF_8).use { it.readText() }
+        return minifyJsonIfNeeded(raw)
+    }
+
+    /**
+     * Defensive JSON minifier for fixture responses.
+     *
+     * Fixtures live in `app/src/main/assets/mock-supabase/` and are often
+     * pretty-printed (with newlines and spaces after colons) for review-ability
+     * — that's the format a human wants to diff. But the wire format Supabase
+     * actually returns is compact, and a hand-rolled JSON regex consumer (see
+     * `PairingManager.extractDeviceId` / `extractParentId` / `extractError`)
+     * only matches the compact form unless its regex explicitly tolerates
+     * whitespace.
+     *
+     * Centralizing the minification here means a future fixture can stay
+     * pretty-printed (good for review) AND a future regex consumer can stay
+     * strict (good for catching real bugs), because the mock engine will
+     * always serve compact JSON to consumers — exactly the format the real
+     * Supabase returns.
+     *
+     * Implementation note: uses [kotlinx.serialization.json.Json.parseToJsonElement]
+     * + [kotlinx.serialization.json.JsonElement.toString] rather than
+     * `org.json.JSONObject.toString()` because the latter escapes forward
+     * slashes inside strings (`/` → `\/`). Both forms are valid JSON, but
+     * the escaped form breaks byte-for-byte string assertions in callers
+     * (e.g. `deeplink.startsWith("parentalcontrol://pair?code=")`) and
+     * shifts the actual `/` characters downstream of any `bodyAsText()`
+     * call. kotlinx.serialization's encoder preserves `:` and `/` literally.
+     *
+     * Falls back to the raw text if parsing fails so a malformed fixture
+     * surfaces as an immediate JSON parse error in the caller (typed
+     * decoding) or as a non-compact response body (regex consumers),
+     * instead of being silently swallowed here.
+     */
+    internal fun minifyJsonIfNeeded(json: String): String {
+        val trimmed = json.trim()
+        return try {
+            when {
+                trimmed.startsWith("[") -> Json.parseToJsonElement(trimmed).toString()
+                trimmed.startsWith("{") -> Json.parseToJsonElement(trimmed).toString()
+                else -> json
+            }
+        } catch (e: Exception) {
+            json
+        }
+    }
 }
 
 /**

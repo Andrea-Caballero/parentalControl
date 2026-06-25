@@ -3,6 +3,7 @@ package com.tudominio.parentalcontrol.enforcement
 import android.app.ActivityManager
 import android.content.Context
 import android.content.Intent
+import android.net.Uri
 import android.os.Build
 import android.os.SystemClock
 import com.tudominio.parentalcontrol.accessibility.AppMonitorService
@@ -206,8 +207,34 @@ class EnforcementController(
 
         // Si no es locked, mostrar overlay (T08) e ir a home
         BlockOverlayService.show(context, motivo) {
-            // Callback cuando el usuario presiona "Pedir permiso" (T28)
-            onPermissionRequested(packageName)
+            // T28: el botón "Pedir permiso" del overlay ahora navega al
+            // flujo de tiempo extra vía deeplink. BlockOverlayService es
+            // un Service (no puede mutar el grafo Compose directamente),
+            // así que dispara `parentalcontrol://request-extra-time?pkg=…`
+            // y MainActivity lo captura. Se oculta el overlay ANTES de
+            // lanzar la activity para que el chico no vea el overlay
+            // encima del formulario. `FLAG_ACTIVITY_NEW_TASK` es
+            // obligatorio porque `context` aquí es application context
+            // (no un Activity); `FLAG_ACTIVITY_CLEAR_TOP` + `SINGLE_TOP`
+            // evitan apilar instancias de MainActivity si el chico ya
+            // la tenía abierta.
+            BlockOverlayService.hide(context)
+            val intent = Intent(
+                Intent.ACTION_VIEW,
+                Uri.parse("parentalcontrol://request-extra-time?pkg=$packageName")
+            ).apply {
+                setPackage(context.packageName)
+                addFlags(
+                    Intent.FLAG_ACTIVITY_NEW_TASK or
+                        Intent.FLAG_ACTIVITY_CLEAR_TOP or
+                        Intent.FLAG_ACTIVITY_SINGLE_TOP
+                )
+                component = android.content.ComponentName(
+                    context,
+                    com.tudominio.parentalcontrol.MainActivity::class.java
+                )
+            }
+            context.startActivity(intent)
         }
 
         // Ir a home
@@ -252,11 +279,31 @@ class EnforcementController(
 
     /**
      * Callback cuando el usuario pide permiso (T28).
+     *
+     * Wired inline in [handleBlocked] — the deeplink
+     * `parentalcontrol://request-extra-time?pkg=…` is fired from there
+     * because it needs the `packageName` and the `Context` already in
+     * scope. Kept as a private hook in case a future caller needs the
+     * intent built standalone (e.g. a deep-link shortcut from a
+     * notification action).
      */
-    private fun onPermissionRequested(packageName: String) {
-        // TODO: Implementar flujo de tiempo extra (T28)
-        // Por ahora, solo registrar la solicitud
-    }
+    @Suppress("unused")
+    private fun buildRequestExtraTimeIntent(packageName: String): Intent =
+        Intent(
+            Intent.ACTION_VIEW,
+            Uri.parse("parentalcontrol://request-extra-time?pkg=$packageName")
+        ).apply {
+            setPackage(context.packageName)
+            addFlags(
+                Intent.FLAG_ACTIVITY_NEW_TASK or
+                    Intent.FLAG_ACTIVITY_CLEAR_TOP or
+                    Intent.FLAG_ACTIVITY_SINGLE_TOP
+            )
+            component = android.content.ComponentName(
+                context,
+                com.tudominio.parentalcontrol.MainActivity::class.java
+            )
+        }
 
     /**
      * Reevalúa cuando el uso cruza un umbral.

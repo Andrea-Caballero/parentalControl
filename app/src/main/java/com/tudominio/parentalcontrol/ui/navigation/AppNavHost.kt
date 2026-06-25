@@ -19,10 +19,11 @@ import dagger.hilt.android.EntryPointAccessors
  *
  * Lives in `ui/navigation/` (not next to `MainActivity`) so the activity
  * stays focused on lifecycle + deeplink plumbing. The activity reads its
- * own `MutableState<String?>` for [prefilledPairingCode] and forwards
- * the current value here; this composable then resolves the auth state,
- * the Hilt-provided singletons (via [EntryPointAccessors] / `hiltViewModel`),
- * and the device id, and feeds everything to [NavGraph] as parameters.
+ * own `MutableState<String?>` for [prefilledPairingCode] and
+ * [pendingExtraTimePackage] and forwards the current value here; this
+ * composable then resolves the auth state, the Hilt-provided singletons
+ * (via [EntryPointAccessors] / `hiltViewModel`), and the device id, and
+ * feeds everything to [NavGraph] as parameters.
  *
  * The wiring is hoisted out of `MainActivity.onCreate` because:
  *  - `hiltViewModel<>()` requires a Compose context, and `onCreate` is
@@ -35,11 +36,19 @@ import dagger.hilt.android.EntryPointAccessors
  * [onPairingComplete] is invoked by [NavGraph] when `PairingScreen`
  * reports success. The activity wires this to `recreate()` so the next
  * composition picks up the freshly persisted pairing state.
+ *
+ * [onExtraTimeConsumed] is invoked by [NavGraph] when `ExtraTimeScreen`
+ * finishes (back, request sent, or error) so the activity clears the
+ * pending-extra-time state — otherwise the next composition would
+ * re-route to ExtraTime on every recreation. Without this, an activity
+ * `recreate()` (e.g. after pairing) would replay the deeplink forever.
  */
 @Composable
 fun AppNavHost(
     prefilledPairingCode: String?,
-    onPairingComplete: () -> Unit
+    pendingExtraTimePackage: String?,
+    onPairingComplete: () -> Unit,
+    onExtraTimeConsumed: () -> Unit
 ) {
     val context = LocalContext.current
     val authManager = remember { DeviceAuthManager.getInstance(context) }
@@ -61,6 +70,7 @@ fun AppNavHost(
         isPaired = isPaired,
         isChildDevice = isChildDevice,
         prefilledPairingCode = prefilledPairingCode,
+        pendingExtraTimePackage = pendingExtraTimePackage,
         parentViewModel = hiltViewModel<ParentViewModel>(),
         appsViewModel = hiltViewModel<AppsViewModel>(),
         pairingViewModel = hiltViewModel<PairingViewModel>(),
@@ -68,7 +78,8 @@ fun AppNavHost(
         copyManager = copyManager,
         timeExtraRepository = timeExtraRepository,
         deviceId = deviceId,
-        onPairingComplete = onPairingComplete
+        onPairingComplete = onPairingComplete,
+        onExtraTimeConsumed = onExtraTimeConsumed
     )
 }
 

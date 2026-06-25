@@ -52,6 +52,24 @@
             android:host="pair" />
       </intent-filter>
 
+      <!-- T28: deeplink for "Pedir permiso" button in BlockOverlayService.
+           The overlay (a Service, not an Activity) can't navigate inside
+           the Compose graph directly; instead it fires this VIEW intent
+           and MainActivity picks it up to route to ExtraTimeScreen.
+           Optional query param `pkg=<package>` is informational context
+           for the screen (the grant is device-wide, see
+           TimeExtraRepository.createTimeRequest). -->
+      <intent-filter>
+        <action android:name="android.intent.action.VIEW" />
+
+        <category android:name="android.intent.category.DEFAULT" />
+        <category android:name="android.intent.category.BROWSABLE" />
+
+        <data
+            android:scheme="parentalcontrol"
+            android:host="request-extra-time" />
+      </intent-filter>
+
     </activity>
 
       <service

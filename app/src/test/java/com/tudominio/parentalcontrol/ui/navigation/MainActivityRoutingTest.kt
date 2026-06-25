@@ -14,8 +14,11 @@ import java.io.File
  *  - `MainActivity.setContent { ... }` body SHALL be ≤ 5 lines — the
  *    activity is for lifecycle + deeplink plumbing only; routing details
  *    are delegated to [NavGraph].
- *  - `handlePairingDeeplink`, `enableEdgeToEdge`, and `onNewIntent`
- *    handling SHALL remain in `MainActivity` (per the spec).
+ *  - `handleDeeplink` (renamed from `handlePairingDeeplink` when T28
+ *    of `overlay-to-extratime` added a second deeplink — the helper
+ *    now dispatches both `parentalcontrol://pair` and
+ *    `parentalcontrol://request-extra-time`), `enableEdgeToEdge`, and
+ *    `onNewIntent` handling SHALL remain in `MainActivity` (per the spec).
  *
  * The tests parse the file as plain text — Robolectric / Compose are not
  * involved. This is a `testDebugUnitTest` unit test that gives fast
@@ -123,10 +126,17 @@ class MainActivityRoutingTest {
 
     @Test
     fun main_activity_retains_handle_pairing_deeplink_helper() {
+        // T28 renamed `handlePairingDeeplink` → `handleDeeplink` because
+        // the helper now dispatches two deeplinks (`pair` and
+        // `request-extra-time`), not just pairing. The test name is kept
+        // for spec traceability — the spec PR is
+        // `align-with-guia-fedora44` PR 4 — and updated to assert the
+        // new name.
         val content = mainActivity.readText()
         assertTrue(
-            "MainActivity must keep the `handlePairingDeeplink` helper (per the spec)",
-            content.contains("handlePairingDeeplink")
+            "MainActivity must keep the deeplink dispatcher helper (per the spec; " +
+                "renamed to `handleDeeplink` in T28 because it now handles two deeplinks)",
+            content.contains("handleDeeplink")
         )
         assertTrue(
             "MainActivity must override onNewIntent so warm-start deeplinks update the pairing code",

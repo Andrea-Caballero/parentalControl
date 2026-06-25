@@ -27,17 +27,19 @@ import org.robolectric.annotation.Config
  *
  * PR 4 of `align-with-guia-fedora44` extracted the top-level `when` block
  * from `MainActivity` into a dedicated `@Composable fun NavGraph(...)`.
- * Per the `app-entry-routing` spec, the routing depends on:
+ * Per the `app-entry-routing` spec (extended by T28 of `overlay-to-extratime`),
+ * the routing depends on:
  *
- *   - `isPaired == false`         → [OnboardingScreen]  (unpaired device)
- *   - `isPaired && isChildDevice` → [ChildStatusScreen] (paired child)
- *   - `isPaired && !isChildDevice`→ [DashboardScreen]   (paired parent)
+ *   - `isPaired == false`                            → [OnboardingScreen]  (unpaired device)
+ *   - `isPaired && isChildDevice`                    → [ChildStatusScreen] (paired child)
+ *   - `isPaired && !isChildDevice`                   → [DashboardScreen]   (paired parent)
+ *   - `pendingExtraTimePackage != null` (T28)        → [ExtraTimeScreen]   (overlay deeplink)
  *
  * Two layers of tests pin the contract:
  *
  *   1. **Pure-function tests** for [resolveInitialRoute]. The decision is
- *      a 3-way branch on two booleans, so the pure function gives the
- *      clearest possible assertion and is the primary regression net.
+ *      a 4-way branch, so the pure function gives the clearest possible
+ *      assertion and is the primary regression net.
  *
  *   2. **Compose / Robolectric tests** for [NavGraph] itself. These pass
  *      mock ViewModels + managers to the composable so the test does not
@@ -102,7 +104,7 @@ class NavGraphTest {
     }
 
     // -----------------------------------------------------------------
-    // 1. Pure-function tests: resolveInitialRoute covers the 3 branches
+    // 1. Pure-function tests: resolveInitialRoute covers the 4 branches
     // -----------------------------------------------------------------
 
     @Test
@@ -133,6 +135,51 @@ class NavGraphTest {
         )
     }
 
+    // T28: pendingExtraTimePackage overrides the natural initial route
+    // when the device is paired, regardless of role (the overlay only
+    // appears on child devices, but the routing contract treats both
+    // branches uniformly — a parent device would land on ExtraTime if
+    // it ever received the deeplink, which is harmless).
+
+    @Test
+    fun resolveInitialRoute_pendingExtraTimeChildDevice_returnsExtraTime() {
+        assertEquals(
+            NavRoute.ExtraTime,
+            resolveInitialRoute(
+                isPaired = true,
+                isChildDevice = true,
+                pendingExtraTimePackage = "com.instagram.android"
+            )
+        )
+    }
+
+    @Test
+    fun resolveInitialRoute_pendingExtraTimeParentDevice_returnsExtraTime() {
+        assertEquals(
+            NavRoute.ExtraTime,
+            resolveInitialRoute(
+                isPaired = true,
+                isChildDevice = false,
+                pendingExtraTimePackage = "com.instagram.android"
+            )
+        )
+    }
+
+    @Test
+    fun resolveInitialRoute_pendingExtraTimeUnpairedDevice_returnsOnboarding() {
+        // Edge case: if the device is NOT paired, the pending request
+        // is dropped (no parent link exists to grant against). The
+        // user lands on Onboarding as usual — the deeplink is a no-op.
+        assertEquals(
+            NavRoute.Onboarding,
+            resolveInitialRoute(
+                isPaired = false,
+                isChildDevice = false,
+                pendingExtraTimePackage = "com.instagram.android"
+            )
+        )
+    }
+
     // -----------------------------------------------------------------
     // 2. Compose tests: NavGraph composes the correct screen
     // -----------------------------------------------------------------
@@ -145,6 +192,7 @@ class NavGraphTest {
                     isPaired = false,
                     isChildDevice = false,
                     prefilledPairingCode = null,
+                    pendingExtraTimePackage = null,
                     parentViewModel = parentViewModel,
                     appsViewModel = appsViewModel,
                     pairingViewModel = pairingViewModel,
@@ -152,7 +200,8 @@ class NavGraphTest {
                     copyManager = copyManager,
                     timeExtraRepository = timeExtraRepository,
                     deviceId = "",
-                    onPairingComplete = { }
+                    onPairingComplete = { },
+                    onExtraTimeConsumed = { }
                 )
             }
         }
@@ -170,6 +219,7 @@ class NavGraphTest {
                     isPaired = true,
                     isChildDevice = true,
                     prefilledPairingCode = null,
+                    pendingExtraTimePackage = null,
                     parentViewModel = parentViewModel,
                     appsViewModel = appsViewModel,
                     pairingViewModel = pairingViewModel,
@@ -177,7 +227,8 @@ class NavGraphTest {
                     copyManager = copyManager,
                     timeExtraRepository = timeExtraRepository,
                     deviceId = "test-device",
-                    onPairingComplete = { }
+                    onPairingComplete = { },
+                    onExtraTimeConsumed = { }
                 )
             }
         }
@@ -194,6 +245,7 @@ class NavGraphTest {
                     isPaired = true,
                     isChildDevice = false,
                     prefilledPairingCode = null,
+                    pendingExtraTimePackage = null,
                     parentViewModel = parentViewModel,
                     appsViewModel = appsViewModel,
                     pairingViewModel = pairingViewModel,
@@ -201,12 +253,42 @@ class NavGraphTest {
                     copyManager = copyManager,
                     timeExtraRepository = timeExtraRepository,
                     deviceId = "",
-                    onPairingComplete = { }
+                    onPairingComplete = { },
+                    onExtraTimeConsumed = { }
                 )
             }
         }
 
         // DashboardScreen's top bar reads "Control Parental".
         composeTestRule.onNodeWithText("Control Parental").assertExists()
+    }
+
+    @Test
+    fun navGraph_pendingExtraTime_composesExtraTimeScreen() {
+        composeTestRule.setContent {
+            ParentalControlTheme {
+                NavGraph(
+                    isPaired = true,
+                    isChildDevice = true,
+                    prefilledPairingCode = null,
+                    pendingExtraTimePackage = "com.instagram.android",
+                    parentViewModel = parentViewModel,
+                    appsViewModel = appsViewModel,
+                    pairingViewModel = pairingViewModel,
+                    childStatusViewModel = childStatusViewModel,
+                    copyManager = copyManager,
+                    timeExtraRepository = timeExtraRepository,
+                    deviceId = "test-device",
+                    onPairingComplete = { },
+                    onExtraTimeConsumed = { }
+                )
+            }
+        }
+
+        // T28: when arriving via the overlay deeplink, ExtraTimeScreen
+        // shows the blocked-package context card. Asserting on the
+        // package string pins the wiring end-to-end without spinning
+        // up the full form / throttling / outbox stack.
+        composeTestRule.onNodeWithText("com.instagram.android").assertExists()
     }
 }

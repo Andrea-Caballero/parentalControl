@@ -35,7 +35,18 @@ fun ExtraTimeScreen(
     onBack: () -> Unit,
     onRequestSent: (String) -> Unit,
     onError: (String) -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    /**
+     * T28 — Optional package the child was blocked on when they opened
+     * this screen via the `parentalcontrol://request-extra-time?pkg=…`
+     * deeplink. The grant is device-wide (see
+     * [TimeExtraRepository.createTimeRequest]) so this is purely
+     * informational — shown as a "Bloqueado en: X" badge to give the
+     * child context for why they're asking. When `null` the badge is
+     * hidden (the child opened the screen the normal way, from
+     * `ChildStatusScreen`, with no specific app in mind).
+     */
+    prefilledPackage: String? = null
 ) {
     val scope = rememberCoroutineScope()
     val requestCopy = copyManager.getRequestTime()
@@ -68,6 +79,45 @@ fun ExtraTimeScreen(
                 .verticalScroll(rememberScrollState())
                 .padding(24.dp)
         ) {
+            // T28: contexto de la app bloqueada cuando el chico llegó acá
+            // desde el deeplink `parentalcontrol://request-extra-time?pkg=…`.
+            // No se manda al backend (el grant es device-wide); sólo
+            // informa al chico por qué está pidiendo.
+            if (!prefilledPackage.isNullOrBlank()) {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.errorContainer
+                    )
+                ) {
+                    Row(
+                        modifier = Modifier.padding(16.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            Icons.Default.Block,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.onErrorContainer
+                        )
+                        Spacer(modifier = Modifier.width(12.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "Bloqueado en",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onErrorContainer
+                            )
+                            Text(
+                                text = prefilledPackage,
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.SemiBold,
+                                color = MaterialTheme.colorScheme.onErrorContainer
+                            )
+                        }
+                    }
+                }
+                Spacer(modifier = Modifier.height(16.dp))
+            }
+
             // Indicador de cuánto tiempo puedes pedir
             Card(
                 modifier = Modifier.fillMaxWidth(),

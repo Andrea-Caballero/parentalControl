@@ -5,6 +5,7 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.runtime.Composable
 import androidx.compose.runtime.mutableStateOf
 import com.tudominio.parentalcontrol.ui.navigation.AppNavHost
 import com.tudominio.parentalcontrol.ui.theme.ParentalControlTheme
@@ -16,42 +17,63 @@ import dagger.hilt.android.AndroidEntryPoint
  * Per the `app-entry-routing` spec (PR 4 of `align-with-guia-fedora44`),
  * this activity only owns lifecycle + deeplink plumbing. The actual
  * route selection lives in `ui.navigation.NavGraph`, invoked via
- * [AppNavHost]. [prefilledPairingCode] is hoisted here so the
- * `parentalcontrol://pair?code=...` deeplink prefill survives both
- * `onCreate` (cold start) and `onNewIntent` (warm start) without an
- * activity restart.
+ * [AppNavHost]. Two deeplink payloads are hoisted here so they survive
+ * both `onCreate` (cold start) and `onNewIntent` (warm start) without
+ * an activity restart:
+ *
+ *   - [prefilledPairingCode]  ← `parentalcontrol://pair?code=…`
+ *   - [pendingExtraTimePackage] ← `parentalcontrol://request-extra-time?pkg=…`
+ *     (T28 — fired by `BlockOverlayService` when the child taps
+ *     "Pedir permiso"; the package name is informational context for
+ *     `ExtraTimeScreen` because the actual grant is device-wide).
+ *
+ * `MainActivity.setContent { ... }` is capped at 5 lines per the spec
+ * (see `MainActivityRoutingTest`). The wiring is therefore delegated
+ * to [ParentalControlApp], a private @Composable helper that closes
+ * over the activity's hoisted state and the lifecycle callbacks.
  */
 @AndroidEntryPoint
 class MainActivity : ComponentActivity() {
 
     private val prefilledPairingCode = mutableStateOf<String?>(null)
+    private val pendingExtraTimePackage = mutableStateOf<String?>(null)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
-        handlePairingDeeplink(intent)
+        handleDeeplink(intent)
         setContent {
             ParentalControlTheme {
-                AppNavHost(prefilledPairingCode = prefilledPairingCode.value, onPairingComplete = ::restartActivity)
+                ParentalControlApp()
             }
         }
     }
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
-        handlePairingDeeplink(intent)
+        handleDeeplink(intent)
     }
 
     /**
-     * Extracts the `code` query parameter from a `parentalcontrol://pair?code=…`
-     * intent and stashes it in [prefilledPairingCode] for `PairingScreen` to
-     * pick up. No-op for intents that don't match the deeplink shape.
+     * Dispatches to the matching deeplink handler based on the URI host.
+     * Originally named `handlePairingDeeplink` (PR 4 of `align-with-guia-fedora44`);
+     * renamed to `handleDeeplink` when T28 of `overlay-to-extratime` added
+     * a second deeplink (`request-extra-time`). The test
+     * `MainActivityRoutingTest#main_activity_retains_handle_pairing_deeplink_helper`
+     * is updated to assert on the new name.
+     *
+     * Adding a new deeplink means one more branch here + one more intent-filter
+     * in `AndroidManifest.xml` + one more state field above.
      */
-    private fun handlePairingDeeplink(intent: Intent?) {
+    private fun handleDeeplink(intent: Intent?) {
         if (intent?.action != Intent.ACTION_VIEW) return
         val data = intent.data ?: return
-        if (data.scheme != "parentalcontrol" || data.host != "pair") return
-        prefilledPairingCode.value = data.getQueryParameter("code")
+        if (data.scheme != "parentalcontrol") return
+        when (data.host) {
+            "pair" -> prefilledPairingCode.value = data.getQueryParameter("code")
+            "request-extra-time" -> pendingExtraTimePackage.value =
+                data.getQueryParameter("pkg") ?: ""
+        }
     }
 
     /**
@@ -62,5 +84,21 @@ class MainActivity : ComponentActivity() {
      */
     private fun restartActivity() {
         recreate()
+    }
+
+    /**
+     * @Composable wiring helper. Kept inside `MainActivity` (not in
+     * another file) so the activity owns the close-over of its hoisted
+     * state and lifecycle callbacks. Extracted from `setContent { ... }`
+     * so the `setContent` body stays at the spec's ≤ 5-line cap.
+     */
+    @Composable
+    private fun ParentalControlApp() {
+        AppNavHost(
+            prefilledPairingCode = prefilledPairingCode.value,
+            pendingExtraTimePackage = pendingExtraTimePackage.value,
+            onPairingComplete = ::restartActivity,
+            onExtraTimeConsumed = { pendingExtraTimePackage.value = null }
+        )
     }
 }

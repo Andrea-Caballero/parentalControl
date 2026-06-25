@@ -36,25 +36,30 @@ import com.tudominio.parentalcontrol.viewmodel.ParentViewModel
  *  - [NavRoute.Dashboard]    → paired parent (initial), or unpaired user
  *                              who picked "parent" on Onboarding.
  *  - [NavRoute.ChildStatus]  → paired child (initial).
- *  - [NavRoute.ExtraTime]    → child requested extra time; returns to
- *                              ChildStatus when the request is sent or
- *                              cancelled.
+ *  - [NavRoute.ExtraTime]    → child requested extra time (T28 — also
+ *                              reached when `BlockOverlayService` fires
+ *                              the `parentalcontrol://request-extra-time`
+ *                              deeplink); returns to ChildStatus when
+ *                              the request is sent or cancelled.
  *
  * Every ViewModel and manager is passed as a parameter so `MainActivity`
  * resolves them via `hiltViewModel()` / Hilt singletons and tests can
  * inject mocks directly (no Hilt graph needed in the Robolectric tests).
  *
- * `prefilledPairingCode` is hoisted state in `MainActivity` so the
- * `parentalcontrol://pair?code=...` deeplink survives both `onCreate`
- * and `onNewIntent`. `onPairingComplete` is the activity-level callback
- * the [PairingScreen] invokes once pairing succeeds; in `MainActivity`
- * it calls `recreate()` so the device's auth state is re-read from disk.
+ * `prefilledPairingCode` and `pendingExtraTimePackage` are hoisted
+ * state in `MainActivity` so the corresponding deeplinks survive both
+ * `onCreate` and `onNewIntent`. `onPairingComplete` /
+ * `onExtraTimeConsumed` are the activity-level callbacks
+ * `PairingScreen` / `ExtraTimeScreen` invoke on terminal states; in
+ * `MainActivity` they call `recreate()` or clear the pending state so
+ * the next composition picks up the freshly persisted state.
  */
 @Composable
 fun NavGraph(
     isPaired: Boolean,
     isChildDevice: Boolean,
     prefilledPairingCode: String?,
+    pendingExtraTimePackage: String?,
     parentViewModel: ParentViewModel,
     appsViewModel: AppsViewModel,
     pairingViewModel: PairingViewModel,
@@ -62,9 +67,24 @@ fun NavGraph(
     copyManager: CopyManager,
     timeExtraRepository: TimeExtraRepository,
     deviceId: String,
-    onPairingComplete: () -> Unit
+    onPairingComplete: () -> Unit,
+    onExtraTimeConsumed: () -> Unit
 ) {
-    var route by remember { mutableStateOf(resolveInitialRoute(isPaired, isChildDevice)) }
+    // `remember(key)` resets the route when the pending deeplink arrives.
+    // Without the key, the `var route by remember { ... }` would only
+    // evaluate the initial branch once and subsequent deeplinks would
+    // be silently ignored (the user would stay on whatever screen was
+    // already rendered). The key is the package name itself because:
+    //   - `null` is the resting state (don't re-route)
+    //   - a fresh non-null value means "go to ExtraTime now"
+    // After the screen finishes, the activity clears the state via
+    // [onExtraTimeConsumed] (back to `null`), so the next composition
+    // lands on the natural initial route.
+    var route by remember(pendingExtraTimePackage) {
+        mutableStateOf(
+            resolveInitialRoute(isPaired, isChildDevice, pendingExtraTimePackage)
+        )
+    }
 
     when (route) {
         NavRoute.Onboarding -> OnboardingScreen(
@@ -93,9 +113,16 @@ fun NavGraph(
             copyManager = copyManager,
             repository = timeExtraRepository,
             deviceId = deviceId,
-            onBack = { route = NavRoute.ChildStatus },
-            onRequestSent = { route = NavRoute.ChildStatus },
-            onError = { }
+            prefilledPackage = pendingExtraTimePackage,
+            onBack = {
+                route = NavRoute.ChildStatus
+                onExtraTimeConsumed()
+            },
+            onRequestSent = {
+                route = NavRoute.ChildStatus
+                onExtraTimeConsumed()
+            },
+            onError = { onExtraTimeConsumed() }
         )
     }
 }
@@ -119,13 +146,27 @@ internal enum class NavRoute {
 /**
  * Pure-function decision for the entry-point route.
  *
- * Extracted from the composable so tests can pin the 3-way branch with
+ * Extracted from the composable so tests can pin the 4-way branch with
  * trivial assertions — no Compose, no Hilt, no Robolectric needed for
  * the routing contract itself. The Compose test in [NavGraphTest]
  * complements this by proving the chosen route actually renders.
+ *
+ * T28: `pendingExtraTimePackage` overrides the natural initial route
+ * so the `parentalcontrol://request-extra-time?pkg=…` deeplink (fired
+ * by `BlockOverlayService`) routes the child straight to
+ * `ExtraTimeScreen` without bouncing through `ChildStatus` first.
+ *
+ * Edge case: if the device is NOT paired yet, the pending extra-time
+ * request is dropped — there's nothing for the parent to grant because
+ * no pairing link exists. The user lands on Onboarding as usual.
  */
-internal fun resolveInitialRoute(isPaired: Boolean, isChildDevice: Boolean): NavRoute = when {
+internal fun resolveInitialRoute(
+    isPaired: Boolean,
+    isChildDevice: Boolean,
+    pendingExtraTimePackage: String? = null
+): NavRoute = when {
     !isPaired -> NavRoute.Onboarding
+    pendingExtraTimePackage != null -> NavRoute.ExtraTime
     isChildDevice -> NavRoute.ChildStatus
     else -> NavRoute.Dashboard
 }

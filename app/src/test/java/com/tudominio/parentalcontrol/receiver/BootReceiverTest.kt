@@ -10,6 +10,7 @@ import androidx.work.WorkManager
 import androidx.work.testing.WorkManagerTestInitHelper
 import com.tudominio.parentalcontrol.auth.DeviceAuthManager
 import com.tudominio.parentalcontrol.auth.StoredSession
+import com.tudominio.parentalcontrol.workers.HeartbeatWorker
 import com.tudominio.parentalcontrol.workers.OutboxDrainer
 import com.tudominio.parentalcontrol.workers.ReconciliationWorker
 import com.tudominio.parentalcontrol.workers.SyncWorker
@@ -23,6 +24,7 @@ import io.mockk.verify
 import io.mockk.verifyOrder
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -111,6 +113,35 @@ class BootReceiverTest {
             "Expected the sync_work_after_boot chain (3 steps) to be enqueued when restoreSession returns a session",
             3,
             infos.size
+        )
+
+        // Pin the SET of workers in the chain (not the order, which
+        // WorkManager doesn't guarantee on a `getWorkInfosForUniqueWork`
+        // query). The public `WorkInfo` API doesn't expose the worker
+        // class, so we identify each step by its unique tag (each
+        // `WorkScheduler.scheduleSyncAfterBoot` step adds its own
+        // `WORK_NAME` tag). Asserting the set catches the historical
+        // drift where `ReconciliationWorker.WORK_NAME` was substituted
+        // for `HeartbeatWorker.WORK_NAME` (the design.md diagram and
+        // code always said Heartbeat; only the spec text wrote
+        // Reconciliation). If anyone swaps the chain contents again,
+        // this test fails with a clear diff showing which worker was
+        // added or removed.
+        val infoByTag = infos.flatMap { info -> info.tags.map { it to info } }.toMap()
+        assertNotNull(
+            "sync_work_after_boot chain must contain a SyncWorker step (tag=${SyncWorker.TAG_AFTER_BOOT}). " +
+                "Got tags: ${infos.flatMap { it.tags }}",
+            infoByTag[SyncWorker.TAG_AFTER_BOOT]
+        )
+        assertNotNull(
+            "sync_work_after_boot chain must contain a HeartbeatWorker step (tag=${HeartbeatWorker.WORK_NAME}). " +
+                "Got tags: ${infos.flatMap { it.tags }}",
+            infoByTag[HeartbeatWorker.WORK_NAME]
+        )
+        assertNotNull(
+            "sync_work_after_boot chain must contain an OutboxDrainer step (tag=${OutboxDrainer.WORK_NAME}). " +
+                "Got tags: ${infos.flatMap { it.tags }}",
+            infoByTag[OutboxDrainer.WORK_NAME]
         )
     }
 

@@ -113,12 +113,23 @@ object WorkScheduler {
             .addTag(SyncWorker.TAG_AFTER_BOOT)
             .build()
 
+        // Each chain step carries its own WORK_NAME tag so observers can
+        // query the WorkManager database by tag and identify which worker
+        // produced each `WorkInfo` (the public `WorkInfo` API does not
+        // expose the worker class). The tags are harmless in production
+        // (they only add query affordances) and pin the chain shape in
+        // BootReceiverTest — see SUGGESTION #3 of
+        // `fix-supabase-client-provider-legacy-mock-gate/verify-report.md`
+        // for the historical spec/code drift this guards against.
+
         val heartbeatRequest = OneTimeWorkRequestBuilder<HeartbeatWorker>()
             .setConstraints(constraints)
+            .addTag(HeartbeatWorker.WORK_NAME)
             .build()
 
         val outboxRequest = OneTimeWorkRequestBuilder<OutboxDrainer>()
             .setConstraints(constraints)
+            .addTag(OutboxDrainer.WORK_NAME)
             .build()
 
         WorkManager.getInstance(context)

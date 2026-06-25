@@ -21,17 +21,19 @@ Defines the contract for WorkManager jobs scheduled in response to `BOOT_COMPLET
 - WHEN `BootReceiver.onReceive` runs
 - THEN `scheduleSyncAfterBoot(context)` SHALL NOT be invoked
 - AND `WorkScheduler.cancelWork(context, "${SyncWorker.WORK_NAME}_after_boot")` SHALL be called
-- AND `WorkScheduler.cancelWork(context, ReconciliationWorker.WORK_NAME)` SHALL be called
-- AND `WorkScheduler.cancelWork(context, OutboxDrainer.WORK_NAME)` SHALL be called.
+- AND `WorkScheduler.cancelWork(context, ReconciliationWorker.WORK_NAME)` SHALL NOT be called
+- AND `WorkScheduler.cancelWork(context, OutboxDrainer.WORK_NAME)` SHALL NOT be called.
 
 ### Requirement: scheduleSyncAfterBoot enqueues the post-boot chain
-`scheduleSyncAfterBoot(context)` MUST enqueue `${SyncWorker.WORK_NAME}_after_boot` as unique work and MUST chain `ReconciliationWorker.WORK_NAME` and `OutboxDrainer.WORK_NAME` to run after the initial sync. It MUST NOT be invoked when no session is present at boot.
+`scheduleSyncAfterBoot(context)` MUST enqueue `${SyncWorker.WORK_NAME}_after_boot` as unique work and MUST chain `HeartbeatWorker.WORK_NAME` and `OutboxDrainer.WORK_NAME` to run after the initial sync. It MUST NOT be invoked when no session is present at boot.
+
+The chain ordering (sync → heartbeat → outbox) is a composed pipeline: `SyncWorker` pulls the server state, `HeartbeatWorker` reports the post-sync liveness signal back to the server, and `OutboxDrainer` flushes any local writes queued during the offline period. The chain runs as a `beginUniqueWork(...).then(...).then(...)` flow, so a failure in any step terminates the rest of the chain. The chain is one-shot (`OneTimeWorkRequestBuilder`), not periodic; periodic schedules for `HeartbeatWorker` and `OutboxDrainer` are set up separately by `scheduleAllPeriodicWork` and are NOT touched by the boot path.
 
 #### Scenario: Chain ordering at boot with a session
 - GIVEN a session is restored at boot
 - WHEN `scheduleSyncAfterBoot` is invoked
 - THEN `${SyncWorker.WORK_NAME}_after_boot` SHALL be enqueued first
-- AND `ReconciliationWorker.WORK_NAME` SHALL be enqueued to run after sync success
+- AND `HeartbeatWorker.WORK_NAME` SHALL be enqueued to run after sync success
 - AND `OutboxDrainer.WORK_NAME` SHALL be enqueued to run after sync success.
 
 #### Scenario: scheduleSyncAfterBoot is not called without a session

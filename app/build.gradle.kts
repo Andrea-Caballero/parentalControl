@@ -32,6 +32,24 @@ plugins {
 val debugUseMockSupabase: String =
     if (project.findProperty("useRealSupabase") == "true") "false" else "true"
 
+// `enableSharedMock=true` switches the app from the in-process
+// `MockSupabaseEngine` (per-process static fixtures) to a real OkHttp
+// client pointing at a developer-run local server (see
+// `tools/shared-mock-server/server.py`). This lets two Android devices
+// (phone + emulator) actually exchange pairing codes and see each other
+// in the parent's device list — something the static fixtures can't do
+// because each process has its own copy.
+//
+// Default off; activate with:
+//   ./gradlew installDebug -PenableSharedMock=true -PsharedMockUrl=http://localhost:8787
+// On a real device, set `-PsharedMockUrl=http://<host-ip>:8787` and use
+// `adb reverse tcp:8787 tcp:8787` so the device can reach the server over
+// USB.
+val debugUseSharedMock: String =
+    if (project.findProperty("enableSharedMock") == "true") "true" else "false"
+val debugSharedMockUrl: String =
+    (project.findProperty("sharedMockUrl") as String?) ?: "http://10.0.2.2:8787"
+
 android {
     namespace = "com.tudominio.parentalcontrol"
     compileSdk = 36
@@ -82,6 +100,12 @@ android {
             // `gradle.properties`). See spec scenario "Build reads
             // USE_MOCK_SUPABASE from local.properties under debug".
             buildConfigField("boolean", "USE_MOCK_SUPABASE", debugUseMockSupabase)
+            // Shared-mock-server opt-in for cross-device pairing tests.
+            // Both fields default to off / localhost so a stale build
+            // doesn't accidentally point at a server that isn't running.
+            // See the long-form note above `debugUseSharedMock` for usage.
+            buildConfigField("boolean", "USE_SHARED_MOCK", debugUseSharedMock)
+            buildConfigField("String", "SHARED_MOCK_URL", "\"$debugSharedMockUrl\"")
         }
     }
 

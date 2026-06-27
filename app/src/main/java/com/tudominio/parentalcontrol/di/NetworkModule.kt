@@ -41,10 +41,39 @@ object NetworkModule {
     @Singleton
     @SupabaseClient
     fun provideHttpClient(@ApplicationContext context: Context): HttpClient {
-        return if (BuildConfig.USE_MOCK_SUPABASE) {
-            MockSupabaseEngine(context).httpClient
-        } else {
-            buildRealHttpClient(context)
+        return when {
+            // Three-way switch mirroring the legacy path in
+            // `SupabaseClientProvider.httpClient`. Order matters: the
+            // shared-mock branch is checked first because it implies a
+            // desire for cross-device behavior, which supersedes the
+            // per-process fixture mock even when both flags are set.
+            BuildConfig.USE_SHARED_MOCK -> buildSharedMockClient()
+            BuildConfig.USE_MOCK_SUPABASE -> MockSupabaseEngine(context).httpClient
+            else -> buildRealHttpClient(context)
+        }
+    }
+
+    /**
+     * Plain OkHttp client for the developer-run shared mock server. No
+     * certificate pinning, no TLS expectations — the server is HTTP-only
+     * and reachable over `adb reverse` (phone) or `10.0.2.2` (emulator).
+     * Kept separate from [buildRealHttpClient] so the secure-client
+     * contract for the real Supabase URL stays untouched.
+     */
+    private fun buildSharedMockClient(): HttpClient {
+        return HttpClient(OkHttp) {
+            install(ContentNegotiation) {
+                json(
+                    Json {
+                        ignoreUnknownKeys = true
+                        isLenient = true
+                    }
+                )
+            }
+            install(HttpTimeout) {
+                requestTimeoutMillis = 30000
+                connectTimeoutMillis = 15000
+            }
         }
     }
 

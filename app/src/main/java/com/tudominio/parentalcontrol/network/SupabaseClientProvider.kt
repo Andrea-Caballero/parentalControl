@@ -39,7 +39,28 @@ class SupabaseClientProvider internal constructor(
     private val injectedClient: HttpClient? = null
 ) {
     companion object {
-        const val SUPABASE_URL = "https://your-project.supabase.co"
+        /**
+         * Base URL for every Supabase call the app makes. Three-way switch
+         * driven by build-time flags:
+         *
+         *   - `USE_SHARED_MOCK=true`  → the developer-run local server
+         *     (`tools/shared-mock-server/server.py`); needed for
+         *     cross-device pairing tests because the in-process mock
+         *     engine can't share state between two Android processes.
+         *   - `USE_MOCK_SUPABASE=true` → placeholder URL kept for
+         *     symmetry; the request never actually reaches it because
+         *     the `MockSupabaseEngine` Ktor `MockEngine` intercepts.
+         *   - otherwise → real Supabase project URL.
+         *
+         * Was `const val` historically — that broke the moment we needed
+         * it to vary per build, because `const val` requires a
+         * compile-time literal. All four callers in this repo use string
+         * interpolation (`"${SUPABASE_URL}/..."`), which evaluates at
+         * runtime, so the switch is safe.
+         */
+        val SUPABASE_URL: String =
+            if (BuildConfig.USE_SHARED_MOCK) BuildConfig.SHARED_MOCK_URL
+            else "https://your-project.supabase.co"
         const val SUPABASE_ANON_KEY = "your-anon-key"
 
         @Volatile
@@ -74,7 +95,23 @@ class SupabaseClientProvider internal constructor(
             // Hilt `@SupabaseClient` binding already honors in `NetworkModule`),
             // so debug builds wired to the mock engine don't surface as
             // `NETWORK_ERROR` against the placeholder Supabase URL.
-            if (BuildConfig.USE_MOCK_SUPABASE) {
+            if (BuildConfig.USE_SHARED_MOCK) {
+                // Shared mock server is reached over plain HTTP on
+                // localhost (or `10.0.2.2` from the emulator). Bypass
+                // `NetworkSecurityConfig` here — its pinning + TLS 1.3
+                // expectations don't apply to a developer-only loopback
+                // server and would reject the connection before the
+                // request even leaves the device.
+                HttpClient(OkHttp) {
+                    install(ContentNegotiation) {
+                        json(this@SupabaseClientProvider.json)
+                    }
+                    install(HttpTimeout) {
+                        requestTimeoutMillis = 30000
+                        connectTimeoutMillis = 15000
+                    }
+                }
+            } else if (BuildConfig.USE_MOCK_SUPABASE) {
                 MockSupabaseEngine(context).httpClient
             } else {
                 val okHttpClient = NetworkSecurityConfig.createSecureOkHttpClient(context)

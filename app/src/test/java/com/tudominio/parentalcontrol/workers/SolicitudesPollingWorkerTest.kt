@@ -6,9 +6,7 @@ import androidx.work.ListenableWorker
 import androidx.work.WorkerFactory
 import androidx.work.WorkerParameters
 import androidx.work.testing.TestListenableWorkerBuilder
-import com.tudominio.parentalcontrol.auth.AuthResult
 import com.tudominio.parentalcontrol.auth.DeviceAuthManager
-import com.tudominio.parentalcontrol.auth.Role
 import com.tudominio.parentalcontrol.data.repository.DeviceListError
 import com.tudominio.parentalcontrol.data.repository.ParentRepository
 import com.tudominio.parentalcontrol.domain.model.RequestStatus
@@ -22,10 +20,6 @@ import io.mockk.mockk
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertFalse
-import org.junit.Assert.assertNotNull
-import org.junit.Assert.assertNull
-import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith

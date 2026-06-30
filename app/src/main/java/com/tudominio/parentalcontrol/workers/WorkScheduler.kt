@@ -15,8 +15,13 @@ object WorkScheduler {
         scheduleHeartbeat(context)
         scheduleOutboxDrainer(context)
         scheduleReconciliation(context)
+        // Spec scenario "scheduleAllPeriodicWork enqueues all four periodic
+        // workers" — SolicitudesPollingWorker runs alongside the existing
+        // three so the Solicitudes tab stays fresh even when the parent
+        // never opens it. See `fix-parent-solicitudes-auto-poll`.
+        scheduleSolicitudesPolling(context)
 
-        Log.d(TAG, "Todos los workers periódicos programados")
+        Log.d(TAG, "Todos los workers periódicos programados (4)")
     }
 
     fun scheduleHeartbeat(context: Context) {
@@ -132,6 +137,43 @@ object WorkScheduler {
             )
 
         Log.d(TAG, "Reconciliación programada")
+    }
+
+    /**
+     * Schedules [SolicitudesPollingWorker] on a 5-minute cadence. Mirrors
+     * [scheduleHeartbeat] but uses `ExistingPeriodicWorkPolicy.KEEP` per
+     * design D3 (the worker is idempotent — replacing its schedule on every
+     * `scheduleAllPeriodicWork` call would be wasteful).
+     *
+     * Spec scenarios covered:
+     *  - "Worker is scheduled with a 5-minute repeat interval"
+     *  - "Existing periodic jobs are not duplicated"
+     */
+    fun scheduleSolicitudesPolling(context: Context) {
+        val constraints = Constraints.Builder()
+            .setRequiredNetworkType(NetworkType.CONNECTED)
+            .build()
+
+        val workRequest = PeriodicWorkRequestBuilder<SolicitudesPollingWorker>(
+            5, TimeUnit.MINUTES
+        )
+            .setConstraints(constraints)
+            .setBackoffCriteria(
+                BackoffPolicy.EXPONENTIAL,
+                WorkRequest.MIN_BACKOFF_MILLIS,
+                TimeUnit.MILLISECONDS
+            )
+            .addTag(SolicitudesPollingWorker.WORK_NAME)
+            .build()
+
+        WorkManager.getInstance(context)
+            .enqueueUniquePeriodicWork(
+                SolicitudesPollingWorker.WORK_NAME,
+                ExistingPeriodicWorkPolicy.KEEP,
+                workRequest
+            )
+
+        Log.d(TAG, "Solicitudes polling programado")
     }
 
     fun scheduleSyncAfterBoot(context: Context) {

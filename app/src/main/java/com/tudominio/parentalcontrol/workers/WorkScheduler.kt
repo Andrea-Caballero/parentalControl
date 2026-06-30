@@ -74,6 +74,37 @@ object WorkScheduler {
         Log.d(TAG, "Outbox drainer programado")
     }
 
+    /**
+     * Fires an immediate one-shot drain of the outbox. Used after enqueuing a
+     * row in places where we don't want to wait for the 15-minute periodic
+     * tick — e.g., when the child taps "Enviar solicitud" on
+     * `ExtraTimeScreen` and we want the parent to see the request within
+     * seconds, not minutes.
+     *
+     * `ExistingWorkPolicy.REPLACE` collapses concurrent taps into a single
+     * drain — the worker re-reads the outbox table on each run, so coalescing
+     * is safe and saves WorkManager scheduling overhead.
+     */
+    fun scheduleOneTimeOutboxDrain(context: Context) {
+        val constraints = Constraints.Builder()
+            .setRequiredNetworkType(NetworkType.CONNECTED)
+            .build()
+
+        val workRequest = OneTimeWorkRequestBuilder<OutboxDrainer>()
+            .setConstraints(constraints)
+            .addTag(OutboxDrainer.WORK_NAME)
+            .build()
+
+        WorkManager.getInstance(context)
+            .enqueueUniqueWork(
+                OutboxDrainer.WORK_NAME_ONESHOT,
+                ExistingWorkPolicy.REPLACE,
+                workRequest,
+            )
+
+        Log.d(TAG, "One-time outbox drainer programado")
+    }
+
     fun scheduleReconciliation(context: Context) {
         val constraints = Constraints.Builder()
             .setRequiredNetworkType(NetworkType.CONNECTED)

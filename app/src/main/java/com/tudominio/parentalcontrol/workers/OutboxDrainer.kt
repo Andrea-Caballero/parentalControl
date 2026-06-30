@@ -38,6 +38,7 @@ class OutboxDrainer @AssistedInject constructor(
     companion object {
         private const val TAG = "OutboxDrainer"
         const val WORK_NAME = "outbox_drain_periodic"
+        const val WORK_NAME_ONESHOT = "outbox_drain_oneshot"
         const val WORK_TAG = "outbox_drain_periodic"
         private const val MAX_RETRY_ATTEMPTS = 10
         private const val PENDING_BATCH_SIZE = 50

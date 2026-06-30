@@ -8,6 +8,7 @@ import com.tudominio.parentalcontrol.data.model.TimeRequestEntity
 import com.tudominio.parentalcontrol.outbox.OutboxManager
 import com.tudominio.parentalcontrol.time.DefaultTimeProvider
 import com.tudominio.parentalcontrol.time.TimeProvider
+import com.tudominio.parentalcontrol.workers.WorkScheduler
 import dagger.hilt.EntryPoint
 import dagger.hilt.InstallIn
 import dagger.hilt.android.EntryPointAccessors
@@ -111,11 +112,18 @@ class TimeExtraRepository @Inject constructor(
             saveLastRequestTime(now)
 
             // Intentar enviar al servidor (offline-safe)
-            val sent = outboxManager.enqueueTimeRequest(request)
+            val enqueued = outboxManager.enqueueTimeRequest(request)
 
-            Log.d(TAG, "Time request created: $requestId, sent=$sent")
+            // Trigger an immediate one-shot OutboxDrainer so the parent sees
+            // the request within seconds, not at the next 15-min periodic
+            // tick. `enqueueUniqueWork(REPLACE)` collapses concurrent taps.
+            if (enqueued) {
+                WorkScheduler.scheduleOneTimeOutboxDrain(context)
+            }
 
-            return TimeRequestResult.Success(requestId, isSent = sent)
+            Log.d(TAG, "Time request created: $requestId, enqueued=$enqueued")
+
+            return TimeRequestResult.Success(requestId, isSent = enqueued)
         } catch (e: Exception) {
             Log.e(TAG, "Error creating time request: ${e.message}")
             return TimeRequestResult.Error(e.message ?: "Unknown error")

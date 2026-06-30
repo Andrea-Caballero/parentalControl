@@ -377,7 +377,7 @@ fun ExtraTimeResultScreen(
         Spacer(modifier = Modifier.height(16.dp))
         
         Text(
-            text = "Tus padres recibieron tu solicitud y te avisarán pronto.",
+            text = "Enviamos tu solicitud a tus padres. Te avisaremos cuando la aprueben.",
             style = MaterialTheme.typography.bodyLarge,
             textAlign = TextAlign.Center,
             color = MaterialTheme.colorScheme.onSurfaceVariant

@@ -80,7 +80,7 @@ class OutboxManager @Inject constructor(
             val dedupKey = "time_request_${request.request_id}"
 
             val outboxItem = OutboxEntity(
-                tipo = "time_request",
+                tipo = "TIME_REQUEST",
                 payload_json = payload,
                 dedup_key = dedupKey,
                 created_at = Instant.now().toString(),

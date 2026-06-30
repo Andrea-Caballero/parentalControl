@@ -1,13 +1,23 @@
 package com.tudominio.parentalcontrol.workers
 
+import android.content.Context
+import androidx.test.core.app.ApplicationProvider
+import androidx.work.Configuration
+import androidx.work.WorkInfo
+import androidx.work.WorkManager
+import androidx.work.testing.WorkManagerTestInitHelper
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Assert.assertFalse
-import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertThrows
 import org.junit.Assert.fail
+import org.junit.Before
 import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
 import java.util.concurrent.TimeUnit
 
 /**
@@ -217,5 +227,65 @@ class WorkSchedulerTest {
         // 5 minutes mirrors HeartbeatWorker.
         val intervalMinutes = TimeUnit.MINUTES.toMinutes(5L)
         assertEquals(5L, intervalMinutes)
+    }
+}
+
+/**
+ * Strengthens [WorkSchedulerTest] by driving
+ * `WorkScheduler.scheduleSolicitudesPolling` through the WorkManager
+ * test driver and asserting the resulting [WorkInfo] shape (unique-work
+ * name, tag, state, KEEP-on-second-call). Pattern follows `BootReceiverTest`.
+ */
+@RunWith(RobolectricTestRunner::class)
+@Config(sdk = [33])
+class WorkSchedulerSchedulingTest {
+
+    private lateinit var context: Context
+
+    @Before
+    fun setUp() {
+        context = ApplicationProvider.getApplicationContext()
+        WorkManagerTestInitHelper.initializeTestWorkManager(
+            context,
+            Configuration.Builder().setMinimumLoggingLevel(android.util.Log.DEBUG).build()
+        )
+    }
+
+    @Test
+    fun scheduleSolicitudesPolling_enqueues_unique_periodic_work() {
+        WorkScheduler.scheduleSolicitudesPolling(context)
+
+        val infos = WorkManager.getInstance(context)
+            .getWorkInfosForUniqueWork(SolicitudesPollingWorker.WORK_NAME)
+            .get()
+
+        assertEquals(
+            "scheduleSolicitudesPolling must enqueue exactly one unique periodic entry",
+            1, infos.size
+        )
+        val info = infos[0]
+        assertEquals(
+            "unique periodic work must be ENQUEUED until constraints are met",
+            WorkInfo.State.ENQUEUED, info.state
+        )
+        assertTrue(
+            "tag set must contain SolicitudesPollingWorker.WORK_NAME. Got: ${info.tags}",
+            info.tags.contains(SolicitudesPollingWorker.WORK_NAME)
+        )
+    }
+
+    @Test
+    fun scheduleSolicitudesPolling_keeps_existing_entry_on_second_call() {
+        WorkScheduler.scheduleSolicitudesPolling(context)
+        WorkScheduler.scheduleSolicitudesPolling(context)
+
+        val infos = WorkManager.getInstance(context)
+            .getWorkInfosForUniqueWork(SolicitudesPollingWorker.WORK_NAME)
+            .get()
+
+        assertEquals(
+            "KEEP policy must prevent duplicate unique periodic entries",
+            1, infos.size
+        )
     }
 }

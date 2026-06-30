@@ -140,6 +140,30 @@ class SolicitudesPollingWorkerTest {
     }
 
     /**
+     * Scenario "Worker retries on transient failure" — when
+     * `getPendingRequests()` returns a non-AuthMissing failure
+     * (network drop, HTTP 5xx, parse error), the worker returns
+     * `Result.retry()` so WorkManager applies exponential backoff.
+     */
+    @Test
+    fun doWork_returns_retry_on_transient_failure() = runBlocking {
+        every { clientProvider.connectionState } returns
+            kotlinx.coroutines.flow.MutableStateFlow(ConnectionState.CONNECTED)
+        coEvery { parentRepository.getPendingRequests() } returns
+            Result.failure(DeviceListError.Transient("server 503"))
+
+        val worker = newWorker()
+        val result = worker.doWork()
+
+        assertEquals(
+            "transient failure must surface as retry (WorkManager backoff)",
+            ListenableWorker.Result.retry(), result
+        )
+        coVerify(exactly = 1) { parentRepository.getPendingRequests() }
+        coVerify(exactly = 0) { parentRepository.publishPendingRequests(any()) }
+    }
+
+    /**
      * Happy path — successful fetch pushes the parsed list into
      * `pendingRequestsFlow` (design D2) and returns `Result.success()`.
      * Spec scenario "Worker success pushes fresh data to the StateFlow".

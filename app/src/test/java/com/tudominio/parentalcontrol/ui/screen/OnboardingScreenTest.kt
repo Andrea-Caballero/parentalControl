@@ -13,6 +13,7 @@ import com.tudominio.parentalcontrol.ui.theme.ParentalControlTheme
 import com.tudominio.parentalcontrol.viewmodel.ParentViewModel
 import io.mockk.coEvery
 import io.mockk.coVerify
+import io.mockk.every
 import io.mockk.mockk
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
@@ -59,6 +60,11 @@ class OnboardingScreenTest {
     fun setUp() {
         Dispatchers.setMain(UnconfinedTestDispatcher())
         repository = mockk(relaxed = true)
+        // `fix-parent-solicitudes-auto-poll` — VM's `init` block now
+        // collects `repository.pendingRequestsFlow`. Stub a default empty
+        // flow so the collector doesn't NPE on the relaxed mock.
+        every { repository.pendingRequestsFlow } returns
+            kotlinx.coroutines.flow.MutableStateFlow(emptyList())
         authManager = mockk(relaxed = true)
     }
 

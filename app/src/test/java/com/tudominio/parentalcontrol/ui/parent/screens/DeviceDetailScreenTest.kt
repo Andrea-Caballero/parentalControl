@@ -47,8 +47,14 @@ class DeviceDetailScreenTest {
     @Before
     fun setUp() {
         Dispatchers.setMain(UnconfinedTestDispatcher())
+        val mockRepo = mockk<ParentRepository>(relaxed = true)
+        // `fix-parent-solicitudes-auto-poll` — VM's `init` block now
+        // collects `repository.pendingRequestsFlow`. Stub a default empty
+        // flow so the collector doesn't NPE on the relaxed mock.
+        io.mockk.every { mockRepo.pendingRequestsFlow } returns
+            kotlinx.coroutines.flow.MutableStateFlow(emptyList())
         viewModel = ParentViewModel(
-            mockk<ParentRepository>(relaxed = true),
+            mockRepo,
             mockk<com.tudominio.parentalcontrol.auth.DeviceAuthManager>(relaxed = true)
         )
     }

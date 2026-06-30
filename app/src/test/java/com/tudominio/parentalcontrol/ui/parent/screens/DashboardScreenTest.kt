@@ -15,6 +15,7 @@ import com.tudominio.parentalcontrol.ui.theme.ParentalControlTheme
 import com.tudominio.parentalcontrol.viewmodel.DeviceListUiState
 import com.tudominio.parentalcontrol.viewmodel.ParentViewModel
 import io.mockk.coEvery
+import io.mockk.every
 import io.mockk.mockk
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -59,6 +60,10 @@ class DashboardScreenTest {
     fun setUp() {
         Dispatchers.setMain(UnconfinedTestDispatcher())
         val mockRepository = mockk<ParentRepository>(relaxed = true)
+        // `fix-parent-solicitudes-auto-poll` — VM's `init` block now
+        // collects `repository.pendingRequestsFlow`. Stub a default empty
+        // flow so the collector doesn't NPE on the relaxed mock.
+        every { mockRepository.pendingRequestsFlow } returns MutableStateFlow(emptyList())
         val mockAuthManager = mockk<DeviceAuthManager>(relaxed = true)
         viewModel = ParentViewModel(mockRepository, mockAuthManager)
         // Seed successful child-device load so the default state is not a
@@ -97,7 +102,9 @@ class DashboardScreenTest {
 
     /**
      * Mock the repository's `getPendingRequests()` so each call returns
-     * success and is counted. Used by the tab-tap test below.
+     * success and is counted. Used by the tab-tap test below. MUST be
+     * called BEFORE constructing the VM so init's launch sees the
+     * counter stub.
      */
     private fun setupPendingRequestsCounter(
         repository: ParentRepository
@@ -183,14 +190,17 @@ class DashboardScreenTest {
         // Fresh mocks so this test owns its VM and its counters.
         val mockRepository = mockk<ParentRepository>(relaxed = true)
         val mockAuthManager = mockk<DeviceAuthManager>(relaxed = true)
+        // VM's init block now collects pendingRequestsFlow — stub a default
+        // empty flow so the collector doesn't NPE on the relaxed mock.
+        every { mockRepository.pendingRequestsFlow } returns MutableStateFlow(emptyList())
         coEvery { mockRepository.getDevices() } returns Result.success(emptyList())
-        coEvery { mockRepository.getPendingRequests() } returns Result.success(emptyList())
         coEvery { mockAuthManager.authenticateOrCreate(Role.PARENT) } returns Result.success(Unit)
-        // pendingRequestsFlow default is relaxed; no-op for this test.
 
-        val tabViewModel = ParentViewModel(mockRepository, mockAuthManager)
+        // Set up the counter BEFORE constructing the VM so init's
+        // launch sees the counter stub.
         val pendingCalls = setupPendingRequestsCounter(mockRepository)
 
+        val tabViewModel = ParentViewModel(mockRepository, mockAuthManager)
         // init's loadPendingRequests fired exactly once.
         assertEquals(
             "init must have launched exactly one loadPendingRequests",

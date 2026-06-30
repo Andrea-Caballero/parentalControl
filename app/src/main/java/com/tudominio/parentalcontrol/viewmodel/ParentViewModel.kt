@@ -81,6 +81,16 @@ class ParentViewModel @Inject constructor(
     init {
         loadDevices()
         loadPendingRequests()
+        // D2 of `fix-parent-solicitudes-auto-poll` — mirror the
+        // singleton-level `ParentRepository.pendingRequestsFlow` (written
+        // by `SolicitudesPollingWorker` and by `loadPendingRequests()`
+        // itself) into `_pendingRequests` so the UI sees fresh rows even
+        // when no UI event fires a fetch.
+        viewModelScope.launch {
+            repository.pendingRequestsFlow.collect { list ->
+                _pendingRequests.value = list
+            }
+        }
     }
 
     /**
@@ -145,7 +155,15 @@ class ParentViewModel @Inject constructor(
     }
 
     fun loadPendingRequests() {
+        // D5 of `fix-parent-solicitudes-auto-poll` — dedup rapid tab taps
+        // by gating on the existing `_isLoading` flag. The first thing the
+        // dashboard's `LaunchedEffect(selectedTab)` does on tab 1 is call
+        // here; if a previous fetch is still in flight, we return without
+        // issuing a parallel call. Mirrors `loadDevices()`'s
+        // `_isLoading` contract.
+        if (_isLoading.value) return
         viewModelScope.launch {
+            _isLoading.value = true
             try {
                 // PR 4 of openspec/changes/wire-pairing-and-approval-end-to-end
                 // wires the repository to a real REST query that returns
@@ -156,12 +174,18 @@ class ParentViewModel @Inject constructor(
                 val list = result.getOrNull()
                 if (list != null) {
                     _pendingRequests.value = list
+                    // D2 — mirror the same list into the singleton flow
+                    // so a second VM (or a future consumer) sees the
+                    // freshly-fetched rows.
+                    repository.publishPendingRequests(list)
                 } else {
                     _error.value = "Error cargando solicitudes: " +
                         (result.exceptionOrNull()?.message ?: "Unknown error")
                 }
             } catch (e: Exception) {
                 _error.value = "Error cargando solicitudes: ${e.message}"
+            } finally {
+                _isLoading.value = false
             }
         }
     }

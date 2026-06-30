@@ -21,6 +21,9 @@ import io.ktor.http.ContentType
 import io.ktor.http.contentType
 import io.ktor.http.isSuccess
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
@@ -46,6 +49,36 @@ class ParentRepository @Inject constructor(
     private val json = Json {
         ignoreUnknownKeys = true
         isLenient = true
+    }
+
+    /**
+     * Process-level cache of the most recent pending-requests fetch
+     * (design D2 of `fix-parent-solicitudes-auto-poll`).
+     *
+     * Initialized to `emptyList()` so the first UI frame never sees a
+     * different value than the VM's `_pendingRequests` initial value.
+     * The worker (`SolicitudesPollingWorker`) writes here on every
+     * successful 5-min tick; the VM mirrors the value into its own
+     * `_pendingRequests` flow via a collector in `init`.
+     *
+     * Kept as a [StateFlow] (not [kotlinx.coroutines.flow.SharedFlow])
+     * because `StateFlow.update {}`-style replacement matches the spec
+     * wording at `specs/time-request-approval/spec.md:51` ("post via
+     * `StateFlow.update {}`") and gives the VM a single hot replay
+     * channel for collectors.
+     */
+    private val _pendingRequestsFlow = MutableStateFlow<List<TimeRequest>>(emptyList())
+    val pendingRequestsFlow: StateFlow<List<TimeRequest>> = _pendingRequestsFlow.asStateFlow()
+
+    /**
+     * Public write hook for both the VM's [ParentRepository.getPendingRequests]
+     * success path and the worker's `SolicitudesPollingWorker.doWork()`
+     * success path. Replaces the value atomically — last write wins, and
+     * any active collector on [pendingRequestsFlow] sees the new list on
+     * the next emission.
+     */
+    fun publishPendingRequests(list: List<TimeRequest>) {
+        _pendingRequestsFlow.value = list
     }
 
     /**

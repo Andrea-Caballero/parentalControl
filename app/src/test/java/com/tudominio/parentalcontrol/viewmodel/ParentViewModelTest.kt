@@ -43,6 +43,11 @@ class ParentViewModelTest {
     fun setUp() {
         Dispatchers.setMain(UnconfinedTestDispatcher())
         repository = mockk(relaxed = true)
+        // `fix-parent-solicitudes-auto-poll` — the VM's `init` block now
+        // collects `repository.pendingRequestsFlow`. Stub a default empty
+        // flow so the collector doesn't NPE on the relaxed mock; the
+        // dedicated test below overrides this stub with a custom value.
+        every { repository.pendingRequestsFlow } returns MutableStateFlow(emptyList())
         authManager = mockk(relaxed = true)
     }
 
@@ -322,7 +327,10 @@ class ParentViewModelTest {
         )
         val flow = MutableStateFlow(fixture)
         every { repository.pendingRequestsFlow } returns flow
-        coEvery { repository.getPendingRequests() } returns Result.success(emptyList())
+        // init's loadPendingRequests returns the same fixture so the direct
+        // write into `_pendingRequests` and the publish into the flow are
+        // both consistent.
+        coEvery { repository.getPendingRequests() } returns Result.success(fixture)
         coEvery { repository.getDevices() } returns Result.success(emptyList())
 
         val viewModel = ParentViewModel(repository, authManager)
@@ -334,6 +342,7 @@ class ParentViewModelTest {
         )
 
         // Turbine: emit a fresh list, confirm the collector picks it up.
+        // (This path simulates the worker pushing data via publishPendingRequests.)
         val second = listOf(
             TimeRequest(
                 id = "tr-2",

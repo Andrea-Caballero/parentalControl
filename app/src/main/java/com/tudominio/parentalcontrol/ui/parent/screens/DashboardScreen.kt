@@ -221,6 +221,21 @@ private fun DashboardScaffold(
                 )
             }
 
+            // D1 of `fix-parent-solicitudes-auto-poll` — re-fetch pending
+            // requests whenever the parent switches to the Solicitudes tab
+            // (index 1). `LaunchedEffect(selectedTab)` cancels and re-launches
+            // on every tab change; the body is gated to `selectedTab == 1`
+            // so other tabs (Devices, future tabs) do NOT trigger a fetch.
+            // Spec scenarios covered:
+            //   - First tap on the Solicitudes tab triggers a fetch
+            //   - Re-tapping the Solicitudes tab triggers a fresh fetch
+            //   - Other tabs do not trigger a Solicitudes fetch
+            LaunchedEffect(selectedTab) {
+                if (selectedTab == 1) {
+                    viewModel.loadPendingRequests()
+                }
+            }
+
             when (selectedTab) {
                 0 -> DevicesTab(
                     viewModel = viewModel,

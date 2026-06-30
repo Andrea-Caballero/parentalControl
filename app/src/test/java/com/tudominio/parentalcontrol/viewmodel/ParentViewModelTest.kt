@@ -1,22 +1,30 @@
 package com.tudominio.parentalcontrol.viewmodel
 
+import app.cash.turbine.test
 import com.tudominio.parentalcontrol.auth.DeviceAuthManager
 import com.tudominio.parentalcontrol.auth.Role
 import com.tudominio.parentalcontrol.data.repository.DeviceListError
 import com.tudominio.parentalcontrol.data.repository.ParentRepository
 import com.tudominio.parentalcontrol.domain.model.ChildDevice
 import com.tudominio.parentalcontrol.domain.model.DeviceState
+import com.tudominio.parentalcontrol.domain.model.RequestStatus
+import com.tudominio.parentalcontrol.domain.model.TimeRequest
 import io.mockk.coEvery
 import io.mockk.coVerify
+import io.mockk.every
 import io.mockk.mockk
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
+import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -229,5 +237,119 @@ class ParentViewModelTest {
                 (viewModel.deviceListState.value as DeviceListUiState.Error).reason ==
                 DeviceListError.AuthMissing
         )
+    }
+
+    // -------------------------------------------------------------------------
+    // RED coverage for `fix-parent-solicitudes-auto-poll` (Tasks 1.1).
+    // -------------------------------------------------------------------------
+
+    /**
+     * T1.1 — In-flight `loadPendingRequests()` must dedupe. The design's
+     * decision D5 gates repeat calls on the existing `_isLoading` flag:
+     * when a fetch is already in flight, a second invocation returns
+     * immediately without issuing another `getPendingRequests()` call.
+     * This test pre-REDs the scenario: the only `getPendingRequests()` call
+     * is the one fired by `init`, suspended on a `CompletableDeferred`; two
+     * subsequent `loadPendingRequests()` invocations must NOT issue more
+     * fetches.
+     */
+    @Test
+    fun `loadPendingRequests_second_call_while_running_is_noop`() = runTest {
+        var getPendingCalls = 0
+        val gate = CompletableDeferred<Unit>()
+        coEvery { repository.getPendingRequests() } coAnswers {
+            getPendingCalls++
+            gate.await()
+            Result.success(emptyList())
+        }
+        // Devices returns immediately so init's `loadDevices()` does not
+        // hold `_isLoading=true` past init — that way the only thing
+        // holding the flag is `loadPendingRequests()`'s suspended body.
+        coEvery { repository.getDevices() } returns Result.success(emptyList())
+
+        val viewModel = ParentViewModel(repository, authManager)
+        // init's loadPendingRequests is launched and suspended on `gate`.
+        assertEquals(
+            "init must have launched exactly one loadPendingRequests",
+            1, getPendingCalls
+        )
+        assertTrue(
+            "isLoading must be true while the in-flight fetch is suspended",
+            viewModel.isLoading.value
+        )
+
+        // Second and third explicit calls must dedupe while isLoading=true.
+        viewModel.loadPendingRequests()
+        viewModel.loadPendingRequests()
+
+        assertEquals(
+            "loadPendingRequests must dedupe while a previous call is in flight",
+            1, getPendingCalls
+        )
+
+        // Release the gate and confirm the original fetch completes once.
+        gate.complete(Unit)
+        advanceUntilIdle()
+        assertEquals(
+            "still exactly one fetch after the in-flight call completes",
+            1, getPendingCalls
+        )
+        assertFalse(
+            "isLoading must reset to false after the in-flight call completes",
+            viewModel.isLoading.value
+        )
+    }
+
+    /**
+     * T1.1 — The VM must collect `ParentRepository.pendingRequestsFlow`
+     * (a `StateFlow<List<TimeRequest>>` added by design D2) in its `init`
+     * block so that any writer — the `SolicitudesPollingWorker` or
+     * `loadPendingRequests()` itself via `publishPendingRequests()` —
+     * surfaces new rows in `_pendingRequests` without a manual reload.
+     */
+    @Test
+    fun `init_collects_pendingRequestsFlow_into_state`() = runTest {
+        val fixture = listOf(
+            TimeRequest(
+                id = "tr-1",
+                deviceId = "dev-1",
+                deviceName = "Poco X6 Pro",
+                minutesRequested = 30,
+                reason = "homework",
+                status = RequestStatus.PENDING,
+                createdAt = "2026-06-30T00:00:00Z"
+            )
+        )
+        val flow = MutableStateFlow(fixture)
+        every { repository.pendingRequestsFlow } returns flow
+        coEvery { repository.getPendingRequests() } returns Result.success(emptyList())
+        coEvery { repository.getDevices() } returns Result.success(emptyList())
+
+        val viewModel = ParentViewModel(repository, authManager)
+
+        // The collector must mirror the StateFlow value into `_pendingRequests`.
+        assertEquals(
+            "init's collector must mirror pendingRequestsFlow into pendingRequests",
+            fixture, viewModel.pendingRequests.value
+        )
+
+        // Turbine: emit a fresh list, confirm the collector picks it up.
+        val second = listOf(
+            TimeRequest(
+                id = "tr-2",
+                deviceId = "dev-2",
+                deviceName = "Moto G32",
+                minutesRequested = 15,
+                status = RequestStatus.PENDING,
+                createdAt = "2026-06-30T00:01:00Z"
+            )
+        )
+        viewModel.pendingRequests.test {
+            // Skip the current replay (StateFlow replays its value on subscribe).
+            assertEquals(fixture, awaitItem())
+            flow.value = second
+            assertEquals(second, awaitItem())
+            cancelAndIgnoreRemainingEvents()
+        }
     }
 }

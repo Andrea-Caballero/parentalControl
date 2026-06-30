@@ -3,6 +3,7 @@ package com.tudominio.parentalcontrol.ui.parent.screens
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.performClick
 import com.tudominio.parentalcontrol.auth.DeviceAuthManager
 import com.tudominio.parentalcontrol.auth.Role
 import com.tudominio.parentalcontrol.data.repository.DeviceListError
@@ -17,10 +18,12 @@ import io.mockk.coEvery
 import io.mockk.mockk
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.setMain
 import org.junit.After
+import org.junit.Assert.assertEquals
 import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
@@ -92,6 +95,21 @@ class DashboardScreenTest {
         stateFlow.value = DeviceListUiState.Error(error)
     }
 
+    /**
+     * Mock the repository's `getPendingRequests()` so each call returns
+     * success and is counted. Used by the tab-tap test below.
+     */
+    private fun setupPendingRequestsCounter(
+        repository: ParentRepository
+    ): () -> Int {
+        var count = 0
+        coEvery { repository.getPendingRequests() } answers {
+            count++
+            Result.success(emptyList())
+        }
+        return { count }
+    }
+
     @Test
     fun error_banner_authMissing_shows_sign_in_cta_only() {
         seedDeviceListState(DeviceListError.AuthMissing)
@@ -148,6 +166,75 @@ class DashboardScreenTest {
         org.junit.Assert.assertFalse(
             "Sign-in CTA must NOT appear for Transient, found=$signIn",
             signIn
+        )
+    }
+
+    // -------------------------------------------------------------------------
+    // RED coverage for `fix-parent-solicitudes-auto-poll` (Task 1.4).
+    //
+    // The dashboard's `DashboardScaffold` carries a `LaunchedEffect(selectedTab)`
+    // that fires `viewModel.loadPendingRequests()` whenever the parent
+    // switches to the Solicitudes tab (index 1). Tabs other than 1 must NOT
+    // trigger a Solicitudes fetch. This test asserts both halves.
+    // -------------------------------------------------------------------------
+
+    @Test
+    fun tab_tap_to_solicitudes_invokes_loadPendingRequests_other_tabs_do_not() {
+        // Fresh mocks so this test owns its VM and its counters.
+        val mockRepository = mockk<ParentRepository>(relaxed = true)
+        val mockAuthManager = mockk<DeviceAuthManager>(relaxed = true)
+        coEvery { mockRepository.getDevices() } returns Result.success(emptyList())
+        coEvery { mockRepository.getPendingRequests() } returns Result.success(emptyList())
+        coEvery { mockAuthManager.authenticateOrCreate(Role.PARENT) } returns Result.success(Unit)
+        // pendingRequestsFlow default is relaxed; no-op for this test.
+
+        val tabViewModel = ParentViewModel(mockRepository, mockAuthManager)
+        val pendingCalls = setupPendingRequestsCounter(mockRepository)
+
+        // init's loadPendingRequests fired exactly once.
+        assertEquals(
+            "init must have launched exactly one loadPendingRequests",
+            1, pendingCalls()
+        )
+
+        val appsVm = mockk<AppsViewModel>(relaxed = true)
+        composeTestRule.setContent {
+            ParentalControlTheme {
+                DashboardScreen(viewModel = tabViewModel, appsViewModel = appsVm)
+            }
+        }
+        composeTestRule.waitForIdle()
+
+        // Initial selectedTab is 0 (Devices). The LaunchedEffect body is
+        // gated to `selectedTab == 1`, so no extra Solicitudes fetch.
+        assertEquals(
+            "Default Devices tab must NOT trigger a Solicitudes fetch",
+            1, pendingCalls()
+        )
+
+        // Tap Solicitudes → selectedTab becomes 1 → LaunchedEffect fires.
+        composeTestRule.onNodeWithText("Solicitudes").performClick()
+        composeTestRule.waitForIdle()
+        assertEquals(
+            "Solicitudes tab tap must trigger a Solicitudes fetch",
+            2, pendingCalls()
+        )
+
+        // Tap Devices → selectedTab becomes 0 → LaunchedEffect re-keys but
+        // body is gated; no fetch.
+        composeTestRule.onNodeWithText("Dispositivos").performClick()
+        composeTestRule.waitForIdle()
+        assertEquals(
+            "Devices tab tap must NOT trigger a Solicitudes fetch",
+            2, pendingCalls()
+        )
+
+        // Re-tap Solicitudes → another fresh fetch.
+        composeTestRule.onNodeWithText("Solicitudes").performClick()
+        composeTestRule.waitForIdle()
+        assertEquals(
+            "Re-tap on Solicitudes must trigger a fresh fetch",
+            3, pendingCalls()
         )
     }
 }

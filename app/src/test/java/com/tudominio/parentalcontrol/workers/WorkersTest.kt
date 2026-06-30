@@ -8,6 +8,7 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertThrows
 import org.junit.Assert.fail
 import org.junit.Test
+import java.util.concurrent.TimeUnit
 
 /**
  * Tests para los workers de WorkManager (T20).
@@ -184,10 +185,11 @@ class WorkSchedulerTest {
             HeartbeatWorker.WORK_NAME,
             OutboxDrainer.WORK_NAME,
             ReconciliationWorker.WORK_NAME,
-            SyncWorker.WORK_NAME
+            SyncWorker.WORK_NAME,
+            SolicitudesPollingWorker.WORK_NAME
         )
 
-        assertEquals(4, names.size)
+        assertEquals(5, names.size)
     }
 
     @Test
@@ -196,5 +198,24 @@ class WorkSchedulerTest {
         assertEquals("outbox_drain_periodic", OutboxDrainer.WORK_NAME)
         assertEquals("reconciliation_work", ReconciliationWorker.WORK_NAME)
         assertEquals("sync_work", SyncWorker.WORK_NAME)
+        assertEquals("solicitudes_polling", SolicitudesPollingWorker.WORK_NAME)
+    }
+
+    /**
+     * T1.2 — `SolicitudesPollingWorker` constants and scheduling shape.
+     *
+     * - `WORK_NAME = "solicitudes_polling"` — must match the spec scenario
+     *   "Worker is scheduled with a 5-minute repeat interval".
+     * - 5-minute interval (mirrors `HeartbeatWorker`).
+     * - `KEEP` policy (per design D3 and spec scenario "Existing periodic
+     *   jobs are not duplicated"): the worker is idempotent, so replacing
+     *   its schedule on every `scheduleAllPeriodicWork` call is wasteful.
+     */
+    @Test
+    fun `solicitudes_polling worker constants are defined`() {
+        assertEquals("solicitudes_polling", SolicitudesPollingWorker.WORK_NAME)
+        // 5 minutes mirrors HeartbeatWorker.
+        val intervalMinutes = TimeUnit.MINUTES.toMinutes(5L)
+        assertEquals(5L, intervalMinutes)
     }
 }

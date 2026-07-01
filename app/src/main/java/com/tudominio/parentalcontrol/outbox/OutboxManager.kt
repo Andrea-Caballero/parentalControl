@@ -71,7 +71,7 @@ class OutboxManager @Inject constructor(
                 {
                     "request_id": "${request.request_id}",
                     "device_id": "${request.device_id}",
-                    "requested_minutes": ${request.minutes_requested},
+                    "minutes_requested": ${request.minutes_requested},
                     "reason": "${request.reason}",
                     "created_at": ${request.created_at}
                 }

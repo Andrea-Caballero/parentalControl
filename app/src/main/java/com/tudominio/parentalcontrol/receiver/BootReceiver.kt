@@ -67,8 +67,19 @@ class BootReceiver : BroadcastReceiver() {
         //    KEEP + a unique work name ensures we do not replace an
         //    already-scheduled OutboxDrainer instance.
         GlobalScope.launch {
-            val session = DeviceAuthManager.getInstance(context).restoreSession()
+            val authManager = DeviceAuthManager.getInstance(context)
+            val session = authManager.restoreSession()
             if (session != null) {
+                // PR verification 2026-07-01: refresh the access token.
+                // `loadPersistedState` only restores `deviceId` + `isPaired`
+                // from SharedPrefs, not the in-memory `currentAccessToken`,
+                // so any authenticated request (sync, pull, drain) returns
+                // Offline until the user pairs again. Calling
+                // `authenticateOrCreate` here rehydrates the token from the
+                // persisted session and lets the post-boot sync chain
+                // succeed without requiring the user to re-pair.
+                authManager.authenticateOrCreate()
+
                 WorkScheduler.scheduleOutboxDrainer(context)
                 WorkerInitializer.initialize(context, isAfterBoot = true)
             } else {

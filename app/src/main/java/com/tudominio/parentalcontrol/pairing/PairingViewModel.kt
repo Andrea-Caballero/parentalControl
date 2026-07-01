@@ -8,6 +8,8 @@ import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
+import com.tudominio.parentalcontrol.workers.WorkerInitializer
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -15,6 +17,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /**
  * ViewModel para el flujo de emparejamiento.
@@ -121,6 +124,14 @@ class PairingViewModel @Inject constructor(
         when (result) {
             is PairingResult.Success -> {
                 Log.d(TAG, "Emparejamiento exitoso")
+                // PR verification 2026-07-01: schedule the post-pairing sync
+                // (which now includes `pullApprovedRequests`) so the child
+                // can pick up any grants approved while it was unpaired.
+                // This was previously a dead code path: `reinitializeAfterPairing`
+                // was defined but never called.
+                withContext(Dispatchers.IO) {
+                    WorkerInitializer.reinitializeAfterPairing(context)
+                }
                 _uiState.value = PairingUiState.Success(result.deviceId)
                 _navigationEvents.emit(PairingNavigationEvent.NavigateToHome)
             }

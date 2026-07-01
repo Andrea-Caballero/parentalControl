@@ -39,7 +39,7 @@ import secrets
 import string
 import threading
 from http import HTTPStatus
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 
 # ---------------------------------------------------------------------------
 # In-memory state — process-wide singleton protected by a lock.
@@ -237,21 +237,72 @@ def handle_get_templates(handler: http.server.BaseHTTPRequestHandler) -> None:
 
 
 def handle_get_time_requests(handler: http.server.BaseHTTPRequestHandler) -> None:
-    """`GET /rest/v1/time_requests` — pending requests. We don't populate
-    this in the pairing test, so it's always empty."""
+    """`GET /rest/v1/time_requests` — pending requests.
+
+    Honors the client's `status=eq.PENDING` / `status=in.(...)` and
+    `device_id=eq.X` filters from the query string so resolved requests
+    (APPROVED/DENIED) stop appearing in the parent's Solicitudes list once
+    they take action, and the child can pull only its own approved grants
+    on sync. Real Supabase/PostgREST applies the filters at the database
+    level; we mirror that here so the mock behaves like the production
+    backend would."""
+    qs = parse_qs(urlparse(handler.path).query)
+    status_filters = qs.get("status", [])
+    device_filters = qs.get("device_id", [])
+
     with _lock:
-        _send_json(handler, HTTPStatus.OK, list(_time_requests))
+        rows = list(_time_requests)
+
+    # `device_id=eq.X` → only rows owned by X. Multiple device filters are
+    # OR'd (rare; covers `in.(a,b)` shape too if the client ever uses it).
+    if device_filters:
+        allowed_devices: set[str] = set()
+        for f in device_filters:
+            if f.startswith("in.(") and f.endswith(")"):
+                allowed_devices.update(v.strip() for v in f[len("in.(") : -1].split(","))
+            elif f.startswith("eq."):
+                allowed_devices.add(f[len("eq.") :])
+            else:
+                allowed_devices.add(f)
+        rows = [r for r in rows if r.get("device_id") in allowed_devices]
+
+    if status_filters:
+        keep: list[dict] = []
+        for f in status_filters:
+            # PostgREST operators: `eq.PENDING` (single) or
+            # `in.(PENDING,APPROVED)` (any-of). We only need the two shapes the
+            # Android client actually emits.
+            if f.startswith("in.(") and f.endswith(")"):
+                allowed = {v.strip() for v in f[len("in.(") : -1].split(",")}
+            elif f.startswith("eq."):
+                allowed = {f[len("eq.") :]}
+            else:
+                allowed = {f}
+            for r in rows:
+                if r.get("status") in allowed:
+                    keep.append(r)
+        seen: set[str] = set()
+        public = []
+        for r in keep:
+            if r["id"] not in seen:
+                seen.add(r["id"])
+                public.append(r)
+    else:
+        public = rows
+    _send_json(handler, HTTPStatus.OK, public)
 
 
 def handle_post_time_requests(
     handler: http.server.BaseHTTPRequestHandler, body: dict
 ) -> None:
     """`POST /rest/v1/time_requests` — child asks for more time. Echoes the
-    inserted row back."""
+    inserted row back. Field name `minutes_requested` matches the production
+    Postgres schema (`supabase/migrations/001_initial_schema.sql`) and the
+    client DTO in `ParentRepository.TimeRequestDto`."""
     row = {
         "id": "req-" + secrets.token_hex(4),
         "device_id": body.get("device_id") or "unknown",
-        "minutes": int(body.get("minutes") or 0),
+        "minutes_requested": int(body.get("minutes_requested") or 0),
         "reason": body.get("reason"),
         "status": "PENDING",
         "created_at": _now_iso(),
@@ -259,6 +310,81 @@ def handle_post_time_requests(
     with _lock:
         _time_requests.append(row)
     _send_json(handler, HTTPStatus.CREATED, [row])
+
+
+def _resolve_time_request(body: dict) -> dict | None:
+    """Find a pending row by `id` (or `request_id`) and return a snapshot
+    copy. Caller is responsible for mutating it and re-emitting."""
+    target_id = body.get("request_id") or body.get("id") or ""
+    with _lock:
+        for row in _time_requests:
+            if row["id"] == target_id:
+                return dict(row)
+    return None
+
+
+def handle_resolve_request(
+    handler: http.server.BaseHTTPRequestHandler,
+    body: dict,
+    status: str,
+) -> None:
+    """Shared approve/deny path. Sets the matching row's status and
+    `resolved_at` timestamp, then echoes the row back so the parent UI can
+    drop it from the Solicitudes list on its next poll."""
+    row = _resolve_time_request(body)
+    if row is None:
+        _send_json(
+            handler,
+            HTTPStatus.NOT_FOUND,
+            {"error": f"unknown time_request id={body.get('request_id') or body.get('id')!r}"},
+        )
+        return
+
+    row["status"] = status
+    row["resolved_at"] = _now_iso()
+    if status == "APPROVED":
+        # Record the minutes the parent actually granted (defaults to whatever
+        # the child asked for, in case the client omits `minutes_approved`).
+        row["minutes_approved"] = int(
+            body.get("minutes_approved") or row.get("minutes_requested") or 0
+        )
+
+    with _lock:
+        for i, existing in enumerate(_time_requests):
+            if existing["id"] == row["id"]:
+                _time_requests[i] = row
+                break
+
+    _send_json(handler, HTTPStatus.OK, row)
+
+
+def handle_approve_request(
+    handler: http.server.BaseHTTPRequestHandler, body: dict
+) -> None:
+    """`POST /functions/v1/approve-request` — parent approves a pending
+    request. Body: `{"request_id": "req-…", "minutes_approved": N, "action":
+    "APPROVE"|"DENY"}`.
+
+    The Android client intentionally reuses this single endpoint for both
+    Aprobar and Denegar (see KDoc on `ParentRepository.denyRequest`,
+    `data/repository/ParentRepository.kt:268`). The wire format is locked —
+    we branch on the `action` field here. The production edge function at
+    `supabase/functions/approve-request/index.ts:38` is tracked to grow the
+    same branch; this mock just stays one step ahead so end-to-end tests can
+    distinguish APPROVED vs DENIED rows today."""
+    action = (body.get("action") or "APPROVE").upper()
+    if action == "DENY":
+        handle_resolve_request(handler, body, "DENIED")
+    else:
+        handle_resolve_request(handler, body, "APPROVED")
+
+
+def handle_deny_request(
+    handler: http.server.BaseHTTPRequestHandler, body: dict
+) -> None:
+    """`POST /functions/v1/deny-request` — parent denies a pending
+    request. Body: `{"request_id": "req-…"}`."""
+    handle_resolve_request(handler, body, "DENIED")
 
 
 # ---------------------------------------------------------------------------
@@ -273,13 +399,15 @@ class _Handler(http.server.BaseHTTPRequestHandler):
 
     def _route(self, method: str) -> None:
         path = urlparse(self.path).path
+        query = urlparse(self.path).query
         body = _read_json_body(self) if method == "POST" else {}
 
         with _lock:
             n_codes = len(_pairing_codes)
             n_devices = len(_devices)
+        qs = f" ?{query}" if query else ""
         print(
-            f"[{_now_iso()}] {method} {path}  "
+            f"[{_now_iso()}] {method} {path}{qs}  "
             f"(codes={n_codes}, devices={n_devices})",
             flush=True,
         )
@@ -305,6 +433,10 @@ class _Handler(http.server.BaseHTTPRequestHandler):
             handle_get_time_requests(self)
         elif path.startswith("/rest/v1/time_requests") and method == "POST":
             handle_post_time_requests(self, body)
+        elif method == "POST" and path.endswith("/functions/v1/approve-request"):
+            handle_approve_request(self, body)
+        elif method == "POST" and path.endswith("/functions/v1/deny-request"):
+            handle_deny_request(self, body)
         else:
             _send_json(
                 self,

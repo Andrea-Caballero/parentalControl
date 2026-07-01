@@ -24,6 +24,15 @@ interface TimeRequestDao {
     @Query("UPDATE time_requests SET status = :status, responded_at = :respondedAt WHERE request_id = :requestId")
     suspend fun updateRequestStatus(requestId: String, status: String, respondedAt: String)
 
+    /**
+     * Replaces the locally-generated `request_id` with the server's row id
+     * returned by the POST. Without this, the post-boot `pullApprovedRequests`
+     * (which queries by server id) cannot find the local row to update when
+     * the parent approves the request.
+     */
+    @Query("UPDATE time_requests SET request_id = :newId WHERE request_id = :oldId")
+    suspend fun updateRequestId(oldId: String, newId: String)
+
     @Query("DELETE FROM time_requests WHERE created_at < :cutoff")
     suspend fun deleteOldRequests(cutoff: String)
 }

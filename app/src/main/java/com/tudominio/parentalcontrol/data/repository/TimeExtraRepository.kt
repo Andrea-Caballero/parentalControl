@@ -11,9 +11,9 @@ import com.tudominio.parentalcontrol.time.TimeProvider
 import com.tudominio.parentalcontrol.workers.WorkScheduler
 import dagger.hilt.EntryPoint
 import dagger.hilt.InstallIn
+import dagger.hilt.components.SingletonComponent
 import dagger.hilt.android.EntryPointAccessors
 import dagger.hilt.android.qualifiers.ApplicationContext
-import dagger.hilt.components.SingletonComponent
 import java.time.Instant
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -222,6 +222,15 @@ class TimeExtraRepository @Inject constructor(
             false
         }
     }
+
+    /**
+     * Reactive stream of all `extra_time` grants in Room. The
+     * [TimeExtraViewModel] observes this so the home screen updates
+     * immediately when a new grant is created (e.g., by the
+     * post-boot pullApprovedRequests after a parent approve).
+     */
+    fun observeExtraTimeGrants(): Flow<List<GrantEntity>> =
+        grantDao.getGrantsForScope("extra_time")
 
     /**
      * Obtiene el grant de tiempo extra activo.

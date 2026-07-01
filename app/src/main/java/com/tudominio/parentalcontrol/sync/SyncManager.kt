@@ -1,6 +1,7 @@
 package com.tudominio.parentalcontrol.sync
 
 import android.content.Context
+import android.util.Log
 import com.tudominio.parentalcontrol.auth.DeviceAuthManager
 import com.tudominio.parentalcontrol.data.db.ParentalDatabase
 import com.tudominio.parentalcontrol.data.model.AppPolicyEntity
@@ -111,6 +112,7 @@ class SyncManager @Inject constructor(
     private var database: ParentalDatabase
 ) {
     companion object {
+        private const val TAG = "SyncManager"
         private const val MAX_RETRY_ATTEMPTS = 3
         private const val RETRY_DELAY_MS = 5000L
         private const val SYNC_INTERVAL_MS = 60_000L
@@ -326,7 +328,12 @@ class SyncManager @Inject constructor(
         for (row in rows) {
             val minutes = if (row.minutes_approved > 0) row.minutes_approved else 0
             if (minutes <= 0) continue
-            val expiresAtMs = row.resolved_at?.let { parseIsoToEpochMs(it) }
+            // The server returns `resolved_at` (when the parent approved),
+            // not the grant's expiry. The grant should last `minutes` minutes
+            // from the approval time, so we offset by minutes*60_000ms.
+            val expiresAtMs = row.resolved_at?.let {
+                parseIsoToEpochMs(it)?.plus(minutes * 60_000L)
+            }
             val result = timeExtraRepo.processApproval(
                 requestId = row.id,
                 approvedMinutes = minutes,
@@ -488,6 +495,7 @@ class SyncManager @Inject constructor(
 
         return try {
             val isFunction = endpoint.startsWith("/functions")
+            val isTimeRequest = item.tipo == "TIME_REQUEST"
 
             val response = if (isFunction) {
                 client.post("${SupabaseClientProvider.SUPABASE_URL}$endpoint") {
@@ -500,12 +508,38 @@ class SyncManager @Inject constructor(
                     header("Authorization", "Bearer $token")
                     header("apikey", SupabaseClientProvider.SUPABASE_ANON_KEY)
                     header("Content-Type", "application/json")
-                    header("Prefer", "return=minimal")
+                    // TIME_REQUEST needs the inserted row back so we can
+                    // reconcile the local request_id with the server's id.
+                    // Other endpoints can keep return=minimal (cheaper).
+                    header("Prefer", if (isTimeRequest) "return=representation" else "return=minimal")
                     setBody(item.payload_json)
                 }
             }
 
-            classifyResponse(response.status)
+            val result = classifyResponse(response.status)
+
+            // On a successful TIME_REQUEST, swap the local request_id for
+            // the server's id so the post-boot pullApprovedRequests can find
+            // the row when the parent approves. Best-effort: a parse error
+            // here just leaves the local id in place, which falls back to
+            // the pre-fix behavior (pull can see the row but cannot map it).
+            if (result is OutboxSendResult.Success && isTimeRequest) {
+                try {
+                    val body = response.bodyAsText()
+                    val serverId = Regex("\"id\"\\s*:\\s*\"([^\"]+)\"")
+                        .find(body)?.groupValues?.get(1)
+                    val localId = Regex("\"request_id\"\\s*:\\s*\"([^\"]+)\"")
+                        .find(item.payload_json)?.groupValues?.get(1)
+                    if (serverId != null && localId != null && localId != serverId) {
+                        database.timeRequestDao().updateRequestId(localId, serverId)
+                        Log.d(TAG, "Reconciled local request_id: $localId → $serverId")
+                    }
+                } catch (e: Exception) {
+                    Log.w(TAG, "Could not reconcile server id for time request: ${e.message}")
+                }
+            }
+
+            result
         } catch (e: java.io.IOException) {
             OutboxSendResult.RetryableFailure(e)
         } catch (e: Exception) {

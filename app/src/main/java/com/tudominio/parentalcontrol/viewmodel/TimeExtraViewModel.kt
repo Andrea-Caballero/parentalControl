@@ -9,6 +9,8 @@ import com.tudominio.parentalcontrol.data.model.TimeRequestEntity
 import com.tudominio.parentalcontrol.data.repository.GrantResult
 import com.tudominio.parentalcontrol.data.repository.TimeExtraRepository
 import com.tudominio.parentalcontrol.data.repository.TimeRequestResult
+import com.tudominio.parentalcontrol.time.DefaultTimeProvider
+import com.tudominio.parentalcontrol.time.TimeProvider
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -30,6 +32,7 @@ class TimeExtraViewModel(
 ) : ViewModel() {
 
     private val repository = TimeExtraRepository.getInstance(context)
+    private val timeProvider: TimeProvider = DefaultTimeProvider(context)
 
     // Solicitudes del niño
     private val _myRequests = MutableStateFlow<List<TimeRequestUi>>(emptyList())
@@ -63,6 +66,19 @@ class TimeExtraViewModel(
     private var countdownJob: Job? = null
 
     init {
+        // Observe extra_time grants reactively so the home screen updates
+        // the moment a new grant is created (e.g., by the post-boot
+        // pullApprovedRequests after a parent approve, which used to
+        // require restarting the app for the UI to refresh).
+        viewModelScope.launch {
+            repository.observeExtraTimeGrants().collect { grants ->
+                val now = timeProvider.wallInstant().toString()
+                val active = grants.filter { it.expires_at > now }
+                _activeGrants.value = active.map { it.toUi() }
+                _extraTimeAvailable.value =
+                    active.sumOf { it.minutes }.toLong()
+            }
+        }
         refreshData()
         startCountdown()
     }

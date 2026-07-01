@@ -7,6 +7,8 @@ import com.tudominio.parentalcontrol.data.model.AppPolicyEntity
 import com.tudominio.parentalcontrol.data.model.OutboxEntity
 import com.tudominio.parentalcontrol.data.model.PolicyEntity
 import com.tudominio.parentalcontrol.data.model.WindowEntity
+import com.tudominio.parentalcontrol.data.repository.GrantResult
+import com.tudominio.parentalcontrol.data.repository.TimeExtraRepository
 import com.tudominio.parentalcontrol.di.SupabaseClient
 import com.tudominio.parentalcontrol.network.ConnectionState
 import com.tudominio.parentalcontrol.network.SupabaseClientProvider
@@ -87,6 +89,21 @@ data class AppPolicyResponse(
     val allowed_windows: List<String>? = null
 )
 
+/**
+ * Wire shape of a `time_requests` row that the child pulls to learn about
+ * approvals. The mock server (and production Supabase) returns
+ * `minutes_approved` (defaults to `minutes_requested` if the parent omits
+ * it) and `resolved_at` (epoch-iso). `id` is the request id the child
+ * submitted, which `TimeExtraRepository.processApproval` uses to look up the
+ * matching local row and write a `GrantEntity`.
+ */
+@Serializable
+private data class ApprovedRequestDto(
+    val id: String,
+    val minutes_approved: Int = 0,
+    val resolved_at: String? = null
+)
+
 @Singleton
 class SyncManager @Inject constructor(
     @ApplicationContext private val context: Context,
@@ -161,7 +178,14 @@ class SyncManager @Inject constructor(
     suspend fun sync(): SyncResult = withContext(Dispatchers.IO) {
         _syncStatus.value = SyncStatus.SYNCING
 
-        if (clientProvider.connectionState.value != ConnectionState.CONNECTED) {
+        // PR verification 2026-07-01: gate on `authManager.isPaired()` instead
+        // of `connectionState`. After PairingManager.pairWithCode() succeeds,
+        // the auth state is paired but the SupabaseClientProvider
+        // `connectionState` is never updated to CONNECTED (PairingManager
+        // doesn't go through that path), so the sync returned Offline and
+        // pullApprovedRequests never ran. `isPaired()` is the source of
+        // truth here.
+        if (!authManager.isPaired()) {
             _syncStatus.value = SyncStatus.OFFLINE
             return@withContext SyncResult.Offline
         }
@@ -171,6 +195,15 @@ class SyncManager @Inject constructor(
 
         val pullResult = pullPolicy()
         pullSuccess = pullResult is SyncResult.Success
+
+        // Best-effort: surface APPROVED grants to the child so its local
+        // quota / bloqueo reflects the parent's decision. Failures here
+        // don't fail the overall sync — the next pull will retry.
+        try {
+            pullApprovedRequests()
+        } catch (e: Exception) {
+            // already logged inside pullApprovedRequests()
+        }
 
         val pushResult = drainOutbox()
         pushFailedCount = when (pushResult) {
@@ -237,6 +270,80 @@ class SyncManager @Inject constructor(
         } catch (e: Exception) {
             SyncResult.Offline
         }
+    }
+
+    /**
+     * Pulls the child's APPROVED `time_requests` from the server and
+     * forwards each one to [TimeExtraRepository.processApproval], which
+     * writes the matching local `GrantEntity` (idempotent by request id) so
+     * the home screen's "minutos restantes" / bloqueo state reflects the
+     * parent's decision on the next sync.
+     *
+     * Idempotent: re-running the same pull just re-applies the same
+     * approvals (REPLACE in `GrantDao` keeps the row stable).
+     *
+     * Best-effort: a failure here does not fail the overall sync — the
+     * next pull will retry. The OPPO's approve row disappears from the
+     * parent's Solicitudes list once [pullPolicy] sees the status change;
+     * here we only need the *opposite* leg (server → child).
+     */
+    suspend fun pullApprovedRequests() = withContext(Dispatchers.IO) {
+        val accessToken = authManager.getAccessToken() ?: return@withContext
+        val deviceId = authManager.deviceId.value ?: return@withContext
+
+        val response = httpClient.get(
+            "${SupabaseClientProvider.SUPABASE_URL}/rest/v1/time_requests"
+        ) {
+            header("Authorization", "Bearer $accessToken")
+            header("apikey", SupabaseClientProvider.SUPABASE_ANON_KEY)
+            parameter("device_id", "eq.$deviceId")
+            parameter("status", "eq.APPROVED")
+            parameter("select", "id,minutes_approved,resolved_at")
+            // Most recent first so a 4xx mid-list doesn't strand old rows.
+            parameter("order", "resolved_at.desc")
+        }
+
+        if (!response.status.isSuccess()) {
+            android.util.Log.w(
+                "SyncManager",
+                "pullApprovedRequests: server returned ${response.status}"
+            )
+            return@withContext
+        }
+
+        // Use a local Json config with `ignoreUnknownKeys = true` — the mock
+        // server (and PostgREST in general) returns the full row regardless of
+        // the `select=…` filter, so extra fields like `device_id`,
+        // `minutes_requested`, `reason`, `status`, `created_at` would
+        // otherwise trigger a SerializationException that the outer
+        // try/catch in `sync()` would silently swallow.
+        val pullJson = Json { ignoreUnknownKeys = true }
+        val rows = pullJson.decodeFromString<List<ApprovedRequestDto>>(response.bodyAsText())
+        if (rows.isEmpty()) return@withContext
+
+        val timeExtraRepo = TimeExtraRepository.getInstance(context)
+        var applied = 0
+        for (row in rows) {
+            val minutes = if (row.minutes_approved > 0) row.minutes_approved else 0
+            if (minutes <= 0) continue
+            val expiresAtMs = row.resolved_at?.let { parseIsoToEpochMs(it) }
+            val result = timeExtraRepo.processApproval(
+                requestId = row.id,
+                approvedMinutes = minutes,
+                expiresAt = expiresAtMs
+            )
+            if (result is GrantResult.Success) applied++
+        }
+        android.util.Log.d(
+            "SyncManager",
+            "pullApprovedRequests: applied=$applied of ${rows.size} approved rows for device=$deviceId"
+        )
+    }
+
+    private fun parseIsoToEpochMs(iso: String): Long? = try {
+        java.time.Instant.parse(iso).toEpochMilli()
+    } catch (e: Exception) {
+        null
     }
 
     suspend fun drainOutbox(): SyncResult = withContext(Dispatchers.IO) {

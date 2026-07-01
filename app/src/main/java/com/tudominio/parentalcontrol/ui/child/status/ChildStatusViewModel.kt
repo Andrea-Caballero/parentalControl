@@ -4,7 +4,9 @@ import android.content.Context
 import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.tudominio.parentalcontrol.auth.DeviceAuthManager
 import com.tudominio.parentalcontrol.data.db.ParentalDatabase
+import com.tudominio.parentalcontrol.data.model.GrantEntity
 import com.tudominio.parentalcontrol.data.model.TimeRequestEntity
 import com.tudominio.parentalcontrol.health.DegradationAlertManager
 import com.tudominio.parentalcontrol.health.HealthChecker
@@ -27,7 +29,8 @@ class ChildStatusViewModel @Inject constructor(
     private val database: ParentalDatabase,
     private val rewardManager: RewardManager,
     private val degradationAlertManager: DegradationAlertManager,
-    private val timeProvider: TimeProvider = DefaultTimeProvider(context)
+    private val timeProvider: TimeProvider = DefaultTimeProvider(context),
+    private val authManager: DeviceAuthManager = DeviceAuthManager.getInstance(context)
 ) : ViewModel() {
 
     companion object {
@@ -108,13 +111,28 @@ class ChildStatusViewModel @Inject constructor(
 
     private fun startObserving() {
         viewModelScope.launch {
+            // SDD 2026-07-01: include active extra_time grants in the
+            // `timeRemaining` calculation so a parent approve via the
+            // post-boot pullApprovedRequests immediately extends the
+            // child's visible minutes-restantes (no app restart needed).
+            // The grant table is observed via Flow so the UI updates the
+            // moment processApproval inserts a row.
+            val deviceId = authManager.deviceId.value
+            val grantsFlow: Flow<Long> = if (deviceId != null) {
+                database.grantDao()
+                    .getGrantsForDeviceFlow(deviceId)
+                    .map { grants -> grants.sumActiveMinutes(timeProvider) }
+            } else {
+                flowOf(0L)
+            }
             combine(
                 _timeUsedToday,
-                _dailyLimit
-            ) { used, limit ->
-                Pair(used, limit)
-            }.collect { (used, limit) ->
-                _timeRemaining.value = maxOf(0, limit - used)
+                _dailyLimit,
+                grantsFlow
+            ) { used, limit, grantsMinutes ->
+                Triple(used, limit, grantsMinutes)
+            }.collect { (used, limit, grantsMinutes) ->
+                _timeRemaining.value = maxOf(0, limit - used + grantsMinutes)
                 updateWarningLevel()
                 updateUiState()
             }
@@ -350,6 +368,18 @@ enum class WarningLevel {
     WARNING,
     CRITICAL,
     BLOCKED
+}
+
+/**
+ * Sum of the `minutes` field for grants whose `expires_at` is still in the
+ * future. Anything expired is excluded. Mirrors the filter used by
+ * [com.tudominio.parentalcontrol.data.repository.TimeExtraRepository.getActiveExtraTimeGrant]
+ * so the home screen `timeRemaining` agrees with the `+15 min extra`
+ * chip / countdown rendered by `TimeExtraViewModel`.
+ */
+private fun List<GrantEntity>.sumActiveMinutes(timeProvider: TimeProvider): Long {
+    val now = timeProvider.wallInstant().toString()
+    return filter { it.expires_at > now }.sumOf { it.minutes.toLong() }
 }
 
 sealed class ChildStatusEvent {

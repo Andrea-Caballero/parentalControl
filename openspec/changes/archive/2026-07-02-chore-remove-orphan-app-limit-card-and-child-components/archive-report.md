@@ -193,3 +193,75 @@ for all three archived changes:
   `chore-remove-orphan-requesttime-dialog`,
   `chore-remove-orphan-app-limit-card-and-child-components`) have now executed
   this gate without surprises after the initial PR #11 lesson.
+
+## Cross-device E2E ceiling (post-archive verification attempt)
+
+On 2026-07-02 (post-archive), a cross-device E2E pass was attempted on
+POCO + OPPO with the shared mock server to confirm the deletions in this
+epic do not regress the wired end-to-end path.
+
+**Smoke-test layer (PASS):** both apps boot into their surviving UIs
+without `FATAL EXCEPTION`, the wired `DegradedAlertDialog` (in the surviving
+siblings of `ui/child/components/`) renders on both devices, and zero logcat
+references to any deleted symbol (`ChildViewModel`, `HomeScreen`, `BlockScreen`,
+`UsageStatsSheet`, `UsageStatRow`, `RequestTimeDialog`, `AppLimitCard`,
+`ChildComponents`) fire during launch or first-level navigation.
+
+**Build-flag wiring (PASS):** the previous E2E attempt's APK was built
+without `-PenableSharedMock=true` (BuildConfig.USE_SHARED_MOCK defaulted to
+false, which routes each device to per-process static fixtures). The follow-up
+rebuild with the flag set is clean — `BuildConfig.java` shows
+`USE_SHARED_MOCK = true` and `SHARED_MOCK_URL = "http://192.168.1.79:8787"`.
+
+**Cross-device data-path layer (NOT exercised post-merge):** three
+independent device-side blockers prevented driving the canonical
+time-request / parent-approve / child-sees-grant-updated flow:
+
+1. POCO has WiFi OFF (mobile-data-only on carrier NAT); the baked-in host
+   URL is unreachable.
+2. POCO's MIUI lock screen is not dismissible programmatically
+   (`wm dismiss-keyguard` is a no-op on this MIUI build).
+3. OPPO's adb authorization was inadvertently revoked during the rebuild
+   attempt — an `adb kill-server` mid-session invalidated the remembered
+   adb-key fingerprint and re-authorization requires a user tap on the phone.
+4. (Non-fatal, pre-existing) POCO's MIUI `user` build does not relay data
+   over `adb reverse`; OPPO's ColorOS does.
+
+**User decision:** accept the smoke-test + gradle + build-flag layers as
+the verification ceiling for the orphan-cleanup epic. The cross-device
+data-path round-trip was already proven end-to-end on the same POCO+OPPO
+hardware pair in pre-epic sessions (`1ca2fe3` grant-observability work and
+`05bd671` close-the-end-to-end-path work). The deletions in this epic are
+scoped to orphan code with zero callers, so the data path is structurally
+unaffected; re-driving it post-merge would be marginal security at high cost.
+
+**Verification ceiling summary:**
+
+| Layer | Status |
+|-------|--------|
+| `./gradlew :app:assembleDebug` | PASS |
+| `./gradlew testDebugUnitTest` | PASS (4 pre-existing failures, 0 new from epic) |
+| `./gradlew :app:ktlintCheck` | PASS (35 pre-existing violations in 6 untouched files, 0 new) |
+| `./gradlew :app:detekt` | PASS (27 pre-existing findings, 0 new) |
+| Cross-device launch + nav smoke | PASS (zero FATAL, zero refs to deleted symbols) |
+| Build-flag wiring | PASS (BuildConfig.USE_SHARED_MOCK=true) |
+| Cross-device data-path round-trip post-merge | NOT exercised (device-side blockers) |
+
+## Procedural lessons learned (for future verification runs)
+
+- **ALWAYS pass `-PenableSharedMock=true -PsharedMockUrl=http://<host-ip>:8787`**
+  when building the APK that will run cross-device E2E. Default
+  `BuildConfig.USE_SHARED_MOCK = false` routes each device to per-process
+  static fixtures, and pairing / time_requests / reward flows will not be
+  cross-device observable.
+- **DO NOT run `adb kill-server` mid-session** if any device's adb
+  authorization is "remembered". It invalidates the adb-key fingerprint
+  and re-authorization must happen via a manual tap on the phone. Prefer
+  `adb reconnect <serial>` for transport-level diagnostics.
+- **Top-level type enumeration, not just filename-class matching**, is the
+  correct shape for any "delete orphan file" chore's Phase 1 verification
+  gate. Enumerate every `^(class|data class|object|interface|sealed|enum|fun)`
+  declaration in each target file first, then re-grep each symbol
+  repo-wide as a whole-word regex. This caught the PR #11 attempt-1
+  blocker (`AppUsage` data class at the bottom of `ChildViewModel.kt`) and
+  is now encoded in all subsequent `tasks.md` files of this pattern.

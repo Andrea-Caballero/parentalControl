@@ -214,5 +214,5 @@ Slice 2 attempt 1 hit `assembleDebug` because the original Phase 1 grep only mat
 ## Apply log
 
 - 2026-07-02 — Slice 1 merged via PR #10 (merge: `8631c16`; underlying dedupe commit: `deb3c31`).
-- 2026-07-02 — Slice 2 (with scope expansion) opened via PR #<N> (pending — fill in once user merges) from `chore/delete-orphan-child-vm-and-screens`.
+- 2026-07-02 — Slice 2 (with scope expansion) opened via PR #11 from `chore/delete-orphan-child-vm-and-screens`.
   - Scope expanded after slice 2 attempt 1 hit `assembleDebug` with 19 unresolved-`AppUsage` errors caused by `data class AppUsage` living at the bottom of `ChildViewModel.kt` (lines 170-183). Expansion deletes `UsageStatsSheet` + `UsageStatRow` Composables in `ChildComponents.kt` per user Option-2 approval. Phase 1 grep gate also strengthened (tasks 1.8-1.10) to enumerate every top-level type per target file before re-grepping repo-wide, so future "delete orphan files" SDD chores don't repeat the blind spot.

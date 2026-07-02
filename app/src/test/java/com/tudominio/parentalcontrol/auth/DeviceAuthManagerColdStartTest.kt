@@ -2,9 +2,10 @@ package com.tudominio.parentalcontrol.auth
 
 import android.content.Context
 import androidx.test.core.app.ApplicationProvider
+import io.mockk.every
+import io.mockk.spyk
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Before
 import org.junit.Test
@@ -26,9 +27,21 @@ import org.robolectric.annotation.Config
  *
  * The 4 cases below pin the cold-start invariant:
  *  - **1.1 RED** (`init_with_valid_encrypted_session_populates_accessToken`):
- *    a valid `encrypted_session` blob must survive a manager-instance
- *    reset; the restored token must equal the token the first manager
- *    issued. Today it does not — `loadPersistedState` doesn't decrypt.
+ *    when [DeviceAuthManager.restoreSession] returns a non-null
+ *    [StoredSession], the new manager instance's `init {}` →
+ *    `loadPersistedState` must populate `currentAccessToken`,
+ *    `currentRefreshToken`, and `sessionExpiresAt`. Today `loadPersistedState`
+ *    doesn't decrypt the blob, so the in-memory fields stay null.
+ *    Verified via `spyk(realManager)` + reflection-based `loadPersistedState`
+ *    re-invocation — Robolectric 4.10.3 does not provide
+ *    `KeyStore.getInstance("AndroidKeyStore")` (the project's JCA provider
+ *    is BouncyCastle, which can't generate the GCM key the production
+ *    `encryptWithKeystore` writes), so the standard "write blob via
+ *    `authenticateOrCreate` no-arg, reset singleton, observe restored token"
+ *    round-trip is not reproducible under the unit-test source set. The
+ *    spy-driven approach tests the exact fix code path
+ *    (`restoreSession()?.let { stored -> ... }`) with a controlled
+ *    `StoredSession` instead of the real (Robolectric-incompatible) decrypt.
  *  - **1.2 RED** (`init_with_isPaired_but_missing_deviceId_sets_PAIRED_when_role_persisted`):
  *    OPPO edge case where `is_paired=true` + `role=PARENT` are persisted
  *    but `device_id` is missing. Today the `when` falls through to
@@ -46,8 +59,8 @@ import org.robolectric.annotation.Config
  * Sibling to `DeviceAuthManagerRoleTest`, which covers the role-aware
  * `authenticateOrCreate(role: Role)` overload and does NOT exercise the
  * cold-start path. Both files share the `device_auth_prefs` SharedPreferences
- * namespace; `setUp` clears both the prefs and the
- * [DeviceAuthManager] singleton so each test sees a true cold start.
+ * namespace; `setUp` clears both the prefs and the [DeviceAuthManager]
+ * singleton so each test sees a true cold start.
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [33])
@@ -81,39 +94,84 @@ class DeviceAuthManagerColdStartTest {
         field.set(null, null)
     }
 
+    private fun newRealManagerForSpy(): DeviceAuthManager {
+        val ctor = DeviceAuthManager::class.java
+            .getDeclaredConstructor(Context::class.java)
+        ctor.isAccessible = true
+        return ctor.newInstance(context) as DeviceAuthManager
+    }
+
+    private fun readStringField(manager: Any, name: String): String? {
+        val f = manager::class.java.getDeclaredField(name)
+        f.isAccessible = true
+        return f.get(manager) as String?
+    }
+
+    private fun readLongField(manager: Any, name: String): Long {
+        val f = manager::class.java.getDeclaredField(name)
+        f.isAccessible = true
+        return f.get(manager) as Long
+    }
+
+    private fun invokeLoadPersistedState(manager: Any) {
+        val m = manager::class.java.getDeclaredMethod("loadPersistedState")
+        m.isAccessible = true
+        m.invoke(manager)
+    }
+
     /**
-     * RED on `master = 7cd7092`: cold start must restore the encrypted token.
+     * RED on `master = 7cd7092`: cold-start restore must populate the 3
+     * token fields when [DeviceAuthManager.restoreSession] returns a valid
+     * [StoredSession].
      *
-     * Uses the no-arg [DeviceAuthManager.authenticateOrCreate] (which goes
-     * through `MockSupabaseEngine` under `USE_MOCK_SUPABASE=true` in debug
-     * and writes the `encrypted_session` blob via `persistSession`). The
-     * role-aware overload writes `role` only — not the blob — and would
-     * leave test 1.1 always-GREEN, which defeats the RED gate.
+     * Verified via `spyk` + reflection (see class kdoc for why the standard
+     * "round-trip via real keystore" approach is unavailable in Robolectric
+     * 4.10.3). The test exercises the EXACT fix code path
+     * (`restoreSession()?.let { stored -> currentAccessToken = ...; ... }`),
+     * with a controlled [StoredSession] injected through the spy stub.
      */
     @Test
-    fun `init with valid encrypted session populates accessToken`() = runTest {
-        val writer = freshManager()
-        writer.authenticateOrCreate()
-        val tokenAfterAuth = writer.getAccessToken()
-        assertNotNull("seed: token must be set after authenticateOrCreate", tokenAfterAuth)
+    fun `init with valid encrypted session populates accessToken`() {
+        val expected = StoredSession(
+            accessToken = "restored-access-token-abc",
+            refreshToken = "restored-refresh-token-xyz",
+            expiresAt = 9999999999L,
+            deviceId = "device-anonymous-restored",
+            userId = "user-restored"
+        )
+        val real = newRealManagerForSpy()
+        val spy = spyk(real, recordPrivateCalls = false)
+        every { spy.restoreSession() } returns expected
 
-        // Simulate process death: clear the in-memory singleton. The next
-        // getInstance creates a fresh manager whose `init {}` runs
-        // `loadPersistedState`. On master, `loadPersistedState` does NOT
-        // decrypt `encrypted_session`; this assertion is RED.
-        resetManagerInstance()
-        val coldStart = freshManager()
+        invokeLoadPersistedState(spy)
+
+        // The fix's `restoreSession()?.let { stored -> ... }` block must
+        // populate the same 3 fields that the canonical populate at lines
+        // 156-160 of `authenticateOrCreate()` populates. Before the fix,
+        // `loadPersistedState` did not touch these at all and they stayed
+        // at their default (`null` / `0`), making the assertions below
+        // RED on master.
         assertEquals(
-            "cold start must restore the same access token the first manager issued",
-            tokenAfterAuth,
-            coldStart.getAccessToken()
+            "loadPersistedState must populate currentAccessToken from restored session",
+            expected.accessToken,
+            readStringField(spy, "currentAccessToken")
+        )
+        assertEquals(
+            "loadPersistedState must populate currentRefreshToken from restored session",
+            expected.refreshToken,
+            readStringField(spy, "currentRefreshToken")
+        )
+        assertEquals(
+            "loadPersistedState must populate sessionExpiresAt from restored session",
+            expected.expiresAt,
+            readLongField(spy, "sessionExpiresAt")
         )
     }
 
     /**
      * RED on `master = 7cd7092`: OPPO edge case where `is_paired=true` +
      * `role=PARENT` are persisted but `device_id` is missing. Today the
-     * `when` block at `loadPersistedState` lines 481-485 falls through to
+     * `when` block at `loadPersistedState` falls through to
      * `SessionState.NONE`.
      */
     @Test

@@ -473,15 +473,32 @@ class DeviceAuthManager private constructor(
     }
 
     private fun loadPersistedState() {
-        val deviceId = context.getSharedPreferences("device_auth_prefs", Context.MODE_PRIVATE)
-            .getString("device_id", null)
-        val isPaired = context.getSharedPreferences("device_auth_prefs", Context.MODE_PRIVATE)
-            .getBoolean("is_paired", false)
+        val prefs = context.getSharedPreferences("device_auth_prefs", Context.MODE_PRIVATE)
+        val deviceId = prefs.getString("device_id", null)
+        val isPaired = prefs.getBoolean("is_paired", false)
+        val hasRole = prefs.contains("role")
         _deviceId.value = deviceId
         _sessionState.value = when {
-            isPaired && deviceId != null -> SessionState.PAIRED
+            isPaired && (deviceId != null || hasRole) -> SessionState.PAIRED
             deviceId != null -> SessionState.ANONYMOUS
+            hasRole -> SessionState.PAIRED // OPPO: role + is_paired without device_id (best-effort, logged below)
             else -> SessionState.NONE
+        }
+        if (isPaired && deviceId == null) {
+            Log.w(
+                TAG,
+                "is_paired=true but device_id missing; falling back to role-aware PAIRED state"
+            )
+        }
+
+        // Cold-start restore: decrypt the persisted session and push it into the
+        // in-memory token fields so any `getAccessToken()` consumer that runs
+        // before DeviceAuthService.start() sees a non-null token. Mirrors the
+        // populate block inside `authenticateOrCreate()` above.
+        restoreSession()?.let { stored ->
+            currentAccessToken = stored.accessToken
+            currentRefreshToken = stored.refreshToken
+            sessionExpiresAt = stored.expiresAt
         }
     }
 

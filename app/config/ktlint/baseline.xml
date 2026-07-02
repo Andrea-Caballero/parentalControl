@@ -1031,31 +1031,6 @@
 		<error line="394" column="1" source="no-trailing-spaces" />
 		<error line="396" column="1" source="no-trailing-spaces" />
 	</file>
-	<file name="src/main/java/com/tudominio/parentalcontrol/ui/child/screens/BlockScreen.kt">
-		<error line="4" column="1" source="no-wildcard-imports" />
-		<error line="8" column="1" source="no-wildcard-imports" />
-		<error line="9" column="1" source="no-wildcard-imports" />
-		<error line="10" column="1" source="no-wildcard-imports" />
-		<error line="19" column="1" source="no-unused-imports" />
-		<error line="20" column="1" source="no-unused-imports" />
-		<error line="94" column="62" source="no-trailing-spaces" />
-		<error line="95" column="59" source="indent" />
-		<error line="97" column="1" source="no-trailing-spaces" />
-		<error line="213" column="36" source="no-trailing-spaces" />
-		<error line="215" column="39" source="no-trailing-spaces" />
-		<error line="217" column="38" source="no-trailing-spaces" />
-		<error line="219" column="39" source="no-trailing-spaces" />
-		<error line="221" column="36" source="no-trailing-spaces" />
-	</file>
-	<file name="src/main/java/com/tudominio/parentalcontrol/ui/child/screens/HomeScreen.kt">
-		<error line="3" column="1" source="no-wildcard-imports" />
-		<error line="4" column="1" source="no-wildcard-imports" />
-		<error line="8" column="1" source="no-wildcard-imports" />
-		<error line="9" column="1" source="no-wildcard-imports" />
-		<error line="10" column="1" source="no-wildcard-imports" />
-		<error line="15" column="1" source="no-wildcard-imports" />
-		<error line="99" column="43" source="no-trailing-spaces" />
-	</file>
 	<file name="src/main/java/com/tudominio/parentalcontrol/ui/child/status/ChildStatusScreen.kt">
 		<error line="3" column="1" source="no-wildcard-imports" />
 		<error line="4" column="1" source="no-wildcard-imports" />
@@ -1287,12 +1262,6 @@
 	</file>
 	<file name="src/main/java/com/tudominio/parentalcontrol/ui/theme/Type.kt">
 		<error line="1" column="1" source="final-newline" />
-	</file>
-	<file name="src/main/java/com/tudominio/parentalcontrol/viewmodel/ChildViewModel.kt">
-		<error line="6" column="1" source="no-unused-imports" />
-		<error line="77" column="1" source="no-trailing-spaces" />
-		<error line="93" column="1" source="no-trailing-spaces" />
-		<error line="151" column="1" source="no-trailing-spaces" />
 	</file>
 	<file name="src/main/java/com/tudominio/parentalcontrol/viewmodel/TimeExtraViewModel.kt">
 		<error line="8" column="1" source="no-unused-imports" />

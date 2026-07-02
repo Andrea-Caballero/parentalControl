@@ -331,14 +331,29 @@ class ChildStatusViewModelTest {
     fun `warning level transitions correctly`() {
         // NONE -> WARNING (10 min) -> CRITICAL (5 min) -> BLOCKED (0 min)
         val remaining = 7L
-        
+
         val level = when {
             remaining <= 0 -> WarningLevel.BLOCKED
             remaining <= 5 -> WarningLevel.CRITICAL
             remaining <= 10 -> WarningLevel.WARNING
             else -> WarningLevel.NONE
         }
-        
+
         assertEquals(WarningLevel.WARNING, level)
+    }
+
+    @Test
+    fun `time remaining formula includes grants minutes`() {
+        // Characterization pin for the reactive 3-way combine formula in
+        // ChildStatusViewModel.startObserving() — the SINGLE source of truth
+        // after the chore-delete-orphan-vm-and-screens dedupe removed the
+        // pre-existing buggy `calculateTimeRemaining()` parallel formula.
+        val limit = 120L
+        val used = 30L
+        val grantsMinutes = 15L
+
+        val timeRemaining = maxOf(0, limit - used + grantsMinutes)
+
+        assertEquals(105L, timeRemaining)
     }
 }

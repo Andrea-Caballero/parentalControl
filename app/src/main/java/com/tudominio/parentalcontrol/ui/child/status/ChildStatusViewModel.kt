@@ -98,7 +98,6 @@ class ChildStatusViewModel @Inject constructor(
                 val totalUsed = usages.sumOf { it.usage_minutes }.toLong()
                 _timeUsedToday.value = totalUsed
 
-                calculateTimeRemaining()
                 loadPendingRequest()
                 loadRewardBalance()
                 updateUiState()
@@ -133,6 +132,11 @@ class ChildStatusViewModel @Inject constructor(
                 Triple(used, limit, grantsMinutes)
             }.collect { (used, limit, grantsMinutes) ->
                 _timeRemaining.value = maxOf(0, limit - used + grantsMinutes)
+                _nextBlockTime.value = if (_timeRemaining.value > 0) {
+                    timeProvider.wallInstant().plusSeconds(_timeRemaining.value * 60)
+                } else {
+                    timeProvider.wallInstant()
+                }
                 updateWarningLevel()
                 updateUiState()
             }
@@ -187,19 +191,6 @@ class ChildStatusViewModel @Inject constructor(
                 Log.e(TAG, "Error checking degradation: ${e.message}")
             }
         }
-    }
-
-    private fun calculateTimeRemaining() {
-        val remaining = maxOf(0, _dailyLimit.value - _timeUsedToday.value)
-        _timeRemaining.value = remaining
-
-        if (remaining > 0) {
-            _nextBlockTime.value = timeProvider.wallInstant().plusSeconds(remaining * 60)
-        } else {
-            _nextBlockTime.value = timeProvider.wallInstant()
-        }
-
-        updateWarningLevel()
     }
 
     private fun updateWarningLevel() {
@@ -275,7 +266,6 @@ class ChildStatusViewModel @Inject constructor(
             _allowedAppsNow.value = data.allowedApps
             _pendingTimeRequest.value = data.pendingRequest
 
-            calculateTimeRemaining()
             updateUiState()
 
             if (data.warningTriggered != null) {

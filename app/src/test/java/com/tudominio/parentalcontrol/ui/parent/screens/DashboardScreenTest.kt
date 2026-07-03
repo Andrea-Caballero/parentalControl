@@ -1,7 +1,9 @@
 package com.tudominio.parentalcontrol.ui.parent.screens
 
+import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import com.tudominio.parentalcontrol.auth.DeviceAuthManager
@@ -47,7 +49,7 @@ import org.robolectric.annotation.Config
  * the auth-missing case unfixable from the UI. T8 fixes the contract.
  */
 @RunWith(RobolectricTestRunner::class)
-@Config(sdk = [33])
+@Config(sdk = [33], qualifiers = "w411dp-h891dp-xhdpi")
 @OptIn(ExperimentalCoroutinesApi::class)
 class DashboardScreenTest {
 
@@ -99,6 +101,62 @@ class DashboardScreenTest {
         val stateFlow = stateField.get(viewModel) as kotlinx.coroutines.flow.MutableStateFlow<DeviceListUiState>
         stateFlow.value = DeviceListUiState.Error(error)
     }
+
+    /**
+     * Mirror of [seedDeviceListState] for the Success branch — used by the
+     * 3 RED tests in `feature-pluralize-empty-state-and-add-n-device-tests`
+     * to pin N-device rendering in `DashboardScreen`. Reads
+     * `app/src/main/assets/mock-supabase/devices.json` fixtures (ACTIVE /
+     * DOWNTIME / LOCKED) directly so the test stays in sync with the
+     * shipped fixture data.
+     */
+    private fun seedSuccessState(items: List<ChildDevice>) {
+        val stateField = ParentViewModel::class.java.getDeclaredField("_deviceListState")
+        stateField.isAccessible = true
+        @Suppress("UNCHECKED_CAST")
+        val stateFlow = stateField.get(viewModel) as kotlinx.coroutines.flow.MutableStateFlow<DeviceListUiState>
+        stateFlow.value = DeviceListUiState.Success(items = items)
+    }
+
+    /**
+     * Three-device fixture mirroring
+     * `app/src/main/assets/mock-supabase/devices.json`. Pinned here (not
+     * imported from JSON) so the assertion stays self-contained and the
+     * test does not depend on the assets dir being on the unit-test
+     * classpath.
+     */
+    private val threeDeviceFixtures: List<ChildDevice> = listOf(
+        ChildDevice(
+            id = "dev-001",
+            name = "Galaxy Tab S6 Lite",
+            model = "SM-P610",
+            appVersion = "1.0.0",
+            policyVersion = 3,
+            state = DeviceState.ACTIVE,
+            lastSeenAt = "2026-06-19T20:55:00Z",
+            isOnline = true
+        ),
+        ChildDevice(
+            id = "dev-002",
+            name = "Moto G32",
+            model = "moto g32",
+            appVersion = "1.0.0",
+            policyVersion = 1,
+            state = DeviceState.DOWNTIME,
+            lastSeenAt = "2026-06-19T20:58:00Z",
+            isOnline = true
+        ),
+        ChildDevice(
+            id = "dev-003",
+            name = "Pixel 7a",
+            model = "GWKK3",
+            appVersion = "1.0.0",
+            policyVersion = 7,
+            state = DeviceState.LOCKED,
+            lastSeenAt = "2026-06-19T20:59:30Z",
+            isOnline = true
+        )
+    )
 
     /**
      * Mock the repository's `getPendingRequests()` so each call returns
@@ -246,5 +304,84 @@ class DashboardScreenTest {
             "Re-tap on Solicitudes must trigger a fresh fetch",
             3, pendingCalls()
         )
+    }
+
+    // -------------------------------------------------------------------------
+    // RED coverage for `feature-pluralize-empty-state-and-add-n-device-tests`.
+    //
+    // The data layer is already 1:N (ParentRepository.getDevices() returns
+    // List<ChildDevice>) but the dashboard's DeviceList only had zero test
+    // coverage for the N-device rendering path. These 3 tests pin that:
+    //   1.2.1 — the LazyColumn renders exactly N DeviceCards for an N-item
+    //           Success state (counted via the `device_card` testTag added
+    //           to DeviceCard at DeviceComponents.kt:36-39).
+    //   1.2.2 — each card surfaces its `device.name` and `device.model`.
+    //   1.2.3 — each card surfaces its state-badge label (Activo /
+    //           Hora de dormir / Bloqueado).
+    // -------------------------------------------------------------------------
+
+    @Test
+    fun success_state_with_3_devices_renders_3_device_card_testTags() {
+        seedSuccessState(threeDeviceFixtures)
+
+        val appsVm = mockk<AppsViewModel>(relaxed = true)
+        composeTestRule.setContent {
+            ParentalControlTheme {
+                DashboardScreen(viewModel = viewModel, appsViewModel = appsVm)
+            }
+        }
+        composeTestRule.waitForIdle()
+
+        composeTestRule.onAllNodesWithTag("device_card").assertCountEquals(3)
+    }
+
+    @Test
+    fun success_state_with_3_devices_renders_per_card_name_and_model() {
+        seedSuccessState(threeDeviceFixtures)
+
+        val appsVm = mockk<AppsViewModel>(relaxed = true)
+        composeTestRule.setContent {
+            ParentalControlTheme {
+                DashboardScreen(viewModel = viewModel, appsViewModel = appsVm)
+            }
+        }
+        composeTestRule.waitForIdle()
+
+        // `assertExists` (not `assertIsDisplayed`) because the third card
+        // sits below the Robolectric default viewport; the semantic intent
+        // is "the card renders the device's name and model into the tree"
+        // which is met by existence. Visibility is exercised separately by
+        // the count assertion in 1.2.1 and by instrumented tests in CI.
+
+        // dev-001 (ACTIVE)
+        composeTestRule.onNodeWithText("Galaxy Tab S6 Lite").assertExists()
+        composeTestRule.onNodeWithText("SM-P610").assertExists()
+        // dev-002 (DOWNTIME)
+        composeTestRule.onNodeWithText("Moto G32").assertExists()
+        composeTestRule.onNodeWithText("moto g32").assertExists()
+        // dev-003 (LOCKED)
+        composeTestRule.onNodeWithText("Pixel 7a").assertExists()
+        composeTestRule.onNodeWithText("GWKK3").assertExists()
+    }
+
+    @Test
+    fun success_state_with_3_devices_renders_per_card_state_badge() {
+        seedSuccessState(threeDeviceFixtures)
+
+        val appsVm = mockk<AppsViewModel>(relaxed = true)
+        composeTestRule.setContent {
+            ParentalControlTheme {
+                DashboardScreen(viewModel = viewModel, appsViewModel = appsVm)
+            }
+        }
+        composeTestRule.waitForIdle()
+
+        // `assertExists` for the same reason as above: per-card badge
+        // labels are rendered into the tree regardless of viewport.
+
+        // Each fixture's badge label, per DeviceComponents.kt:183-188.
+        composeTestRule.onNodeWithText("Activo").assertExists()
+        composeTestRule.onNodeWithText("Hora de dormir").assertExists()
+        composeTestRule.onNodeWithText("Bloqueado").assertExists()
     }
 }

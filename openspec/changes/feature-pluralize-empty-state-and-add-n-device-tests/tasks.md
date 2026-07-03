@@ -85,7 +85,7 @@ No commits. Goal: confirm the subtitle change is a single-line, single-call-site
 
 ## Phase 3 — GREEN fix (2 commits, the second production-side)
 
-- [ ] **3.1 — Edit `DashboardScreen.kt:311`.**
+- [x] **3.1 — Edit `DashboardScreen.kt:311`.**
   Change line 311 from
   ```kotlin
   subtitle = "Empareja un dispositivo para comenzar"
@@ -96,13 +96,13 @@ No commits. Goal: confirm the subtitle change is a single-line, single-call-site
   ```
   Single-line `git apply` or exact-line edit. Title at `:310`, icon at `:309`, Solicitudes empty state at `:380-384`, `+` FAB at `:188`, bell icon at `:184` all untouched.
 
-- [ ] **3.2 — Add `Modifier.testTag("device_card")` per Phase 1.1.**
+- [x] **3.2 — Add `Modifier.testTag("device_card")` per Phase 1.1.**
   Apply the `DeviceComponents.kt:36-39` edit if not already done in the test-only commit (apply-phase decision based on Robolectric tolerance of missing tag).
 
-- [ ] **3.3 — GREEN confirmation.**
+- [x] **3.3 — GREEN confirmation.**
   `./gradlew :app:testDebugUnitTest --tests "com.tudominio.parentalcontrol.ui.parent.screens.DashboardScreenTest" --rerun-tasks`. All 6 tests pass (3 pre-existing + 3 new).
 
-- [ ] **3.4 — Commit.**
+- [x] **3.4 — Commit.**
   ```
   feat(parent-dashboard): pluralize empty-state subtitle and tag DeviceCard for tests
   ```
@@ -110,13 +110,13 @@ No commits. Goal: confirm the subtitle change is a single-line, single-call-site
 
 ## Phase 4 — Build verifier
 
-- [ ] **4.1 — `./gradlew :app:assembleDebug`** — green, no new warnings on the 2 touched files (`DashboardScreen.kt`, `DeviceComponents.kt`).
+- [x] **4.1 — `./gradlew :app:assembleDebug`** — green, no new warnings on the 2 touched files (`DashboardScreen.kt`, `DeviceComponents.kt`).
 
-- [ ] **4.2 — `./gradlew :app:testDebugUnitTest`** — full `:app` unit suite green. Pre-existing failures on `NetworkModuleTest`, `BootReceiverTest`, `NavGraphTest` (per auth-fix archive-report §4.3 precedent) remain unchanged.
+- [x] **4.2 — `./gradlew :app:testDebugUnitTest`** — full `:app` unit suite green. Pre-existing failures on `NetworkModuleTest`, `BootReceiverTest`, `NavGraphTest` (per auth-fix archive-report §4.3 precedent) remain unchanged.
 
-- [ ] **4.3 — `./gradlew :app:ktlintCheck`** — green. Pre-existing `WorkersTest.kt` violations stay pre-existing; no new violations on the 2 touched files. `:app:detekt` likewise.
+- [x] **4.3 — `./gradlew :app:ktlintCheck`** — green. Pre-existing `WorkersTest.kt` violations stay pre-existing; no new violations on the 2 touched files. `:app:detekt` likewise.
 
-- [ ] **4.4 — Final repo-wide grep on the new surfaces.**
+- [x] **4.4 — Final repo-wide grep on the new surfaces.**
   ```bash
   grep -rn "Empareja uno o más dispositivos" app/src
   grep -rn "testTag(\"device_card\"" app/src

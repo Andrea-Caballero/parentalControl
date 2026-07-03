@@ -35,7 +35,9 @@ fun DeviceCard(
 
     Card(
         onClick = onClick,
-        modifier = Modifier.fillMaxWidth()
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag("device_card")
     ) {
         Column(
             modifier = Modifier.padding(16.dp)

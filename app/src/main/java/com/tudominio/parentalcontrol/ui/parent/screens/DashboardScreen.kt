@@ -308,7 +308,7 @@ private fun DevicesTab(
             EmptyState(
                 icon = Icons.Default.Person,
                 title = "Sin dispositivos",
-                subtitle = "Empareja un dispositivo para comenzar"
+                subtitle = "Empareja uno o más dispositivos"
             )
         }
         is DeviceListUiState.Error -> {

@@ -2,6 +2,7 @@ package com.tudominio.parentalcontrol.data.repository
 
 import android.content.Context
 import com.tudominio.parentalcontrol.auth.DeviceAuthManager
+import com.tudominio.parentalcontrol.domain.model.Child
 import com.tudominio.parentalcontrol.domain.model.DeviceState
 import com.tudominio.parentalcontrol.domain.model.RequestStatus
 import com.tudominio.parentalcontrol.network.SupabaseClientProvider
@@ -126,6 +127,58 @@ class ParentRepositoryTest {
 
         private const val DENY_RESPONSE_BODY =
             """{"success":true,"request_id":"req-1","denied":true}"""
+
+        /**
+         * Three-device wire fixture for the `feat-multi-child-picker` parse
+         * tests (Phase A.1.1 of `tasks.md`). Mirrors the structural shape
+         * of the real `get-devices-for-parent` edge-function response AFTER
+         * A.4.2 (extends the `.select(...)` to include `child_id` +
+         * `child:children(...)`):
+         *
+         *   - dev-001: child = Lucas (child-lucas)
+         *   - dev-002: no child assigned (paired pre-migration)
+         *   - dev-003: child = Sofía (child-sofia)
+         *
+         * The repository's `DeviceDto.toChildDevice()` must hydrate
+         * `child = Child(...)` when both fields are present and leave it
+         * `null` when either is missing.
+         */
+        private const val THREE_DEVICES_WITH_CHILDREN_BODY = """[
+            {
+                "id":"dev-001",
+                "device_name":"Galaxy Tab S6 Lite",
+                "device_model":"SM-P610",
+                "os_version":"34",
+                "app_version":"1.0.0",
+                "device_state":"ACTIVE",
+                "policy_version":3,
+                "last_seen_at":"2026-06-19T20:55:00Z",
+                "child_id":"child-lucas",
+                "child_first_name":"Lucas"
+            },
+            {
+                "id":"dev-002",
+                "device_name":"Moto G32",
+                "device_model":"moto g32",
+                "os_version":"33",
+                "app_version":"1.0.0",
+                "device_state":"DOWNTIME",
+                "policy_version":1,
+                "last_seen_at":"2026-06-19T20:58:00Z"
+            },
+            {
+                "id":"dev-003",
+                "device_name":"Pixel 7a",
+                "device_model":"GWKK3",
+                "os_version":"35",
+                "app_version":"1.0.0",
+                "device_state":"LOCKED",
+                "policy_version":7,
+                "last_seen_at":"2026-06-19T20:59:30Z",
+                "child_id":"child-sofia",
+                "child_first_name":"Sofía"
+            }
+        ]"""
     }
 
     private fun requestBodyText(req: HttpRequestData): String {
@@ -523,5 +576,112 @@ class ParentRepositoryTest {
         assertEquals(1, captured.size)
         val req = captured.first()
         assertEquals("Bearer anon-CHILD-test-uuid", req.headers[HttpHeaders.Authorization])
+    }
+
+    /**
+     * Phase A.1.1 of `openspec/changes/2026-07-06-feat-multi-child-picker/tasks.md`
+     * — RED coverage for the new `child_id` + `child_first_name` wire
+     * fields that `get-devices-for-parent` returns after A.4.2.
+     *
+     * The 3-device fixture spans:
+     *   - dev-001 → Lucas (child-lucas)
+     *   - dev-002 → no child (paired before the migration; nullable FK)
+     *   - dev-003 → Sofía (child-sofia)
+     *
+     * `DeviceDto.toChildDevice()` MUST hydrate
+     * `ChildDevice.child = Child(id, parentId = "", firstName, createdAt = "", updatedAt = "")`
+     * when BOTH fields are present and leave it `null` when either is absent.
+     * The `parentId`/timestamps are empty on the device payload because
+     * the dashboard only renders `firstName`; a future `getChildren()`
+     * call hydrates the rest (design A.6).
+     *
+     * RED today: `DeviceDto` has no `child_id`/`child_first_name` fields,
+     * `ChildDevice` has no `child` field, so the assertions below fail to
+     * compile — a clean RED gate. GREEN lands in A.4.4.
+     */
+    @Test
+    fun getDevices_parses_child_fields_across_three_devices() = runTest {
+        val devicesCaptured = mutableListOf<HttpRequestData>()
+        val devicesEngine = MockEngine { request ->
+            devicesCaptured.add(request)
+            respond(
+                content = ByteReadChannel(THREE_DEVICES_WITH_CHILDREN_BODY),
+                status = HttpStatusCode.OK,
+                headers = headersOf(HttpHeaders.ContentType, "application/json")
+            )
+        }
+        val devicesClient = HttpClient(devicesEngine) {
+            install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
+        }
+        every { clientProvider.httpClient } returns devicesClient
+
+        try {
+            val result = repository.getDevices()
+
+            assertTrue("Expected Result.success, got $result", result.isSuccess)
+            val devices = result.getOrNull()
+            assertNotNull("devices should not be null", devices)
+            assertEquals("fixture must parse 3 devices, got ${devices?.size}", 3, devices?.size)
+
+            val byId = devices!!.associateBy { it.id }
+
+            // dev-001 → Lucas (child-lucas). The two nullable fields are
+            // both present, so the parser MUST hydrate a non-null Child.
+            val d1 = byId.getValue("dev-001")
+            assertNotNull(
+                "dev-001 must hydrate a non-null Child when child_id and " +
+                    "child_first_name are both present, got null",
+                d1.child
+            )
+            assertEquals(
+                "dev-001.child.firstName must equal the wire first_name",
+                "Lucas",
+                d1.child!!.firstName
+            )
+            assertEquals(
+                "dev-001.child.id must equal the wire child_id",
+                "child-lucas",
+                d1.child!!.id
+            )
+
+            // dev-002 → no child (paired pre-migration). Either field is
+            // missing on the wire, so the parser MUST leave `child` null.
+            val d2 = byId.getValue("dev-002")
+            assertEquals(
+                "dev-002 must stay null when child_id/child_first_name are " +
+                    "absent from the wire (pre-migration backfill boundary)",
+                null,
+                d2.child
+            )
+
+            // dev-003 → Sofía (child-sofia).
+            val d3 = byId.getValue("dev-003")
+            assertNotNull(
+                "dev-003 must hydrate a non-null Child, got null",
+                d3.child
+            )
+            assertEquals(
+                "dev-003.child.firstName must equal the wire first_name",
+                "Sofía",
+                d3.child!!.firstName
+            )
+            assertEquals(
+                "dev-003.child.id must equal the wire child_id",
+                "child-sofia",
+                d3.child!!.id
+            )
+
+            // Sanity: the parsed values are exactly the data-class shape
+            // the dashboard's `device_card_child_name` testTag will read.
+            val sofia: Child = d3.child!!
+            assertEquals(
+                "Child data class must be the new models.Child, not " +
+                    "the unrelated Child side-model",
+                "Sofía",
+                sofia.firstName
+            )
+        } finally {
+            devicesClient.close()
+        }
     }
 }

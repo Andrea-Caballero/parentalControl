@@ -4,6 +4,7 @@ import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import com.tudominio.parentalcontrol.auth.DeviceAuthManager
@@ -27,6 +28,7 @@ import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.setMain
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
@@ -383,5 +385,128 @@ class DashboardScreenTest {
         composeTestRule.onNodeWithText("Activo").assertExists()
         composeTestRule.onNodeWithText("Hora de dormir").assertExists()
         composeTestRule.onNodeWithText("Bloqueado").assertExists()
+    }
+
+    // -------------------------------------------------------------------------
+    // RED spike for `feature-multi-child-q2-child-picker` (Q2).
+    //
+    // The data layer today has no `Child` entity: `ChildDevice` carries
+    // only device-level fields (id, name, model, state, ...), the
+    // pairing flow provisions an anonymous per-device user, and the
+    // dashboard renders one card per device without any child-identity
+    // marker. Q2 will introduce a `Child` model + a child picker on
+    // DashboardScreen so the parent can scope the device list to one
+    // kid.
+    //
+    // These tests PIN the current gap (expect RED today) so that the
+    // Q2 schema + domain + pairing + UI migration has a concrete
+    // acceptance target. They become GREEN when Q2 lands.
+    // -------------------------------------------------------------------------
+
+    /**
+     * Smoke (expect GREEN): proves the Robolectric + Compose infra
+     * compiles and runs after PR #17's setup. With a 3-device seed,
+     * the dashboard must render exactly three `device_card` testTags.
+     * This mirrors the contract from
+     * `feature-pluralize-empty-state-and-add-n-device-tests` (1.2.1).
+     */
+    @Test
+    fun q2_smoke_3_device_seed_renders_three_device_card_testTags() {
+        seedSuccessState(threeDeviceFixtures)
+
+        val appsVm = mockk<AppsViewModel>(relaxed = true)
+        composeTestRule.setContent {
+            ParentalControlTheme {
+                DashboardScreen(viewModel = viewModel, appsViewModel = appsVm)
+            }
+        }
+        composeTestRule.waitForIdle()
+
+        composeTestRule.onAllNodesWithTag("device_card").assertCountEquals(3)
+    }
+
+    /**
+     * Gap A (expect RED today): DashboardScreen must render at least
+     * one child-identity marker — either a `child_name` or
+     * `child_first_name` testTag — for the paired devices. Today no
+     * such field exists on `ChildDevice` (Models.kt:9-18) and no
+     * DashboardScreen rendering emits a child-identity testTag, so
+     * `assertExists` fails for both candidates. After Q2's schema +
+     * domain + UI migration lands and the card surfaces the child's
+     * name, this assertion goes GREEN.
+     */
+    @Test
+    fun q2_gap_dashboard_renders_child_identity_testTag_for_paired_devices() {
+        seedSuccessState(threeDeviceFixtures)
+
+        val appsVm = mockk<AppsViewModel>(relaxed = true)
+        composeTestRule.setContent {
+            ParentalControlTheme {
+                DashboardScreen(viewModel = viewModel, appsViewModel = appsVm)
+            }
+        }
+        composeTestRule.waitForIdle()
+
+        // Use `runCatching { assertExists() }` per the same idiom as the
+        // error-banner tests above: capture a boolean for each candidate
+        // tag so the failure message lists exactly which ones were
+        // missing — saves the Q2 implementer from grepping semantics.
+        val hasChildName = runCatching {
+            composeTestRule.onNodeWithTag("child_name").assertExists()
+            true
+        }.getOrDefault(false)
+        val hasChildFirstName = runCatching {
+            composeTestRule.onNodeWithTag("child_first_name").assertExists()
+            true
+        }.getOrDefault(false)
+        assertTrue(
+            "Q2 gap: DashboardScreen must render a child-identity testTag " +
+                "('child_name' or 'child_first_name') for the 3-device seed; " +
+                "found child_name=$hasChildName child_first_name=$hasChildFirstName. " +
+                "Today ChildDevice has no child-name field — Q2 must add it " +
+                "and surface it on the dashboard.",
+            hasChildName || hasChildFirstName
+        )
+    }
+
+    /**
+     * Gap B (expect RED today): DashboardScreen must expose a child
+     * picker / filter control so the parent can scope the device list
+     * to one kid. The control's exact composition is an open design
+     * decision, so we accept ANY of the candidate testTags:
+     *   - `child_picker` — a single selector (e.g., dropdown)
+     *   - `child_chip`   — chip-per-child toggle row
+     *   - `child_filter_row` — broader filter chrome (e.g., row above the list)
+     *
+     * Today none of these testTags are emitted by DashboardScreen or
+     * its children, so the assertion fails with a message listing the
+     * candidates. After Q2 ships the picker, this goes GREEN.
+     */
+    @Test
+    fun q2_gap_dashboard_renders_child_picker_or_filter_control() {
+        seedSuccessState(threeDeviceFixtures)
+
+        val appsVm = mockk<AppsViewModel>(relaxed = true)
+        composeTestRule.setContent {
+            ParentalControlTheme {
+                DashboardScreen(viewModel = viewModel, appsViewModel = appsVm)
+            }
+        }
+        composeTestRule.waitForIdle()
+
+        val candidateTags = listOf("child_picker", "child_chip", "child_filter_row")
+        val foundTags = candidateTags.filter { tag ->
+            runCatching {
+                composeTestRule.onNodeWithTag(tag).assertExists()
+                true
+            }.getOrDefault(false)
+        }
+        assertTrue(
+            "Q2 gap: DashboardScreen must render a child picker / filter " +
+                "control tagged with one of $candidateTags so the parent " +
+                "can scope the device list by child; found=$foundTags. " +
+                "Today no such control exists — Q2 must add it.",
+            foundTags.isNotEmpty()
+        )
     }
 }

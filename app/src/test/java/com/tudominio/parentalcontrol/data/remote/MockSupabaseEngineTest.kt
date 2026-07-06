@@ -461,4 +461,96 @@ class MockSupabaseEngineTest {
 
         assertEquals(plain, engine.minifyJsonIfNeeded(plain))
     }
+
+    // ---------------------------------------------------------------
+    // Phase A.1.2 — RED coverage for `feat-multi-child-picker`.
+    //
+    // Per openspec/changes/2026-07-06-feat-multi-child-picker/design.md §A.9
+    // the 3-device fixture in `assets/mock-supabase/devices.json` must
+    // span 2 children: dev-001 + dev-002 → Lucas (child-lucas); dev-003
+    // → Sofía (child-sofia). dev-002 is intentionally child-less to
+    // represent a device paired before the migration (the nullable FK
+    // backfill boundary).
+    //
+    // Today `DeviceFixture` has no `child_id`/`child_first_name` and the
+    // JSON has no `child_id`/`child_first_name`; the assertions below
+    // would not even compile. RED before A.4.5 + A.4.6; GREEN after.
+    // ---------------------------------------------------------------
+
+    @Test
+    fun `devices fixture dev-001 parses with child Lucas from child-lucas`() = runTest {
+        val devices = engine.devices()
+
+        val dev001 = devices.firstOrNull { it.id == "dev-001" }
+        assertNotNull(
+            "devices fixture must contain dev-001 per design A.9; got ids=" +
+                devices.map { it.id },
+            dev001
+        )
+        assertNotNull(
+            "dev-001 must carry a hydrated child after A.4.6 — the mock " +
+                "fixture is the seam `MockSupabaseEngine` shares with the " +
+                "real `get-devices-for-parent` edge function; without it " +
+                "the production-debug build cannot surface the picker",
+            dev001!!.child
+        )
+        assertEquals(
+            "dev-001.child.id must match the fixtures/children.json child-lucas",
+            "child-lucas",
+            dev001.child!!.id
+        )
+        assertEquals(
+            "dev-001.child.firstName must be Lucas (not the UID-style " +
+                "anonymous entry that ships today)",
+            "Lucas",
+            dev001.child!!.firstName
+        )
+    }
+
+    @Test
+    fun `devices fixture dev-002 parses without child`() = runTest {
+        val devices = engine.devices()
+
+        val dev002 = devices.firstOrNull { it.id == "dev-002" }
+        assertNotNull(
+            "devices fixture must contain dev-002 per design A.9",
+            dev002
+        )
+        // dev-002 is paired pre-migration in the design's narrative (the
+        // nullable FK allows it). The parser MUST leave `child = null`
+        // so the dashboard renders `Sin asignar` per the spec scenario
+        // at child-entity/spec.md:31-35.
+        assertEquals(
+            "dev-002.child must be null when child_id/child_first_name are " +
+                "absent on the wire — pre-migration devices keep child_id=NULL " +
+                "until the backfill script assigns one",
+            null,
+            dev002!!.child
+        )
+    }
+
+    @Test
+    fun `devices fixture dev-003 parses with child Sofia from child-sofia`() = runTest {
+        val devices = engine.devices()
+
+        val dev003 = devices.firstOrNull { it.id == "dev-003" }
+        assertNotNull(
+            "devices fixture must contain dev-003 per design A.9",
+            dev003
+        )
+        assertNotNull(
+            "dev-003 must carry a hydrated child (Sofía)",
+            dev003!!.child
+        )
+        assertEquals(
+            "dev-003.child.id must match the fixtures/children.json child-sofia",
+            "child-sofia",
+            dev003.child!!.id
+        )
+        assertEquals(
+            "dev-003.child.firstName must be Sofía with the accent preserved",
+            "Sofía",
+            dev003.child!!.firstName
+        )
+    }
 }

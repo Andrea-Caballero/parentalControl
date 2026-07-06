@@ -58,11 +58,28 @@ class MockSupabaseEngine(private val context: Context) {
     }
 
     /**
+     * Change A of `feat-multi-child-picker` (design §A.9 + tasks A.4.7):
+     * serves the new `children.json` fixture so the parent-side
+     * RenameChildDialog (Change B §B.6) can do "save and refetch"
+     * against the mock engine in production-debug builds. Mirrors the
+     * `children` table rows owned by the demo parent today.
+     */
+    fun children(): List<ChildFixture> {
+        val raw = readAsset("mock-supabase/children.json")
+        return json.decodeFromString<List<ChildFixture>>(raw)
+    }
+
+    /**
      * Ktor [HttpClient] backed by a [MockEngine] that dispatches by URL
      * path. The engine responds with the corresponding fixture JSON for
      * the three documented endpoints; everything else gets a 404 so a
      * wrongly-routed call surfaces immediately instead of silently
      * returning empty data.
+     *
+     * Change A adds `/rest/v1/children` to the routing table so the
+     * mock engine doesn't 404 the parent's RenameChildDialog fetch (the
+     * dialog itself lands in Change B, but the seam is wired here so
+     * production-debug builds don't lose the existing picker).
      */
     val httpClient: HttpClient = HttpClient(
         engine = MockEngine { request ->
@@ -86,6 +103,8 @@ class MockSupabaseEngine(private val context: Context) {
                     readAsset("mock-supabase/pairing.json")
                 path.startsWith("/rest/v1/time_requests") ->
                     readAsset("mock-supabase/pending-requests.json")
+                path.endsWith("/rest/v1/children") ->
+                    readAsset("mock-supabase/children.json")
                 else ->
                     """{"error":"unknown route $path"}"""
             }
@@ -177,6 +196,12 @@ class MockSupabaseEngine(private val context: Context) {
  * Wire shape that mirrors `ParentRepository.DeviceDto` so the parser
  * contract is shared. Kept here (not in the repository) because the
  * fixture is a test/demo artifact, not production wire data.
+ *
+ * Change A of `feat-multi-child-picker` (design §A.6 + §A.9): the
+ * `child_id` + `child_first_name` columns mirror the new shape the real
+ * `get-devices-for-parent` edge function returns after A.4.2. Default-null
+ * so the seed shape stays back-compat with pre-migration rows (the spec
+ * scenario "Pre-migration device keeps a NULL child_id").
  */
 @Serializable
 data class DeviceFixture(
@@ -187,8 +212,59 @@ data class DeviceFixture(
     val app_version: String = "1.0.0",
     val device_state: String = "ACTIVE",
     val policy_version: Int = 1,
-    val last_seen_at: String
-)
+    val last_seen_at: String,
+    val child_id: String? = null,
+    val child_first_name: String? = null
+) {
+    /**
+     * Hydrated child for in-memory consumers. Computed (no backing
+     * field) so kotlinx.serialization ignores it — the on-disk fixture
+     * stays flat with `child_id` + `child_first_name` columns, mirroring
+     * the columns the real Supabase REST row carries. `parent_id` /
+     * timestamps are placeholders for the mock fixture; the future
+     * standalone `GET /rest/v1/children` fetch returns them.
+     */
+    val child: ChildFixture?
+        get() = if (child_id != null && child_first_name != null) {
+            ChildFixture(
+                id = child_id,
+                parent_id = "parent-demo",
+                first_name = child_first_name,
+                created_at = "",
+                updated_at = ""
+            )
+        } else {
+            null
+        }
+}
+
+/**
+ * Change A of `feat-multi-child-picker` (design §A.9): wire shape that
+ * mirrors the `children` table columns. The real `get-devices-for-parent`
+ * response uses the nested resource embedding
+ * `child:children(id, first_name)`; this top-level fixture mirrors the
+ * `GET /rest/v1/children` response shape for the standalone fetch the
+ * RenameChildDialog uses after a rename (Change B §B.6).
+ */
+@Serializable
+data class ChildFixture(
+    val id: String,
+    val parent_id: String,
+    val first_name: String,
+    val created_at: String,
+    val updated_at: String
+) {
+    /**
+     * Kotlin-side alias matching `models.Child.firstName`. Computed
+     * (no backing field) so kotlinx.serialization ignores it; the JSON
+     * column stays `first_name` for wire compatibility. Lets callers
+     * that already import `models.Child` keep their camelCase reads.
+     */
+    val firstName: String get() = first_name
+    val parentId: String get() = parent_id
+    val createdAt: String get() = created_at
+    val updatedAt: String get() = updated_at
+}
 
 /**
  * Wire shape that mirrors `ParentRepository.TimeRequestDto` so the parser

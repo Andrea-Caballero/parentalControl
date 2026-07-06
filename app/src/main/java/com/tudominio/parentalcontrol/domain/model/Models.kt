@@ -4,6 +4,16 @@ import kotlinx.serialization.Serializable
 
 /**
  * Dispositivo hijo asociado a un padre.
+ *
+ * Change A of `feat-multi-child-picker` (design §A.5): the `child` field
+ * is nullable so devices paired BEFORE the `children` table migration
+ * keep a `child == null` value and render as "Sin asignar" on the
+ * dashboard. Default-null means every existing call site keeps compiling
+ * without source changes.
+ *
+ * The `parentId`/timestamps on [child] are empty on the device payload
+ * (the dashboard only renders `firstName`); a future `getChildren()` call
+ * hydrates the full row.
  */
 @Serializable
 data class ChildDevice(
@@ -14,7 +24,26 @@ data class ChildDevice(
     val policyVersion: Int,
     val state: DeviceState,
     val lastSeenAt: String,
-    val isOnline: Boolean = false
+    val isOnline: Boolean = false,
+    val child: Child? = null
+)
+
+/**
+ * Niño asociado a una cuenta de padre. Nuevo con Change A de
+ * `feat-multi-child-picker` (spec: child-entity).
+ *
+ * Serializado desde el payload de `get-devices-for-parent` cuando el
+ * `.select` incluye el resource embedding `child:children(id, first_name)`
+ * (design §A.8), y desde la futura `GET /rest/v1/children` que el
+ * dialogo de RenameChildDialog (Change B §B.6) llama después del rename.
+ */
+@Serializable
+data class Child(
+    val id: String,
+    val parentId: String,
+    val firstName: String,
+    val createdAt: String,
+    val updatedAt: String
 )
 
 @Serializable

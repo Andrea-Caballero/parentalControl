@@ -3,6 +3,7 @@ package com.tudominio.parentalcontrol.data.repository
 import android.content.Context
 import com.tudominio.parentalcontrol.auth.DeviceAuthManager
 import com.tudominio.parentalcontrol.domain.model.ApprovalResult
+import com.tudominio.parentalcontrol.domain.model.Child
 import com.tudominio.parentalcontrol.domain.model.ChildDevice
 import com.tudominio.parentalcontrol.domain.model.DeviceHealth
 import com.tudominio.parentalcontrol.domain.model.DeviceState
@@ -505,9 +506,16 @@ class ParentRepository @Inject constructor(
     /**
      * Wire shape returned by the `get-devices-for-parent` edge function
      * (Supabase REST row). Mirrors the columns selected in
-     * `supabase/functions/get-devices-for-parent/index.ts`. The `device_state`
-     * column is stored as the Postgres enum (string) and maps to
-     * [DeviceState] via [toChildDevice].
+     * `supabase/functions/get-devices-for-parent/index.ts:73-87`. The
+     * `device_state` column is stored as the Postgres enum (string) and
+     * maps to [DeviceState] via [toChildDevice].
+     *
+     * Change A of `feat-multi-child-picker` (design §A.6 / §A.8) adds
+     * `child_id` + `child_first_name` so the parser can hydrate
+     * `ChildDevice.child = Child(...)` when the wire carries a child.
+     * Both fields default-null to keep back-compat with devices paired
+     * BEFORE the `children` table migration — those rows keep a `null`
+     * `child` and the dashboard surfaces "Sin asignar".
      */
     @Serializable
     private data class DeviceDto(
@@ -518,7 +526,9 @@ class ParentRepository @Inject constructor(
         val app_version: String = "1.0.0",
         val device_state: String = "ACTIVE",
         val policy_version: Int = 1,
-        val last_seen_at: String
+        val last_seen_at: String,
+        val child_id: String? = null,
+        val child_first_name: String? = null
     ) {
         fun toChildDevice(): ChildDevice = ChildDevice(
             id = id,
@@ -541,7 +551,24 @@ class ParentRepository @Inject constructor(
                 val instant = java.time.Instant.parse(last_seen_at)
                 val ageMs = System.currentTimeMillis() - instant.toEpochMilli()
                 ageMs in 0..(5 * 60 * 1000L)
-            }.getOrDefault(false)
+            }.getOrDefault(false),
+            // Hydrate the child only when BOTH wire fields are present;
+            // any other shape (both-null, only-id, only-name) leaves
+            // `child = null` so the dashboard falls through to the
+            // "Sin asignar" surface per design A.6. The `parentId` /
+            // `createdAt` / `updatedAt` are empty on the device payload —
+            // a future `getChildren()` call hydrates them (design A.6).
+            child = if (child_id != null && child_first_name != null) {
+                Child(
+                    id = child_id,
+                    parentId = "",
+                    firstName = child_first_name,
+                    createdAt = "",
+                    updatedAt = ""
+                )
+            } else {
+                null
+            }
         )
     }
 }

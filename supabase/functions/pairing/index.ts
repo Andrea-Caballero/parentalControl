@@ -15,13 +15,34 @@ serve(async (req) => {
   }
 
   try {
-    const { code, device_name, device_model, os_version, app_version, age_band } =
+    const { code, device_name, device_model, os_version, app_version, age_band, child_first_name } =
       await req.json();
 
     // Validar input
     if (!code || !device_name || !app_version) {
       return new Response(
         JSON.stringify({ error: "Faltan campos requeridos" }),
+        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
+    // feat-multi-child-picker (Change A — schema + domain + pairing,
+    // design §A.7): the parent-side "name this child" prompt captures
+    // child_first_name into pairing_codes before the child scans. From
+    // there, the pairing edge function creates the children row and links
+    // the device in the same transaction.
+    //
+    // Validation: trimmed length 1..32 (mirrors the children_first_name
+    // CHECK constraint added in supabase/migrations/005_children_table.sql).
+    // Empty / blank → HTTP 400. Without this, the dashboard surfaces
+    // anonymous devices ("Sin asignar") that the parent has to rename
+    // out-of-band; the rename flow's research-shape prompt (PR B §B.6)
+    // handles the orphan case, but pairing-time capture is the cleaner
+    // happy path.
+    const trimmedChildName = (child_first_name ?? "").trim();
+    if (trimmedChildName.length < 1 || trimmedChildName.length > 32) {
+      return new Response(
+        JSON.stringify({ error: "child_first_name es requerido (1..32 caracteres)" }),
         { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
@@ -95,7 +116,45 @@ serve(async (req) => {
       agentUserId = newUser.user.id;
     }
 
-    // 3. Crear dispositivo
+    // 3. Resolver / crear el niño (Change A — feat-multi-child-picker §A.7).
+    // El padre captura el nombre en el "name this child" prompt, lo sube a
+    // pairing_codes.child_first_name, y la edge function lo promueve a la
+    // tabla children con ON CONFLICT para mantener idempotencia si el
+    // dispositivo vuelve a emparejarse bajo el mismo nombre. Si la fila ya
+    // existe (RETURNING id es null), hacemos un SELECT por
+    // (parent_id, first_name) para resolver el id existente.
+    const { data: insertedChild, error: childInsertError } = await supabaseAdmin
+      .from("children")
+      .insert({
+        parent_id: pairingRecord.parent_id,
+        first_name: trimmedChildName,
+      })
+      .select("id")
+      .single();
+
+    let childId: string;
+    if (childInsertError || !insertedChild) {
+      // Posible conflicto UNIQUE (parent_id, first_name): el niño ya existe.
+      // Hacemos fallback a SELECT — el padre ya tiene un hijo con este
+      // nombre, lo cual es exactamente lo que queremos para idempotencia.
+      const { data: existingChild, error: childSelectError } = await supabaseAdmin
+        .from("children")
+        .select("id")
+        .eq("parent_id", pairingRecord.parent_id)
+        .eq("first_name", trimmedChildName)
+        .single();
+
+      if (childSelectError || !existingChild) {
+        throw new Error(
+          `Error resolviendo niño: ${childInsertError?.message ?? childSelectError?.message}`
+        );
+      }
+      childId = existingChild.id;
+    } else {
+      childId = insertedChild.id;
+    }
+
+    // 4. Crear dispositivo (con child_id enlazado al niño recién resuelto).
     const { data: device, error: deviceError } = await supabaseAdmin
       .from("devices")
       .insert({
@@ -106,6 +165,7 @@ serve(async (req) => {
         app_version,
         device_state: "ACTIVE",
         policy_version: 1,
+        child_id: childId,
       })
       .select()
       .single();

@@ -70,10 +70,16 @@ export async function handleRequest(req: Request): Promise<Response> {
   // We do NOT add an explicit `.eq("parent_id", ...)` filter — RLS is the
   // security boundary, per the design at
   // openspec/changes/wire-pairing-and-approval-end-to-end/design.md §2.
+  //
+  // Change A of feat-multi-child-picker (design §A.8): extend the `.select`
+  // to include `child_id` + the nested resource embedding `child:children(id, first_name)`.
+  // Supabase returns `child` as either a nested object (when child_id is set)
+  // or `null` (for back-filling orphans). The Kotlin parser handles both shapes.
   const { data: devices, error: devicesError } = await supabase
     .from("devices")
     .select(
-      "id, device_name, device_model, os_version, app_version, device_state, policy_version, last_seen_at"
+      "id, device_name, device_model, os_version, app_version, device_state, " +
+        "policy_version, last_seen_at, child_id, child:children(id, first_name)"
     )
     .order("last_seen_at", { ascending: false });
 

@@ -7,7 +7,6 @@ import com.tudominio.parentalcontrol.data.local.PendingRequestsCache
 import com.tudominio.parentalcontrol.domain.model.RequestStatus
 import com.tudominio.parentalcontrol.domain.model.TimeRequest
 import com.tudominio.parentalcontrol.network.SupabaseClientProvider
-import io.mockk.every
 import io.mockk.mockk
 import kotlinx.coroutines.test.runTest
 import org.junit.After

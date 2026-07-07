@@ -67,6 +67,17 @@ class SolicitudesPollingWorker @AssistedInject constructor(
         }
 
         return@withContext try {
+            // V2 cold-start pre-warm (per Q3=y from
+            // `sdd/fix-v2-filter-production-lazy-hydration/decisions`):
+            // refresh the repo's device cache BEFORE the no-arg
+            // `getPendingRequests()` so the common "parent opens
+            // Solicitudes after the worker has been running" path
+            // finds a warm cache. Failure is swallowed (log + continue)
+            // — the polling path is best-effort; the V2 lazy-hydration
+            // in `getPendingRequests` covers any cold-start miss.
+            runCatching { parentRepository.getDevicesForParent() }
+                .onFailure { Log.w(TAG, "Pre-warm falló: ${it.message}") }
+
             val result = parentRepository.getPendingRequests()
             val list = result.getOrNull()
             if (list != null) {

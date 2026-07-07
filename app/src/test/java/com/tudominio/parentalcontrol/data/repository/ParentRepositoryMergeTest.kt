@@ -3,6 +3,7 @@ package com.tudominio.parentalcontrol.data.repository
 import android.content.Context
 import androidx.test.core.app.ApplicationProvider
 import com.tudominio.parentalcontrol.auth.DeviceAuthManager
+import com.tudominio.parentalcontrol.data.local.PendingRequestsCache
 import com.tudominio.parentalcontrol.domain.model.RequestStatus
 import com.tudominio.parentalcontrol.domain.model.TimeRequest
 import com.tudominio.parentalcontrol.network.SupabaseClientProvider
@@ -58,11 +59,11 @@ class ParentRepositoryMergeTest {
     @Before
     fun setUp() {
         context = ApplicationProvider.getApplicationContext()
-        // The cache layer doesn't exist yet, but be defensive: wipe the
-        // SharedPreferences that the eventual cache will share a namespace
-        // with so the next-instance tests below see a clean slate.
-        context.getSharedPreferences(PendingRequestsPrefs.NAME, Context.MODE_PRIVATE)
-            .edit().clear().commit()
+        // The merge tests do not exercise the disk layer directly, but
+        // `publishPendingRequests` writes through to the DataStore cache,
+        // so wipe it for hygiene — keeps a previous test's payload from
+        // mutating the in-memory flow via hydration on construction.
+        PendingRequestsCache.clearForTest(context)
 
         authManager = mockk(relaxed = true)
         clientProvider = mockk(relaxed = true)
@@ -70,8 +71,7 @@ class ParentRepositoryMergeTest {
 
     @After
     fun tearDown() {
-        context.getSharedPreferences(PendingRequestsPrefs.NAME, Context.MODE_PRIVATE)
-            .edit().clear().commit()
+        PendingRequestsCache.clearForTest(context)
     }
 
     private fun newRepository(): ParentRepository =

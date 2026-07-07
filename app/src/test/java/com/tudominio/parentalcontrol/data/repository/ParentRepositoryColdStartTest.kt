@@ -3,6 +3,7 @@ package com.tudominio.parentalcontrol.data.repository
 import android.content.Context
 import androidx.test.core.app.ApplicationProvider
 import com.tudominio.parentalcontrol.auth.DeviceAuthManager
+import com.tudominio.parentalcontrol.data.local.PendingRequestsCache
 import com.tudominio.parentalcontrol.domain.model.RequestStatus
 import com.tudominio.parentalcontrol.domain.model.TimeRequest
 import com.tudominio.parentalcontrol.network.SupabaseClientProvider
@@ -81,6 +82,10 @@ class ParentRepositoryColdStartTest {
         // writer, so this clear() is a no-op but harmless.
         context.getSharedPreferences(PendingRequestsPrefs.NAME, Context.MODE_PRIVATE)
             .edit().clear().commit()
+        // Wipe the DataStore namespace too — `PendingRequestsCache` lives
+        // there after this fix lands, and Robolectric does not reset
+        // app-private storage between tests in the same JVM.
+        PendingRequestsCache.clearForTest(context)
 
         authManager = mockk(relaxed = true)
         clientProvider = mockk(relaxed = true)
@@ -90,6 +95,7 @@ class ParentRepositoryColdStartTest {
     fun tearDown() {
         context.getSharedPreferences(PendingRequestsPrefs.NAME, Context.MODE_PRIVATE)
             .edit().clear().commit()
+        PendingRequestsCache.clearForTest(context)
     }
 
     /**
@@ -112,6 +118,12 @@ class ParentRepositoryColdStartTest {
         // Warm session: populate the singleton flow with the fixture.
         val warmRepository = newRepository()
         warmRepository.publishPendingRequests(fixture)
+        // The `publishPendingRequests` write-through to DataStore runs on
+        // `Dispatchers.IO` via the repository's private `cacheScope`.
+        // `runTest` does not await real-IO threads; wait for the cache
+        // write to settle before simulating process death so the cold
+        // instance's hydration sees the warm-written payload.
+        awaitUntil { warmRepository.pendingRequestsFlow.value == fixture }
         assertEquals(
             "sanity: warm repository must hold the fixture before simulated process death",
             fixture, warmRepository.pendingRequestsFlow.value
@@ -122,6 +134,9 @@ class ParentRepositoryColdStartTest {
         // is process-scoped, the OS reaps the process, on relaunch Hilt
         // constructs a brand-new instance).
         val coldRepository = newRepository()
+        // Cold-start hydration runs in `init {}` on `Dispatchers.IO`
+        // (same real-IO scope as the warm write). Wait for it.
+        awaitUntil { coldRepository.pendingRequestsFlow.value == fixture }
 
         // The cold-start instance MUST surface the fixture synchronously
         // — this is the parent-side "event log" the user expects to see.
@@ -144,8 +159,10 @@ class ParentRepositoryColdStartTest {
     fun `pendingRequestsFlow on cold start is not empty after warm session`() = runTest {
         val warmRepository = newRepository()
         warmRepository.publishPendingRequests(fixture)
+        awaitUntil { warmRepository.pendingRequestsFlow.value == fixture }
 
         val coldRepository = newRepository()
+        awaitUntil { coldRepository.pendingRequestsFlow.value == fixture }
 
         assertNotEquals(
             "cold-start pendingRequestsFlow MUST NOT be emptyList() when a warm " +
@@ -153,6 +170,26 @@ class ParentRepositoryColdStartTest {
             emptyList<TimeRequest>(),
             coldRepository.pendingRequestsFlow.value
         )
+    }
+
+    /**
+     * Polls [predicate] on real wall-clock time (via [Thread.sleep]) until it
+     * returns `true` or [timeoutMs] elapses. Required because
+     * `ParentRepository` writes to the DataStore cache on `Dispatchers.IO`
+     * (real thread pool), and `runTest`'s virtual-time dispatcher does not
+     * advance those real-IO coroutines — same pattern as `BootReceiverTest`'s
+     * `Thread.sleep(1000L)` waits.
+     */
+    private fun awaitUntil(
+        timeoutMs: Long = 2000L,
+        intervalMs: Long = 20L,
+        predicate: () -> Boolean
+    ) {
+        val deadline = System.currentTimeMillis() + timeoutMs
+        while (System.currentTimeMillis() < deadline) {
+            if (predicate()) return
+            Thread.sleep(intervalMs)
+        }
     }
 
     /**

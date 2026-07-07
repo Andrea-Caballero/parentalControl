@@ -10,6 +10,7 @@ import com.tudominio.parentalcontrol.domain.model.DeviceState
 import com.tudominio.parentalcontrol.domain.model.PolicyTemplate
 import com.tudominio.parentalcontrol.domain.model.RequestStatus
 import com.tudominio.parentalcontrol.domain.model.TimeRequest
+import com.tudominio.parentalcontrol.data.local.PendingRequestsCache
 import com.tudominio.parentalcontrol.network.SupabaseClientProvider
 import com.tudominio.parentalcontrol.viewmodel.PairingCodeResult
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -21,10 +22,14 @@ import io.ktor.client.statement.bodyAsText
 import io.ktor.http.ContentType
 import io.ktor.http.contentType
 import io.ktor.http.isSuccess
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
@@ -72,14 +77,147 @@ class ParentRepository @Inject constructor(
     val pendingRequestsFlow: StateFlow<List<TimeRequest>> = _pendingRequestsFlow.asStateFlow()
 
     /**
-     * Public write hook for both the VM's [ParentRepository.getPendingRequests]
-     * success path and the worker's `SolicitudesPollingWorker.doWork()`
-     * success path. Replaces the value atomically — last write wins, and
-     * any active collector on [pendingRequestsFlow] sees the new list on
-     * the next emission.
+     * Shared long-lived scope for fire-and-forget cache writes and the
+     * cold-start hydration collector. `SupervisorJob` so a single failed
+     * task (e.g., a corrupt cache) does not cancel the scope.
      */
-    fun publishPendingRequests(list: List<TimeRequest>) {
-        _pendingRequestsFlow.value = list
+    private val cacheScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+    /**
+     * DataStore-backed cache for the cold-start hydration path. Owned by
+     * this repository (not injected via Hilt) to avoid cascading changes
+     * to the existing constructor signature used by
+     * `ParentRepositoryTest` / `ParentRepositoryColdStartTest` /
+     * `ParentRepositoryMergeTest`.
+     *
+     * Two `ParentRepository` instances sharing the same application
+     * context reuse the same [PendingRequestsCache] (the `get(context)`
+     * factory memoizes per application context), so warm + cold in
+     * `ParentRepositoryColdStartTest` share one DataStore — required by
+     * the `androidx.datastore` "one DataStore per file per process"
+     * invariant.
+     *
+     * Nullable for test tolerance: `ParentRepositoryTest` mocks the
+     * [Context] (mockk relaxed), so `applicationContext` returns `null`
+     * and DataStore cannot construct. In that case the cache is `null`
+     * and both cold-start hydration and the write-through in
+     * [publishPendingRequests] silently no-op. Production paths always
+     * receive a real [Context] (via Hilt's `@ApplicationContext`), so
+     * the production `pendingRequestsCache` is never `null`.
+     */
+    private val pendingRequestsCache: PendingRequestsCache? = runCatching {
+        PendingRequestsCache.get(context)
+    }.getOrNull()
+
+    /**
+     * Hydrate the in-memory flow from the persisted cache exactly once,
+     * asynchronously. The flow's initial value stays `emptyList()` so the
+     * first UI frame matches the VM's `_pendingRequests` initial value
+     * (task 3.2 first-frame invariant). Subsequent collectors see the
+     * cached list once the IO read completes — typically <10 ms after
+     * construction on a warm process, longer on the first install
+     * (fresh DataStore file = `emptyList()`, no observable change).
+     *
+     * **Race-safety:** the hydration observer reads `cache.observe().first()`
+     * once and only updates the flow when the cache actually carries data.
+     * If the cache is empty (fresh install) the hydration is a no-op and
+     * the in-memory `emptyList()` invariant holds. If the cache is non-empty
+     * (warm session before process death) the hydration overrides whatever
+     * the in-memory flow currently holds with the persisted snapshot. The
+     * no-op-when-empty path prevents a race where hydration's first read
+     * completes BEFORE a subsequent `publishPendingRequests`'s cache write
+     * lands: hydration would otherwise overwrite the just-published value
+     * back to `emptyList()`.
+     *
+     * If the cache is `null` (e.g., a mocked-context unit test), hydration
+     * is skipped entirely — the in-memory flow keeps its `emptyList()`.
+     */
+    init {
+        cacheScope.launch {
+            val cache = pendingRequestsCache ?: return@launch
+            val cached = cache.observe().first()
+            if (cached.isNotEmpty()) {
+                _pendingRequestsFlow.value = cached
+            }
+        }
+    }
+
+    /**
+     * Public write hook for both the VM's [getPendingRequests] success
+     * path and the worker's `SolicitudesPollingWorker.doWork()` success
+     * path.
+     *
+     * **Merge semantics** (the `(m) merge` decision from engram #245 —
+     * `sdd/fix-parent-log-events-cleared-on-reopen/decisions`): the
+     * incoming list is unioned with the current in-memory value, keyed
+     * by [TimeRequest.id]. When the same id appears in both lists, the
+     * row with a strictly-newer `status` + `respondedAt` wins. This
+     * preserves optimistic local updates that have not been synced
+     * upstream yet — e.g., a parent who just tapped "Approve" on a row
+     * whose APPROVED state has not reached the `approve-request` edge
+     * function, but a stale PENDING server fetch returned the same row.
+     *
+     * The merged result is also written through to the DataStore cache.
+     * This is a `suspend` function (NOT fire-and-forget) so the call
+     * returns only when the cache write has committed — guaranteeing a
+     * subsequent cold-start hydration see the latest state when the
+     * call site is itself a suspending context (Worker's `doWork()`,
+     * VM's `viewModelScope.launch { ... }`, tests' `runTest { ... }`).
+     *
+     * The first-frame invariant (`emptyList()` until async hydration
+     * completes) is preserved: the in-memory flow is updated synchronously
+     * on the calling thread BEFORE the suspending cache write, so any
+     * `collectAsState()` consumer (today: `ParentViewModel`'s mirror at
+     * `viewmodel/ParentViewModel.kt:119-122`) sees the new list on the
+     * very next frame regardless of cache state.
+     *
+     * If the cache is `null` (mocked-context test path) the cache write
+     * is skipped; the in-memory flow is still updated.
+     */
+    suspend fun publishPendingRequests(newList: List<TimeRequest>) {
+        val merged = mergeTimeRequests(_pendingRequestsFlow.value, newList)
+        _pendingRequestsFlow.value = merged
+        val cache = pendingRequestsCache ?: return
+        cache.write(merged)
+    }
+
+    /**
+     * Returns the union of [local] and [incoming], keyed by
+     * [TimeRequest.id]. For an id present in both sides, the row whose
+     * `respondedAt` (then `createdAt`) is lexicographically later wins
+     * — i.e., the locally-known newer status beats the stale server
+     * fetch that briefly surfaces an already-decided row as PENDING.
+     */
+    private fun mergeTimeRequests(
+        local: List<TimeRequest>,
+        incoming: List<TimeRequest>
+    ): List<TimeRequest> {
+        val byId = local.associateBy { it.id }.toMutableMap()
+        for (req in incoming) {
+            val existing = byId[req.id]
+            byId[req.id] = if (existing == null) {
+                req
+            } else if (isNewer(existing, req)) {
+                existing
+            } else {
+                req
+            }
+        }
+        return byId.values.toList()
+    }
+
+    /**
+     * Tie-break helper for [mergeTimeRequests]. A row with a non-null
+     * `respondedAt` beats one without (the local parent decision is the
+     * newer state). When both sides have `respondedAt`, the
+     * lexicographically later timestamp wins.
+     */
+    private fun isNewer(a: TimeRequest, b: TimeRequest): Boolean {
+        return when {
+            a.respondedAt != null && b.respondedAt == null -> true
+            a.respondedAt == null && b.respondedAt != null -> false
+            else -> (a.respondedAt ?: a.createdAt) > (b.respondedAt ?: b.createdAt)
+        }
     }
 
     /**

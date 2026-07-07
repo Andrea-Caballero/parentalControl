@@ -13,13 +13,26 @@ import com.tudominio.parentalcontrol.domain.model.RequestStatus
 import com.tudominio.parentalcontrol.domain.model.TimeRequest
 import com.tudominio.parentalcontrol.network.ConnectionState
 import com.tudominio.parentalcontrol.network.SupabaseClientProvider
+import io.ktor.client.HttpClient
+import io.ktor.client.engine.mock.MockEngine
+import io.ktor.client.engine.mock.respond
+import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
+import io.ktor.client.request.HttpRequestData
+import io.ktor.http.HttpHeaders
+import io.ktor.http.HttpMethod
+import io.ktor.http.HttpStatusCode
+import io.ktor.http.headersOf
+import io.ktor.serialization.kotlinx.json.json
+import io.ktor.utils.io.ByteReadChannel
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
 import kotlinx.coroutines.runBlocking
+import kotlinx.serialization.json.Json
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -194,5 +207,102 @@ class SolicitudesPollingWorkerTest {
         )
         coVerify(exactly = 1) { parentRepository.getPendingRequests() }
         coVerify(exactly = 1) { parentRepository.publishPendingRequests(fixture) }
+    }
+
+    /**
+     * Worker pre-warm contract (per Q3=y from
+     * `sdd/fix-v2-filter-production-lazy-hydration/decisions`): on every
+     * 5-min tick, the worker MUST call
+     * `parentRepository.getDevicesForParent()` BEFORE the no-arg
+     * `getPendingRequests()` so the device cache stays fresh for the
+     * V2 cold-start path. The pre-warm is best-effort — a failure is
+     * swallowed (logged + continue) and MUST NOT short-circuit the
+     * existing polling path.
+     *
+     * **RED before the production fix** because the worker on master
+     * only calls `getPendingRequests()`. No
+     * `getDevicesForParent()` call is issued, so the
+     * `coVerify { parentRepository.getDevicesForParent() }` assertion
+     * fails.
+     *
+     * This case uses a real `ParentRepository` (not a mock) wired to a
+     * route-by-path `MockEngine` that responds to BOTH the hydration
+     * POST and the time-requests GET — so the test exercises the real
+     * `runCatching { parentRepository.getDevicesForParent() }`
+     * call site end-to-end.
+     */
+    @Test
+    fun doWork_preWarmsDevicesCacheBeforeGetPendingRequests() = runBlocking {
+        val prewarmCaptured = mutableListOf<HttpRequestData>()
+        val prewarmEngine = MockEngine { request ->
+            prewarmCaptured.add(request)
+            when {
+                request.url.encodedPath.endsWith("/get-devices-for-parent") -> respond(
+                    content = ByteReadChannel(
+                        """[{"id":"dev-1","device_name":"Tablet","last_seen_at":"2026-07-07T12:00:00Z"}]"""
+                    ),
+                    status = HttpStatusCode.OK,
+                    headers = headersOf(HttpHeaders.ContentType, "application/json")
+                )
+                request.url.encodedPath.endsWith("/time_requests") -> respond(
+                    content = ByteReadChannel(
+                        """[{"id":"tr-1","device_id":"dev-1","minutes_requested":15,"""" +
+                            """status":"PENDING","created_at":"2026-07-07T12:00:00Z"}]"""
+                    ),
+                    status = HttpStatusCode.OK,
+                    headers = headersOf(HttpHeaders.ContentType, "application/json")
+                )
+                else -> error("Unexpected request: ${request.method.value} ${request.url}")
+            }
+        }
+        val prewarmClient = HttpClient(prewarmEngine) {
+            install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
+        }
+        val prewarmClientProvider: SupabaseClientProvider = mockk()
+        every { prewarmClientProvider.httpClient } returns prewarmClient
+        every { prewarmClientProvider.connectionState } returns
+            kotlinx.coroutines.flow.MutableStateFlow(ConnectionState.CONNECTED)
+        val prewarmAuth: DeviceAuthManager = mockk(relaxed = true)
+        every { prewarmAuth.getAccessToken() } returns "test-jwt-token"
+
+        val realRepository = ParentRepository(
+            context = context,
+            authManager = prewarmAuth,
+            clientProvider = prewarmClientProvider
+        )
+        val worker = newWorker(
+            repository = realRepository,
+            provider = prewarmClientProvider,
+            auth = prewarmAuth
+        )
+
+        val result = worker.doWork()
+
+        assertEquals(
+            "Worker pre-warm must NOT short-circuit the success path",
+            ListenableWorker.Result.success(), result
+        )
+        val hydrationIdx = prewarmCaptured.indexOfFirst {
+            it.method == HttpMethod.Post &&
+                it.url.encodedPath.endsWith("/get-devices-for-parent")
+        }
+        val timeGetIdx = prewarmCaptured.indexOfFirst {
+            it.method == HttpMethod.Get && it.url.encodedPath.endsWith("/time_requests")
+        }
+        assertTrue(
+            "Worker MUST pre-warm devices via POST to /get-devices-for-parent. " +
+                "Captured: ${prewarmCaptured.map { "${it.method.value} ${it.url}" }}",
+            hydrationIdx >= 0
+        )
+        assertTrue(
+            "Worker MUST issue the time-requests GET. " +
+                "Captured: ${prewarmCaptured.map { "${it.method.value} ${it.url}" }}",
+            timeGetIdx >= 0
+        )
+        assertTrue(
+            "Worker pre-warm (POST get-devices-for-parent) MUST precede the " +
+                "time-requests GET. hydrationIdx=$hydrationIdx timeGetIdx=$timeGetIdx",
+            hydrationIdx < timeGetIdx
+        )
     }
 }

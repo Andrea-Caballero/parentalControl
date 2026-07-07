@@ -1,7 +1,6 @@
 package com.tudominio.parentalcontrol.data.repository
 
 import android.content.Context
-import androidx.annotation.VisibleForTesting
 import com.tudominio.parentalcontrol.auth.DeviceAuthManager
 import com.tudominio.parentalcontrol.domain.model.ApprovalResult
 import com.tudominio.parentalcontrol.domain.model.Child
@@ -31,6 +30,8 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
@@ -107,6 +108,25 @@ class ParentRepository @Inject constructor(
      * for the deferred "lazy hydration" follow-up.
      */
     private val _devicesCache = MutableStateFlow<List<ChildDevice>>(emptyList())
+
+    /**
+     * Serializes concurrent cold-start hydration calls so a burst of V2
+     * `getPendingRequests(selectedChildId)` calls (e.g., VM re-init + a
+     * worker tick + 3 recompositions) collapses to a single
+     * `get-devices-for-parent` HTTP round-trip. The re-check after
+     * `withLock` (`if (_devicesCache.value.isNotEmpty()) return …`) is
+     * what actually dedupes — the Mutex itself only serializes. The pair
+     * (Mutex + re-check) is the cheapest way to dedupe without a
+     * `CompletableDeferred` per proposal §Open questions #4.
+     *
+     * Acquired by [hydrateDevicesCache] (the V2 path's private helper)
+     * and by the public [getDevicesForParent] wrapper (used by
+     * `SolicitudesPollingWorker`). Never acquired by the existing
+     * `ParentViewModel.loadDevices()` (which calls the private
+     * [getDevices]) — a known double-call window, deferred per proposal
+     * §Out of scope #3.
+     */
+    private val devicesCacheMutex = Mutex()
 
     /**
      * Shared long-lived scope for fire-and-forget cache writes and the
@@ -306,6 +326,30 @@ class ParentRepository @Inject constructor(
     }
 
     /**
+     * Public, Mutex-guarded wrapper around [getDevices]. Used by
+     * `SolicitudesPollingWorker` to pre-warm [_devicesCache] on every
+     * 5-min tick (per Q3=y from
+     * `sdd/fix-v2-filter-production-lazy-hydration/decisions`).
+     *
+     * Acquires the same [devicesCacheMutex] the V2 lazy-hydration gate
+     * uses, so worker-tick hydration and V2 cold-start hydration are
+     * serialized — at most one in-flight `getDevices()` HTTP call
+     * across the app at any moment.
+     *
+     * On success, the cache is seeded with the fetched devices. On
+     * failure, the cache is left untouched and the original typed error
+     * is returned to the caller. The worker swallows failures (logs +
+     * continues) per proposal §What changes #2.
+     */
+    suspend fun getDevicesForParent(): Result<List<ChildDevice>> = devicesCacheMutex.withLock {
+        val result = getDevices()
+        if (result.isSuccess) {
+            _devicesCache.value = result.getOrThrow()
+        }
+        result
+    }
+
+    /**
      * Obtiene solicitudes de tiempo pendientes para los dispositivos del padre.
      *
      * PR 4 of `openspec/changes/wire-pairing-and-approval-end-to-end`
@@ -353,6 +397,33 @@ class ParentRepository @Inject constructor(
      */
     suspend fun getPendingRequests(selectedChildId: String?): Result<List<TimeRequest>> =
         withContext(Dispatchers.IO) {
+            // Cold-start lazy-hydration gate (per Q1=f / Q2=m from
+            // `sdd/fix-v2-filter-production-lazy-hydration/decisions`):
+            // when a specific child is selected AND the device cache is
+            // empty, fire a hydration `getDevices()` call BEFORE the
+            // child→device-id resolution. Without this gate, the
+            // empty-cache branch at the Q4=e guard below would return
+            // `success(emptyList())` and the parent would see
+            // "Sin solicitudes" even when there ARE pending requests.
+            //
+            // The gate is skipped when:
+            //  - `selectedChildId == null` (Todos path) — RLS scopes the
+            //    rows, no device-id filter is appended, the cache is
+            //    irrelevant.
+            //  - `_devicesCache.value.isNotEmpty()` (warm cache) — the
+            //    hot path is uncontended; the Mutex is only acquired on
+            //    cold start. Warm-cache `getPendingRequests(...)` calls
+            //    run in <1ms as before.
+            if (selectedChildId != null && _devicesCache.value.isEmpty()) {
+                if (hydrateDevicesCache().isFailure) {
+                    val msg = hydrateDevicesCache().exceptionOrNull()?.message ?: "unknown"
+                    return@withContext Result.failure(
+                        DeviceListError.Transient("device cache hydration failed: $msg")
+                    )
+                }
+                // _devicesCache now populated; proceed with the V2 query below
+            }
+
             try {
                 val token = authManager.getAccessToken()
                     ?: return@withContext Result.failure(DeviceListError.AuthMissing)
@@ -391,6 +462,32 @@ class ParentRepository @Inject constructor(
         }
 
     /**
+     * Mutex-guarded hydration of [_devicesCache] from a real
+     * `getDevices()` call. Acquires [devicesCacheMutex] so concurrent
+     * cold-start callers (VM re-init + worker tick + recompositions)
+     * collapse to a single HTTP round-trip. After acquiring the lock,
+     * re-checks the cache: if a previous holder already populated it,
+     * this call is a no-op (`Result.success(Unit)`).
+     *
+     * On hydration failure, the original typed error from [getDevices]
+     * is preserved (typically `DeviceListError.Transient`). The V2
+     * gate wraps it as `Transient("device cache hydration failed: …")`
+     * for the caller per Q1=f.
+     */
+    private suspend fun hydrateDevicesCache(): Result<Unit> = devicesCacheMutex.withLock {
+        if (_devicesCache.value.isNotEmpty()) {
+            return@withLock Result.success(Unit)
+        }
+        val r = getDevices()
+        if (r.isSuccess) {
+            _devicesCache.value = r.getOrThrow()
+            Result.success(Unit)
+        } else {
+            Result.failure(r.exceptionOrNull() ?: UnknownError())
+        }
+    }
+
+    /**
      * Translates a child id into the list of device ids that belong to
      * that child, using the [_devicesCache] mirror. Returns an empty
      * list when no device is currently associated with the id (the V2
@@ -407,24 +504,6 @@ class ParentRepository @Inject constructor(
         _devicesCache.value
             .filter { it.child?.id == childId }
             .map { it.id }
-
-    /**
-     * Replaces [_devicesCache] with [devices]. Used by the V2 unit test
-     * path (`ParentRepositoryV2FilterTest`) which cannot rely on a real
-     * `getDevices()` round-trip — the shared `MockEngine` is wired to
-     * the time-requests response shape, not the device-list shape.
-     *
-     * In production the VM's own mirror at
-     * `ParentViewModel._devices` is the source of truth, so this
-     * method is intentionally not wired into the VM init path — a
-     * future lazy-hydration follow-up can call it once per
-     * `loadDevices()` success.
-     */
-    @Suppress("unused")
-    @VisibleForTesting
-    fun primeDevicesCache(devices: List<ChildDevice>) {
-        _devicesCache.value = devices
-    }
 
     /**
      * Obtiene plantillas de política disponibles.

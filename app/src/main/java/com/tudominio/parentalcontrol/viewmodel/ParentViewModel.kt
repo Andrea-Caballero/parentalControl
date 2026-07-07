@@ -11,8 +11,11 @@ import com.tudominio.parentalcontrol.domain.model.ChildDevice
 import com.tudominio.parentalcontrol.domain.model.PolicyTemplate
 import com.tudominio.parentalcontrol.domain.model.TimeRequest
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
@@ -49,6 +52,32 @@ class ParentViewModel @Inject constructor(
     // and any UI that hasn't migrated still compile.
     private val _devices = MutableStateFlow<List<ChildDevice>>(emptyList())
     val devices: StateFlow<List<ChildDevice>> = _devices.asStateFlow()
+
+    // B.1 of `feat-multi-child-picker` (Change B). The selected child
+    // scopes BOTH the Devices tab and the Solicitudes tab. In-memory only
+    // per decision R2-V1 — cold start always begins at null (= "Todos").
+    // The stale-selection reset below keeps a chip from outliving the
+    // child it was scoped to after a fresh `loadDevices()`.
+    private val _selectedChildId = MutableStateFlow<String?>(null)
+    val selectedChildId: StateFlow<String?> = _selectedChildId.asStateFlow()
+
+    // Derived from `_devices` + `_selectedChildId` via `combine`. `null`
+    // selection returns the unfiltered list. The collector pattern matches
+    // the established `pendingRequestsFlow` mirror in `init {}`.
+    //
+    // `SharingStarted.Eagerly` (instead of `WhileSubscribed`) keeps the
+    // derived StateFlow's value warm from the moment the VM exists, so
+    // Compose's first `collectAsState()` read sees the actual filter
+    // result, not the `emptyList()` initial value. Critical for the
+    // pre-`WhileSubscribed`-timeout Robolectric test path.
+    val filteredDevices: StateFlow<List<ChildDevice>> =
+        combine(_devices, _selectedChildId) { list, id ->
+            if (id == null) list else list.filter { it.child?.id == id }
+        }.stateIn(
+            viewModelScope,
+            SharingStarted.Eagerly,
+            emptyList()
+        )
 
     // Solicitudes pendientes
     private val _pendingRequests = MutableStateFlow<List<TimeRequest>>(emptyList())
@@ -125,6 +154,14 @@ class ParentViewModel @Inject constructor(
                 val list = result.getOrNull()
                 if (list != null) {
                     _devices.value = list
+                    // Stale-selection reset per parent-device-list spec:
+                    // after every successful fetch, if the cached
+                    // `_selectedChildId` no longer matches any device's
+                    // `child.id`, the picker must default back to "Todos".
+                    val validIds = list.mapNotNull { it.child?.id }.toSet()
+                    if (_selectedChildId.value !in validIds) {
+                        _selectedChildId.value = null
+                    }
                     _deviceListState.value = if (list.isEmpty()) {
                         DeviceListUiState.Empty
                     } else {
@@ -319,6 +356,16 @@ class ParentViewModel @Inject constructor(
 
     fun clearError() {
         _error.value = null
+    }
+
+    /**
+     * Updates [selectedChildId]. Passing `null` switches back to "Todos".
+     * The chip row + Devices/Solicitudes tabs observe the StateFlow and
+     * re-filter automatically. V1 (in-memory only) — selection resets
+     * across cold start per decision R2-V1.
+     */
+    fun setSelectedChild(id: String?) {
+        _selectedChildId.value = id
     }
 
     fun clearPairingCode() {

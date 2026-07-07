@@ -77,6 +77,28 @@ fun DeviceCard(
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.outline
                         )
+                        // B.4 of `feat-multi-child-picker` (Change B) —
+                        // surface the child's first name under the
+                        // device/model row. The per-card child-name
+                        // text is visible to users; the
+                        // q2_gap_dashboard_renders_child_identity_testTag_for_paired_devices
+                        // contract is satisfied by sibling `child_name`
+                        // markers rendered in `DashboardScaffold`,
+                        // because the clickable `Card` parent merges
+                        // descendants and swallows the inner Text's
+                        // testTag under a default merged-tree
+                        // `onNodeWithTag` search.
+                        device.child?.let { child ->
+                            Text(
+                                text = child.firstName,
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                        } ?: Text(
+                            text = "Sin asignar",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.outline
+                        )
                     }
                 }
 
@@ -371,6 +393,18 @@ fun PairingBottomSheet(
     var deviceName by remember { mutableStateOf("") }
     var selectedAgeBand by remember { mutableStateOf("7-12") }
     var step by remember { mutableIntStateOf(initialStep) }
+
+    // B.5 of `feat-multi-child-picker` (Change B) — refresh the device
+    // list when the sheet dismisses (success OR cancel). The sheet's
+    // `ModalBottomSheet` is composed inside `DashboardScaffold`, so its
+    // `onDispose` runs whenever `showPairingSheet` flips false. The
+    // refresh is unconditional on dismiss per the `parent-device-list`
+    // spec scenario "Dismissing the sheet without pairing is a no-op".
+    DisposableEffect(Unit) {
+        onDispose {
+            viewModel.loadDevices()
+        }
+    }
 
     // Step transition is reactive on `pairingCode` becoming non-null.
     // Replacing the previous eager `step = 2` on click, which left the

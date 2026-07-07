@@ -77,6 +77,8 @@ class NavGraphTest {
         every { parentViewModel.pendingRequests } returns MutableStateFlow<List<TimeRequest>>(emptyList())
         every { parentViewModel.isLoading } returns MutableStateFlow(false)
         every { parentViewModel.error } returns MutableStateFlow<String?>(null)
+        every { parentViewModel.filteredDevices } returns MutableStateFlow<List<ChildDevice>>(emptyList())
+        every { parentViewModel.selectedChildId } returns MutableStateFlow<String?>(null)
 
         every { childStatusViewModel.uiState } returns MutableStateFlow(
             com.tudominio.parentalcontrol.ui.child.status.ChildStatusUiState.Content(

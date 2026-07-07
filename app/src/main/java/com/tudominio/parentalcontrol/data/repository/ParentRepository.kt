@@ -1,6 +1,7 @@
 package com.tudominio.parentalcontrol.data.repository
 
 import android.content.Context
+import androidx.annotation.VisibleForTesting
 import com.tudominio.parentalcontrol.auth.DeviceAuthManager
 import com.tudominio.parentalcontrol.domain.model.ApprovalResult
 import com.tudominio.parentalcontrol.domain.model.Child
@@ -420,6 +421,7 @@ class ParentRepository @Inject constructor(
      * `loadDevices()` success.
      */
     @Suppress("unused")
+    @VisibleForTesting
     fun primeDevicesCache(devices: List<ChildDevice>) {
         _devicesCache.value = devices
     }

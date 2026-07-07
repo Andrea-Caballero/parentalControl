@@ -4,7 +4,10 @@ import android.content.Context
 import androidx.test.core.app.ApplicationProvider
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -198,6 +201,134 @@ class DeviceAuthManagerAuthenticatePersistTest {
         assertEquals(
             "Cold-start restored token must equal the token the previous session wrote",
             tokenAfterFirstAuth,
+            coldStart.getAccessToken()
+        )
+    }
+
+    /**
+     * NEW GREEN (Q2=y symmetry): mirrors T1.2 with `Role.CHILD`. The
+     * role-aware overload at `DeviceAuthManager.kt:193` covers both roles,
+     * so the bug is symmetric — the fix must restore the token regardless
+     * of which role was used.
+     */
+    @Test
+    fun `cold start after authenticateOrCreate with CHILD restores accessToken`() = runTest {
+        val first = newManager()
+        first.authenticateOrCreate(Role.CHILD)
+        val tokenAfterFirstAuth = first.getAccessToken()
+        assertNotNull(
+            "Sanity: getAccessToken() must be non-null right after authenticateOrCreate",
+            tokenAfterFirstAuth
+        )
+
+        resetManagerInstance()
+        val coldStart = newManager()
+
+        assertNotNull(
+            "After cold start following authenticateOrCreate(Role.CHILD), " +
+                "getAccessToken() must be non-null (Q2=y symmetry).",
+            coldStart.getAccessToken()
+        )
+        assertEquals(
+            "Cold-start restored CHILD token must equal the token the previous session wrote",
+            tokenAfterFirstAuth,
+            coldStart.getAccessToken()
+        )
+    }
+
+    /**
+     * NEW GREEN (Q3=y defense-in-depth): `clearSession()` at
+     * `DeviceAuthManager.kt:405-419` calls `.clear()` on
+     * `device_auth_prefs`, which wipes ALL keys including the new
+     * `synthetic_access_token`. This test pins that invariant so a
+     * future refactor (e.g., switching to `remove("...")` for one key)
+     * doesn't accidentally leave the synthetic token behind.
+     */
+    @Test
+    fun `clearSession also clears synthetic_access_token`() = runTest {
+        val manager = newManager()
+        manager.authenticateOrCreate(Role.PARENT)
+
+        val prefs = context.getSharedPreferences("device_auth_prefs", Context.MODE_PRIVATE)
+        assertTrue(
+            "Sanity: synthetic_access_token must be present after authenticateOrCreate(PARENT)",
+            prefs.contains("synthetic_access_token")
+        )
+
+        manager.clearSession()
+
+        assertFalse(
+            "clearSession() must remove the synthetic_access_token key (Q3=y defense-in-depth). " +
+                "Today the .clear() call at DeviceAuthManager.kt:415 covers it; this test pins " +
+                "that invariant against future remove(...) refactors.",
+            prefs.contains("synthetic_access_token")
+        )
+    }
+
+    /**
+     * NEW GREEN (negative case): a stray `synthetic_access_token` key
+     * without a matching `role` key must NOT hydrate
+     * `currentAccessToken`. Pins the `prefs.contains("role")` guard in
+     * `loadPersistedState()` — defends against a partial-write regression
+     * where `apply()` is interrupted between the two `putString` calls.
+     */
+    @Test
+    fun `cold start with synthetic_access_token but missing role leaves token null`() = runTest {
+        context.getSharedPreferences("device_auth_prefs", Context.MODE_PRIVATE)
+            .edit()
+            .putString("synthetic_access_token", "orphan-token")
+            // role intentionally NOT written
+            .commit()
+
+        val coldStart = newManager()
+
+        assertNull(
+            "A synthetic_access_token without a matching role key must NOT hydrate " +
+                "currentAccessToken. Pins the prefs.contains(\"role\") guard in loadPersistedState.",
+            coldStart.getAccessToken()
+        )
+    }
+
+    /**
+     * NEW GREEN (round-trip): after authenticateOrCreate(PARENT) →
+     * clearSession() → authenticateOrCreate(PARENT), a fresh cold-start
+     * manager must observe the SECOND auth's token, not the FIRST.
+     * Defends against ordering bugs between in-memory and on-disk writes
+     * (e.g., a stale on-disk value being re-hydrated by the second
+     * auth's read).
+     */
+    @Test
+    fun `authenticateOrCreate PARENT then clearSession then authenticateOrCreate PARENT round-trips without stale-token leak`() = runTest {
+        val first = newManager()
+        first.authenticateOrCreate(Role.PARENT)
+        val tokenA = first.getAccessToken()
+        assertNotNull(tokenA)
+
+        first.clearSession()
+
+        val tokenAAfterClear = first.getAccessToken()
+        assertNull(
+            "Sanity: clearSession must wipe the in-memory token before the second auth",
+            tokenAAfterClear
+        )
+
+        first.authenticateOrCreate(Role.PARENT)
+        val tokenB = first.getAccessToken()
+        assertNotNull(tokenB)
+        assertFalse(
+            "Second authenticateOrCreate must produce a fresh in-memory token (different UUID)",
+            tokenA == tokenB
+        )
+
+        // Now simulate process death and verify cold-start reads token B,
+        // not a stale token A from before the clear.
+        resetManagerInstance()
+        val coldStart = newManager()
+
+        assertEquals(
+            "Cold start after the round-trip must restore token B (the last auth), " +
+                "NOT token A (the auth before clearSession).",
+            tokenB,
             coldStart.getAccessToken()
         )
     }

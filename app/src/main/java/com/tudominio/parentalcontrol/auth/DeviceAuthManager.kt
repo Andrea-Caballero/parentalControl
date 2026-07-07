@@ -92,6 +92,8 @@ class DeviceAuthManager private constructor(
         private const val TAG = "DeviceAuthManager"
         const val SUPABASE_URL = "https://your-project.supabase.co"
         const val SUPABASE_ANON_KEY = "your-anon-key"
+        private const val PREFS_NAME = "device_auth_prefs"
+        private const val KEY_SYNTHETIC_ACCESS_TOKEN = "synthetic_access_token"
 
         @Volatile
         private var instance: DeviceAuthManager? = null
@@ -200,9 +202,10 @@ class DeviceAuthManager private constructor(
                 _deviceId.value = null
                 _sessionState.value = SessionState.ANONYMOUS
 
-                context.getSharedPreferences("device_auth_prefs", Context.MODE_PRIVATE)
+                context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
                     .edit()
                     .putString("role", role.name)
+                    .putString(KEY_SYNTHETIC_ACCESS_TOKEN, token)
                     .apply()
 
                 Result.success(Unit)
@@ -499,6 +502,21 @@ class DeviceAuthManager private constructor(
             currentAccessToken = stored.accessToken
             currentRefreshToken = stored.refreshToken
             sessionExpiresAt = stored.expiresAt
+        }
+
+        // Synthetic hotfix path (Q1=c cleartext SharedPreferences): when
+        // `role` is persisted but no `encrypted_session` blob was ever written
+        // (e.g. the role-aware `authenticateOrCreate(role: Role)` synthetic
+        // path), hydrate `currentAccessToken` from the cleartext
+        // `synthetic_access_token` key. The eventual `parent-auth-flow` change
+        // will replace this with real Keystore-encrypted auth tokens.
+        if (currentAccessToken == null && prefs.contains("role")) {
+            val syntheticToken = prefs.getString(KEY_SYNTHETIC_ACCESS_TOKEN, null)
+            if (syntheticToken != null) {
+                currentAccessToken = syntheticToken
+                currentRefreshToken = ""
+                sessionExpiresAt = 0
+            }
         }
     }
 

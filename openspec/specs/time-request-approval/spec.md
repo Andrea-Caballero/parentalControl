@@ -153,13 +153,21 @@ The Solicitudes tab on `DashboardScreen` SHALL filter its rendered `RequestCard`
 - **WHEN** the parent switches chips,
 - **THEN** the repository SHALL NOT receive a new call to `getPendingRequests()` and the existing `_pendingRequests` `StateFlow` SHALL be reused as the source of truth.
 
-### Requirement: V2 server-side filter refactor is deferred
+### Requirement: V2 server-side Solicitudes filter
 
-A future change SHALL refactor `ParentRepository.getPendingRequests()` at `ParentRepository.kt:157-163` to accept a `childId: String?` parameter and append `.in("device_id", childDeviceIds)` to the Supabase REST query so the server returns the filtered list directly. Until that change lands, the client-side filter in `DashboardScaffold` is the source of truth.
+`ParentRepository.getPendingRequests(selectedChildId: String?)` SHALL append `device_id=in.(<comma-separated device ids>)` to the Postgrest query when `selectedChildId != null`, so the server returns only that child's pending requests. The static clauses (`status=eq.PENDING`, `order=created_at.desc`, `select=*,devices(device_name)`) MUST stay intact and the existing `time_requests_parent_select` RLS policy remains the security boundary — the `device_id` clause is a transport optimization. When `selectedChildId` is `null` (Todos chip) the URL stays parameter-less and RLS alone scopes the rows. If the selected child has zero associated device ids, the call SHALL return `Result.success(emptyList())` rather than emitting a malformed `device_id=in.()` query. The no-arg `getPendingRequests()` overload stays callable by `SolicitudesPollingWorker` (Todos-only polling semantics) and delegates to the parameterized form with `selectedChildId = null`.
 
-#### Scenario: Static-query refactor is out of scope for this change
-- **WHEN** the PR for `feat-multi-child-picker` is opened,
-- **THEN** it SHALL NOT modify the `getPendingRequests()` query string at `ParentRepository.kt:157-163`, and the `time-request-approval` capability SHALL keep its current "fetch every pending request" semantics.
+#### Scenario: Per-child fetch appends the device_id in-list filter
+- **WHEN** `ParentViewModel.loadPendingRequests()` calls `getPendingRequests(selectedChildId = "child-lucas-id")`,
+- **THEN** the Postgrest request SHALL include `device_id=in.(<device ids belonging to child-lucas-id>)` alongside the static clauses, and the response SHALL contain only that child's pending requests.
+
+#### Scenario: Todos fetch omits the device_id clause
+- **WHEN** the parent has the Todos chip active and either `SolicitudesPollingWorker` or `ParentViewModel` calls the no-arg `getPendingRequests()`,
+- **THEN** the Postgrest request SHALL NOT include a `device_id=` parameter, and the existing RLS-scoped fetch returns every pending request for the parent.
+
+#### Scenario: Empty device-id set returns success with empty list
+- **WHEN** the resolved device-id set for the selected child is empty (e.g., the child just unpaired),
+- **THEN** the call SHALL return `Result.success(emptyList())` and `DashboardScreen` SHALL render its existing "Sin solicitudes" empty state.
 
 ## Out of scope
 - Parent-side FCM token registration (not needed for the verdict).
@@ -167,5 +175,4 @@ A future change SHALL refactor `ParentRepository.getPendingRequests()` at `Paren
 - Batch approval, scheduling, or auto-approval rules.
 - Editing `time_requests.reason` from the parent UI.
 - Per-child notifications (covered by `app-block-policy`).
-- Server-side `childId` filter on `time_requests` (deferred V2 refactor of `ParentRepository.kt:157-163`).
 - Realtime push of new pending requests into the Solicitudes tab without a tab switch (acceptable V1 window; covered by `SolicitudesPollingWorker`).

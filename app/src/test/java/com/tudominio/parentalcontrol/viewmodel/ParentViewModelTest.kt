@@ -268,6 +268,15 @@ class ParentViewModelTest {
             gate.await()
             Result.success(emptyList())
         }
+        // V2 thread-through (`fix-v2-server-side-solicitudes-filter`):
+        // VM's `loadPendingRequests()` now calls the `selectedChildId`
+        // overload; mirror the same stub shape so the counter stays in
+        // sync regardless of the selected chip.
+        coEvery { repository.getPendingRequests(selectedChildId = null) } coAnswers {
+            getPendingCalls++
+            gate.await()
+            Result.success(emptyList())
+        }
         // Devices returns immediately so init's `loadDevices()` does not
         // hold `_isLoading=true` past init — that way the only thing
         // holding the flag is `loadPendingRequests()`'s suspended body.
@@ -332,6 +341,10 @@ class ParentViewModelTest {
         // write into `_pendingRequests` and the publish into the flow are
         // both consistent.
         coEvery { repository.getPendingRequests() } returns Result.success(fixture)
+        // V2 mirror — VM's `loadPendingRequests()` uses the
+        // `selectedChildId` overload (V2 thread-through).
+        coEvery { repository.getPendingRequests(selectedChildId = null) } returns
+            Result.success(fixture)
         coEvery { repository.getDevices() } returns Result.success(emptyList())
 
         val viewModel = ParentViewModel(repository, authManager)

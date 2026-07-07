@@ -217,6 +217,13 @@ class DashboardScreenTest {
             count++
             Result.success(emptyList())
         }
+        // V2 mirror — VM's `loadPendingRequests()` uses the
+        // `selectedChildId` overload (V2 thread-through,
+        // `fix-v2-server-side-solicitudes-filter`).
+        coEvery { repository.getPendingRequests(selectedChildId = null) } answers {
+            count++
+            Result.success(emptyList())
+        }
         return { count }
     }
 

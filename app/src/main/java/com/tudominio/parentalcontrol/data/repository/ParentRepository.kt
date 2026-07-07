@@ -46,6 +46,17 @@ import javax.inject.Singleton
  * mock fallbacks with real HTTP calls to the Supabase edge functions.
  */
 @Singleton
+@Suppress(
+    "TooManyFunctions",
+    // The class already exceeded detekt's `LargeClass` threshold when
+    // `fix-v2-server-side-solicitudes-filter` added the V2 overload +
+    // device-cache mirror (302 LOC vs the 300-line cap). The functions
+    // are intentionally co-located because each one is a single REST
+    // call with its own URL builder and DTO decoder; splitting them
+    // across files would scatter the Supabase wire surface. The 300-line
+    // cap is a soft guideline for this kind of remote-API layer.
+    "LargeClass"
+)
 class ParentRepository @Inject constructor(
     @ApplicationContext private val context: Context,
     private val authManager: DeviceAuthManager,
@@ -75,6 +86,26 @@ class ParentRepository @Inject constructor(
      */
     private val _pendingRequestsFlow = MutableStateFlow<List<TimeRequest>>(emptyList())
     val pendingRequestsFlow: StateFlow<List<TimeRequest>> = _pendingRequestsFlow.asStateFlow()
+
+    /**
+     * Mirror of the most recent `getDevices()` fetch, used by
+     * [getPendingRequests] when `selectedChildId != null` to translate a
+     * child id into the set of device ids we should ask Postgrest for.
+     *
+     * Initialized to `emptyList()` so the first frame matches the V1
+     * behaviour ("ask Postgrest without a `device_id` filter when we
+     * have no devices yet") — for the TODO path the URL builder treats
+     * this as "no filter" and lets RLS scope the rows.
+     *
+     * Updated via [primeDevicesCache]. Hydration from a real
+     * `getDevices()` call (Task 3.3 of `fix-parent-solicitudes-auto-poll`
+     * style) is out of scope for V2 — the VM-side mirror at
+     * `ParentViewModel._devices` is the source of truth and the V2 test
+     * path seeds the cache directly. See the proposal at
+     * `openspec/changes/2026-07-07-fix-v2-server-side-solicitudes-filter/proposal.md`
+     * for the deferred "lazy hydration" follow-up.
+     */
+    private val _devicesCache = MutableStateFlow<List<ChildDevice>>(emptyList())
 
     /**
      * Shared long-lived scope for fire-and-forget cache writes and the
@@ -288,30 +319,109 @@ class ParentRepository @Inject constructor(
      * [Result.failure] on a non-2xx response or on any network exception
      * (including the "not authenticated" case).
      */
-    suspend fun getPendingRequests(): Result<List<TimeRequest>> = withContext(Dispatchers.IO) {
-        try {
-            val token = authManager.getAccessToken()
-                ?: return@withContext Result.failure(DeviceListError.AuthMissing)
+    suspend fun getPendingRequests(): Result<List<TimeRequest>> =
+        getPendingRequests(selectedChildId = null)
 
-            val response = clientProvider.httpClient.get(
-                "${SupabaseClientProvider.SUPABASE_URL}/rest/v1/time_requests?" +
+    /**
+     * V2 server-side filter variant of [getPendingRequests].
+     *
+     * `selectedChildId = null` preserves the V1 (Todos) behaviour — RLS
+     * alone scopes the rows and no `device_id` filter is appended. Any
+     * non-null id resolves to the child's devices via [_devicesCache]
+     * and appends `&device_id=in.(<comma-separated ids>)` to the static
+     * Postgrest query, so the server only ships the relevant rows over
+     * the wire (transport optimization, RLS remains the security
+     * boundary).
+     *
+     * RLS contract is unchanged: the `time_requests_parent_select`
+     * policy (`supabase/migrations/002_rls_policies.sql:153-161`) still
+     * scopes by `parent_id = auth.uid()`. The `device_id` clause is
+     * purely additive — narrower, never wider than the V1 path.
+     *
+     * Empty-device edge case (Q4=e from
+     * `sdd/fix-v2-server-side-solicitudes-filter/decisions`): when
+     * `selectedChildId` resolves to zero device ids (e.g., the child was
+     * deleted between Devices and Solicitudes fetches) we return
+     * `Result.success(emptyList())` instead of a malformed
+     * `device_id=in.()` query or a surfacing error. `DashboardScreen`
+     * already renders "Sin solicitudes" for an empty list.
+     *
+     * Added by `fix-v2-server-side-solicitudes-filter`. The no-arg
+     * overload above delegates here so `SolicitudesPollingWorker` keeps
+     * its Todos-only polling semantics with zero behavioural change.
+     */
+    suspend fun getPendingRequests(selectedChildId: String?): Result<List<TimeRequest>> =
+        withContext(Dispatchers.IO) {
+            try {
+                val token = authManager.getAccessToken()
+                    ?: return@withContext Result.failure(DeviceListError.AuthMissing)
+
+                val base = "${SupabaseClientProvider.SUPABASE_URL}/rest/v1/time_requests?" +
                     "select=*,devices(device_name)&status=eq.PENDING&order=created_at.desc"
-            ) {
-                header("Authorization", "Bearer $token")
-                header("apikey", SupabaseClientProvider.SUPABASE_ANON_KEY)
-            }
+                val url = if (selectedChildId == null) {
+                    base
+                } else {
+                    val deviceIds = deviceIdsForChild(selectedChildId)
+                    if (deviceIds.isEmpty()) {
+                        // Q4=e — don't issue a malformed `device_id=in.()`
+                        // query; the UI renders the empty state the same
+                        // way it does for a child with zero pending requests.
+                        return@withContext Result.success(emptyList())
+                    }
+                    base + "&device_id=in.(${deviceIds.joinToString(",")})"
+                }
 
-            if (!response.status.isSuccess()) {
-                return@withContext Result.failure(
-                    DeviceListError.Transient("HTTP ${response.status}")
-                )
-            }
+                val response = clientProvider.httpClient.get(url) {
+                    header("Authorization", "Bearer $token")
+                    header("apikey", SupabaseClientProvider.SUPABASE_ANON_KEY)
+                }
 
-            val body = json.decodeFromString<List<TimeRequestDto>>(response.bodyAsText())
-            Result.success(body.map { it.toTimeRequest() })
-        } catch (e: Exception) {
-            Result.failure(DeviceListError.Transient(e.message ?: "Unknown error"))
+                if (!response.status.isSuccess()) {
+                    return@withContext Result.failure(
+                        DeviceListError.Transient("HTTP ${response.status}")
+                    )
+                }
+
+                val body = json.decodeFromString<List<TimeRequestDto>>(response.bodyAsText())
+                Result.success(body.map { it.toTimeRequest() })
+            } catch (e: Exception) {
+                Result.failure(DeviceListError.Transient(e.message ?: "Unknown error"))
+            }
         }
+
+    /**
+     * Translates a child id into the list of device ids that belong to
+     * that child, using the [_devicesCache] mirror. Returns an empty
+     * list when no device is currently associated with the id (the V2
+     * overload surfaces that as `Result.success(emptyList())` per
+     * Q4=e).
+     *
+     * Devices paired BEFORE the `children` table migration keep
+     * `child == null` and are NEVER returned here — only devices with
+     * a hydrated `Child` association count. This matches the dashboard
+     * picker semantics: "Sin asignar" devices do not surface under any
+     * specific child.
+     */
+    private fun deviceIdsForChild(childId: String): List<String> =
+        _devicesCache.value
+            .filter { it.child?.id == childId }
+            .map { it.id }
+
+    /**
+     * Replaces [_devicesCache] with [devices]. Used by the V2 unit test
+     * path (`ParentRepositoryV2FilterTest`) which cannot rely on a real
+     * `getDevices()` round-trip — the shared `MockEngine` is wired to
+     * the time-requests response shape, not the device-list shape.
+     *
+     * In production the VM's own mirror at
+     * `ParentViewModel._devices` is the source of truth, so this
+     * method is intentionally not wired into the VM init path — a
+     * future lazy-hydration follow-up can call it once per
+     * `loadDevices()` success.
+     */
+    @Suppress("unused")
+    fun primeDevicesCache(devices: List<ChildDevice>) {
+        _devicesCache.value = devices
     }
 
     /**

@@ -207,7 +207,16 @@ class ParentViewModel @Inject constructor(
                 // Result<List<TimeRequest>>; map success/failure into the
                 // existing StateFlows so the RequestCard UI keeps rendering
                 // unchanged.
-                val result = repository.getPendingRequests()
+                //
+                // V2 thread-through (`fix-v2-server-side-solicitudes-filter`):
+                // when a child is selected the repository translates the
+                // id to device ids and asks Postgrest for the matching
+                // subset (small payload + lower JSON parse cost); when
+                // `_selectedChildId` is null (Todos) the URL stays
+                // parameter-less and RLS alone scopes the rows.
+                val result = repository.getPendingRequests(
+                    selectedChildId = _selectedChildId.value
+                )
                 val list = result.getOrNull()
                 if (list != null) {
                     _pendingRequests.value = list

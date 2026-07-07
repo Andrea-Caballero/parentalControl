@@ -5,6 +5,7 @@ import com.tudominio.parentalcontrol.auth.DeviceAuthManager
 import com.tudominio.parentalcontrol.auth.Role
 import com.tudominio.parentalcontrol.data.repository.DeviceListError
 import com.tudominio.parentalcontrol.data.repository.ParentRepository
+import com.tudominio.parentalcontrol.domain.model.Child
 import com.tudominio.parentalcontrol.domain.model.ChildDevice
 import com.tudominio.parentalcontrol.domain.model.DeviceState
 import com.tudominio.parentalcontrol.domain.model.RequestStatus
@@ -360,5 +361,198 @@ class ParentViewModelTest {
             assertEquals(second, awaitItem())
             cancelAndIgnoreRemainingEvents()
         }
+    }
+
+    // -------------------------------------------------------------------------
+    // RED coverage for Change B of `feat-multi-child-picker` (B.1.1).
+    //
+    // After Change A lands the `Child` entity, Change B adds:
+    //  - `selectedChildId: StateFlow<String?>` (null = "Todos")
+    //  - `setSelectedChild(id: String?)`
+    //  - `filteredDevices: StateFlow<List<ChildDevice>>` derived via combine
+    //  - stale-selection reset in `loadDevices()` (parent-device-list spec
+    //    scenario "Stale selection is reset after a fetch")
+    //
+    // These tests exercise the contract. RED today: `selectedChildId` and
+    // `filteredDevices` don't exist on `ParentViewModel.kt` →
+    // `Unresolved reference` build error.
+    // -------------------------------------------------------------------------
+
+    /**
+     * Helper that builds a 3-device fixture (Lucas x2 + Sofía x1) mirroring
+     * `app/src/main/assets/mock-supabase/devices.json`. B.1.1 tests need
+     * devices with populated `child` fields to exercise the filter.
+     */
+    private fun lucasAndSofiaFixtures(): List<ChildDevice> = listOf(
+        ChildDevice(
+            id = "dev-001",
+            name = "Galaxy Tab S6 Lite",
+            model = "SM-P610",
+            appVersion = "1.0.0",
+            policyVersion = 3,
+            state = DeviceState.ACTIVE,
+            lastSeenAt = "2026-06-19T20:55:00Z",
+            isOnline = true,
+            child = Child(
+                id = "child-lucas",
+                parentId = "parent-demo",
+                firstName = "Lucas",
+                createdAt = "2026-06-01T00:00:00Z",
+                updatedAt = "2026-06-01T00:00:00Z"
+            )
+        ),
+        ChildDevice(
+            id = "dev-002",
+            name = "Moto G32",
+            model = "moto g32",
+            appVersion = "1.0.0",
+            policyVersion = 1,
+            state = DeviceState.DOWNTIME,
+            lastSeenAt = "2026-06-19T20:58:00Z",
+            isOnline = true,
+            child = Child(
+                id = "child-lucas",
+                parentId = "parent-demo",
+                firstName = "Lucas",
+                createdAt = "2026-06-01T00:00:00Z",
+                updatedAt = "2026-06-01T00:00:00Z"
+            )
+        ),
+        ChildDevice(
+            id = "dev-003",
+            name = "Pixel 7a",
+            model = "GWKK3",
+            appVersion = "1.0.0",
+            policyVersion = 7,
+            state = DeviceState.LOCKED,
+            lastSeenAt = "2026-06-19T20:59:30Z",
+            isOnline = true,
+            child = Child(
+                id = "child-sofia",
+                parentId = "parent-demo",
+                firstName = "Sofía",
+                createdAt = "2026-06-01T00:00:00Z",
+                updatedAt = "2026-06-01T00:00:00Z"
+            )
+        )
+    )
+
+    @Test
+    fun `cold_start_defaults_selectedChildId_to_null`() = runTest {
+        coEvery { repository.getDevices() } returns Result.success(emptyList())
+
+        val viewModel = ParentViewModel(repository, authManager)
+
+        // R2-V1: no DataStore persistence. Cold start MUST be null.
+        assertEquals(
+            "selectedChildId MUST default to null (= Todos) on cold start",
+            null, viewModel.selectedChildId.value
+        )
+    }
+
+    @Test
+    fun `setSelectedChild_updates_StateFlow`() = runTest {
+        coEvery { repository.getDevices() } returns Result.success(lucasAndSofiaFixtures())
+
+        val viewModel = ParentViewModel(repository, authManager)
+
+        viewModel.setSelectedChild("child-lucas")
+        assertEquals(
+            "setSelectedChild(child-lucas) MUST emit child-lucas",
+            "child-lucas", viewModel.selectedChildId.value
+        )
+
+        viewModel.setSelectedChild(null)
+        assertEquals(
+            "setSelectedChild(null) MUST emit null (= Todos)",
+            null, viewModel.selectedChildId.value
+        )
+    }
+
+    @Test
+    fun `filteredDevices_filters_by_selectedChildId`() = runTest {
+        coEvery { repository.getDevices() } returns Result.success(lucasAndSofiaFixtures())
+
+        val viewModel = ParentViewModel(repository, authManager)
+
+        // `filteredDevices` is `combine(...).stateIn(WhileSubscribed)` so
+        // its StateFlow value stays at the initialValue (`emptyList()`)
+        // until a subscriber exists. Turbine subscribes once `.test {}`
+        // enters and replays the upstream emissions.
+        viewModel.filteredDevices.test {
+            // Cold start: selectedChildId=null → every device.
+            assertEquals(
+                "Todos (selectedChildId=null) MUST return all 3 devices",
+                3, awaitItem().size
+            )
+
+            // Tap Lucas chip → only Lucas's 2 devices remain.
+            viewModel.setSelectedChild("child-lucas")
+            val lucasOnly = awaitItem()
+            assertEquals(
+                "Lucas chip MUST narrow filteredDevices to 2 devices",
+                2, lucasOnly.size
+            )
+            assertTrue(
+                "filteredDevices MUST only contain Lucas's devices",
+                lucasOnly.all { it.child?.id == "child-lucas" }
+            )
+
+            // Tap Sofía chip → only Sofía's 1 device remains.
+            viewModel.setSelectedChild("child-sofia")
+            val sofiaOnly = awaitItem()
+            assertEquals(
+                "Sofía chip MUST narrow filteredDevices to 1 device",
+                1, sofiaOnly.size
+            )
+            assertEquals(
+                "filteredDevices MUST contain Sofía's device id",
+                "dev-003", sofiaOnly.first().id
+            )
+
+            // Tap Todos chip → restored to all 3.
+            viewModel.setSelectedChild(null)
+            assertEquals(
+                "Todos chip MUST restore filteredDevices to all 3",
+                3, awaitItem().size
+            )
+
+            cancelAndIgnoreRemainingEvents()
+        }
+    }
+
+    @Test
+    fun `loadDevices_resets_stale_selection_to_null`() = runTest {
+        // First fetch: Lucas + Sofía populated.
+        coEvery { repository.getDevices() } returnsMany listOf(
+            Result.success(lucasAndSofiaFixtures()),
+            // Second fetch (after pair): only Sofía — Lucas is gone.
+            Result.success(
+                listOf(
+                    lucasAndSofiaFixtures()[2]
+                )
+            )
+        )
+
+        val viewModel = ParentViewModel(repository, authManager)
+
+        // User had selected Lucas on the first fetch.
+        viewModel.setSelectedChild("child-lucas")
+        assertEquals(
+            "Sanity: selection is Lucas before the second fetch",
+            "child-lucas", viewModel.selectedChildId.value
+        )
+
+        // Trigger a second fetch — Lucas disappears.
+        viewModel.loadDevices()
+        advanceUntilIdle()
+
+        // Selection MUST auto-reset to null because Lucas is gone from
+        // the device list (parent-device-list spec scenario "Stale
+        // selection is reset after a fetch").
+        assertEquals(
+            "Stale selection MUST reset to null when selected child is gone",
+            null, viewModel.selectedChildId.value
+        )
     }
 }

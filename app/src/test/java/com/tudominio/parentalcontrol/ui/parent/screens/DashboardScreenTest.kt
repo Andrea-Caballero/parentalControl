@@ -11,6 +11,7 @@ import com.tudominio.parentalcontrol.auth.DeviceAuthManager
 import com.tudominio.parentalcontrol.auth.Role
 import com.tudominio.parentalcontrol.data.repository.DeviceListError
 import com.tudominio.parentalcontrol.data.repository.ParentRepository
+import com.tudominio.parentalcontrol.domain.model.Child
 import com.tudominio.parentalcontrol.domain.model.ChildDevice
 import com.tudominio.parentalcontrol.domain.model.DeviceState
 import com.tudominio.parentalcontrol.ui.screen.apps.AppsViewModel
@@ -111,6 +112,13 @@ class DashboardScreenTest {
      * `app/src/main/assets/mock-supabase/devices.json` fixtures (ACTIVE /
      * DOWNTIME / LOCKED) directly so the test stays in sync with the
      * shipped fixture data.
+     *
+     * Change B also seeds `_devices` (the raw StateFlow) because the
+     * picker row derives `distinctChildren` from `_devices`, not from
+     * `_deviceListState`. The Devices tab in Change B renders
+     * `filteredDevices` (derived from `_devices + _selectedChildId`),
+     * so `_devices` must be populated for the picker row to render
+     * and for the LazyColumn to show the seeded items.
      */
     private fun seedSuccessState(items: List<ChildDevice>) {
         val stateField = ParentViewModel::class.java.getDeclaredField("_deviceListState")
@@ -118,6 +126,12 @@ class DashboardScreenTest {
         @Suppress("UNCHECKED_CAST")
         val stateFlow = stateField.get(viewModel) as kotlinx.coroutines.flow.MutableStateFlow<DeviceListUiState>
         stateFlow.value = DeviceListUiState.Success(items = items)
+
+        val devicesField = ParentViewModel::class.java.getDeclaredField("_devices")
+        devicesField.isAccessible = true
+        @Suppress("UNCHECKED_CAST")
+        val devicesFlow = devicesField.get(viewModel) as kotlinx.coroutines.flow.MutableStateFlow<List<ChildDevice>>
+        devicesFlow.value = items
     }
 
     /**
@@ -126,6 +140,14 @@ class DashboardScreenTest {
      * imported from JSON) so the assertion stays self-contained and the
      * test does not depend on the assets dir being on the unit-test
      * classpath.
+     *
+     * Change B: each device now carries a `child` reference mirroring the
+     * post-Change-A mock JSON (dev-001 + dev-002 → Lucas; dev-003 → Sofía;
+     * dev-002 deliberately left with `child = null` would break the
+     * "distinctBy child.id ≥ 2" contract, so all three reference Lucas
+     * or Sofía here). The q2_gap_* tests use this fixture to drive the
+     * Change B acceptance contract — picker visible (N=2 children) and
+     * child_name testTag emitted on each card.
      */
     private val threeDeviceFixtures: List<ChildDevice> = listOf(
         ChildDevice(
@@ -136,7 +158,14 @@ class DashboardScreenTest {
             policyVersion = 3,
             state = DeviceState.ACTIVE,
             lastSeenAt = "2026-06-19T20:55:00Z",
-            isOnline = true
+            isOnline = true,
+            child = Child(
+                id = "child-lucas",
+                parentId = "parent-demo",
+                firstName = "Lucas",
+                createdAt = "2026-06-01T00:00:00Z",
+                updatedAt = "2026-06-01T00:00:00Z"
+            )
         ),
         ChildDevice(
             id = "dev-002",
@@ -146,7 +175,14 @@ class DashboardScreenTest {
             policyVersion = 1,
             state = DeviceState.DOWNTIME,
             lastSeenAt = "2026-06-19T20:58:00Z",
-            isOnline = true
+            isOnline = true,
+            child = Child(
+                id = "child-lucas",
+                parentId = "parent-demo",
+                firstName = "Lucas",
+                createdAt = "2026-06-01T00:00:00Z",
+                updatedAt = "2026-06-01T00:00:00Z"
+            )
         ),
         ChildDevice(
             id = "dev-003",
@@ -156,7 +192,14 @@ class DashboardScreenTest {
             policyVersion = 7,
             state = DeviceState.LOCKED,
             lastSeenAt = "2026-06-19T20:59:30Z",
-            isOnline = true
+            isOnline = true,
+            child = Child(
+                id = "child-sofia",
+                parentId = "parent-demo",
+                firstName = "Sofía",
+                createdAt = "2026-06-01T00:00:00Z",
+                updatedAt = "2026-06-01T00:00:00Z"
+            )
         )
     )
 
@@ -437,28 +480,36 @@ class DashboardScreenTest {
      */
     @Test
     fun q2_gap_dashboard_renders_child_identity_testTag_for_paired_devices() {
-        seedSuccessState(threeDeviceFixtures)
+        // Fresh VM so init's `loadDevices()` seeds `_devices` directly
+        // with the 3-device fixture (avoids the
+        // `seedSuccessState` reflection path that's order-sensitive
+        // with `WhileSubscribed(5_000)`).
+        val mockRepository = mockk<ParentRepository>(relaxed = true)
+        every { mockRepository.pendingRequestsFlow } returns MutableStateFlow(emptyList())
+        coEvery { mockRepository.getDevices() } returns Result.success(threeDeviceFixtures)
+        val mockAuthManager = mockk<DeviceAuthManager>(relaxed = true)
+        coEvery { mockAuthManager.authenticateOrCreate(Role.PARENT) } returns Result.success(Unit)
+        val gapViewModel = ParentViewModel(mockRepository, mockAuthManager)
 
         val appsVm = mockk<AppsViewModel>(relaxed = true)
         composeTestRule.setContent {
             ParentalControlTheme {
-                DashboardScreen(viewModel = viewModel, appsViewModel = appsVm)
+                DashboardScreen(viewModel = gapViewModel, appsViewModel = appsVm)
             }
         }
         composeTestRule.waitForIdle()
 
-        // Use `runCatching { assertExists() }` per the same idiom as the
-        // error-banner tests above: capture a boolean for each candidate
-        // tag so the failure message lists exactly which ones were
-        // missing — saves the Q2 implementer from grepping semantics.
-        val hasChildName = runCatching {
-            composeTestRule.onNodeWithTag("child_name").assertExists()
-            true
-        }.getOrDefault(false)
-        val hasChildFirstName = runCatching {
-            composeTestRule.onNodeWithTag("child_first_name").assertExists()
-            true
-        }.getOrDefault(false)
+        // `onAllNodesWithTag(...).fetchSemanticsNodes()` instead of
+        // `onNodeWithTag(...)` because the dashboard renders a
+        // `child_name` marker per distinct child (Lucas + Sofía here),
+        // and `onNodeWithTag` would throw `AmbiguousNodeMatcherException`
+        // when 2+ nodes carry the same testTag. The original loose
+        // contract only requires the testTag to "exist" somewhere in
+        // the tree, so a count >= 1 assertion is equivalent.
+        val hasChildName = composeTestRule.onAllNodesWithTag("child_name")
+            .fetchSemanticsNodes().isNotEmpty()
+        val hasChildFirstName = composeTestRule.onAllNodesWithTag("child_first_name")
+            .fetchSemanticsNodes().isNotEmpty()
         assertTrue(
             "Q2 gap: DashboardScreen must render a child-identity testTag " +
                 "('child_name' or 'child_first_name') for the 3-device seed; " +
@@ -508,5 +559,185 @@ class DashboardScreenTest {
                 "Today no such control exists — Q2 must add it.",
             foundTags.isNotEmpty()
         )
+    }
+
+    // -------------------------------------------------------------------------
+    // GREEN coverage for Change B of `feat-multi-child-picker` (B.1.2).
+    //
+    // Tests the picker visibility contract + filter behavior on both tabs.
+    // All tests seed via `seedSuccessState` (devices flow) and then drive
+    // chip taps through `performClick`.
+    // -------------------------------------------------------------------------
+
+    /**
+     * Helper: build a 3-device fixture with Lucas + Sofía children
+     * populated. Mirrors `app/src/main/assets/mock-supabase/devices.json`
+     * after Change A.
+     */
+    private fun lucasAndSofiaFixtures(): List<ChildDevice> = listOf(
+        ChildDevice(
+            id = "dev-001",
+            name = "Galaxy Tab S6 Lite",
+            model = "SM-P610",
+            appVersion = "1.0.0",
+            policyVersion = 3,
+            state = DeviceState.ACTIVE,
+            lastSeenAt = "2026-06-19T20:55:00Z",
+            isOnline = true,
+            child = Child(
+                id = "child-lucas",
+                parentId = "parent-demo",
+                firstName = "Lucas",
+                createdAt = "2026-06-01T00:00:00Z",
+                updatedAt = "2026-06-01T00:00:00Z"
+            )
+        ),
+        ChildDevice(
+            id = "dev-002",
+            name = "Moto G32",
+            model = "moto g32",
+            appVersion = "1.0.0",
+            policyVersion = 1,
+            state = DeviceState.DOWNTIME,
+            lastSeenAt = "2026-06-19T20:58:00Z",
+            isOnline = true,
+            child = Child(
+                id = "child-lucas",
+                parentId = "parent-demo",
+                firstName = "Lucas",
+                createdAt = "2026-06-01T00:00:00Z",
+                updatedAt = "2026-06-01T00:00:00Z"
+            )
+        ),
+        ChildDevice(
+            id = "dev-003",
+            name = "Pixel 7a",
+            model = "GWKK3",
+            appVersion = "1.0.0",
+            policyVersion = 7,
+            state = DeviceState.LOCKED,
+            lastSeenAt = "2026-06-19T20:59:30Z",
+            isOnline = true,
+            child = Child(
+                id = "child-sofia",
+                parentId = "parent-demo",
+                firstName = "Sofía",
+                createdAt = "2026-06-01T00:00:00Z",
+                updatedAt = "2026-06-01T00:00:00Z"
+            )
+        )
+    )
+
+    /**
+     * Single-child fixture (Lucas x3) — picker MUST be hidden.
+     */
+    private fun lucasOnlyFixtures(): List<ChildDevice> = listOf(
+        threeDeviceFixtures[0].copy(
+            child = Child(
+                id = "child-lucas",
+                parentId = "parent-demo",
+                firstName = "Lucas",
+                createdAt = "2026-06-01T00:00:00Z",
+                updatedAt = "2026-06-01T00:00:00Z"
+            )
+        ),
+        threeDeviceFixtures[1].copy(
+            child = Child(
+                id = "child-lucas",
+                parentId = "parent-demo",
+                firstName = "Lucas",
+                createdAt = "2026-06-01T00:00:00Z",
+                updatedAt = "2026-06-01T00:00:00Z"
+            )
+        ),
+        threeDeviceFixtures[2].copy(
+            child = Child(
+                id = "child-lucas",
+                parentId = "parent-demo",
+                firstName = "Lucas",
+                createdAt = "2026-06-01T00:00:00Z",
+                updatedAt = "2026-06-01T00:00:00Z"
+            )
+        )
+    )
+
+    @Test
+    fun picker_hidden_when_one_child() {
+        seedSuccessState(lucasOnlyFixtures())
+
+        val appsVm = mockk<AppsViewModel>(relaxed = true)
+        composeTestRule.setContent {
+            ParentalControlTheme {
+                DashboardScreen(viewModel = viewModel, appsViewModel = appsVm)
+            }
+        }
+        composeTestRule.waitForIdle()
+
+        // N=1 → no chip row visible.
+        composeTestRule.onAllNodesWithTag("child_picker").assertCountEquals(0)
+    }
+
+    @Test
+    fun picker_visible_with_chip_all_when_two_children() {
+        seedSuccessState(lucasAndSofiaFixtures())
+
+        val appsVm = mockk<AppsViewModel>(relaxed = true)
+        composeTestRule.setContent {
+            ParentalControlTheme {
+                DashboardScreen(viewModel = viewModel, appsViewModel = appsVm)
+            }
+        }
+        composeTestRule.waitForIdle()
+
+        // N=2 → chip row visible with Todos + per-child chips.
+        composeTestRule.onAllNodesWithTag("child_picker").assertCountEquals(1)
+        composeTestRule.onNodeWithTag("child_picker_chip_all").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("child_picker_chip_child-lucas").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("child_picker_chip_child-sofia").assertIsDisplayed()
+    }
+
+    @Test
+    fun chip_tap_filters_devices_tab_to_one_child() {
+        seedSuccessState(lucasAndSofiaFixtures())
+
+        val appsVm = mockk<AppsViewModel>(relaxed = true)
+        composeTestRule.setContent {
+            ParentalControlTheme {
+                DashboardScreen(viewModel = viewModel, appsViewModel = appsVm)
+            }
+        }
+        composeTestRule.waitForIdle()
+
+        // All 3 devices initially (Todos).
+        composeTestRule.onAllNodesWithTag("device_card").assertCountEquals(3)
+
+        // Tap Sofía chip → only dev-003.
+        composeTestRule.onNodeWithTag("child_picker_chip_child-sofia").performClick()
+        composeTestRule.waitForIdle()
+
+        composeTestRule.onAllNodesWithTag("device_card").assertCountEquals(1)
+    }
+
+    @Test
+    fun todos_chip_restores_unfiltered_list() {
+        seedSuccessState(lucasAndSofiaFixtures())
+
+        val appsVm = mockk<AppsViewModel>(relaxed = true)
+        composeTestRule.setContent {
+            ParentalControlTheme {
+                DashboardScreen(viewModel = viewModel, appsViewModel = appsVm)
+            }
+        }
+        composeTestRule.waitForIdle()
+
+        // Tap Lucas → 2 cards.
+        composeTestRule.onNodeWithTag("child_picker_chip_child-lucas").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onAllNodesWithTag("device_card").assertCountEquals(2)
+
+        // Tap Todos → restored to 3.
+        composeTestRule.onNodeWithTag("child_picker_chip_all").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onAllNodesWithTag("device_card").assertCountEquals(3)
     }
 }

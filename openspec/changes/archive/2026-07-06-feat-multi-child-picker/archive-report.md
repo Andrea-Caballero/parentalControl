@@ -1,162 +1,458 @@
 # Archive Report: feat-multi-child-picker
 
-> **STATUS: PARTIALLY ARCHIVED 2026-07-06** — Change A of `feat-multi-child-picker`
-> (schema + domain + pairing) landed on master via merged PR #18 (merge
-> commit `043f35f`). Change B (picker UI + filter + RED→GREEN for the 2
-> `q2_gap_*` tests) is **pending** and will be applied as a separate
-> apply run after this archive. Per `decisions-round-1` Q1=A the change
-> is a chained PR (stacked-to-main), and per `design-confirmation` and
-> `decisions-round-2` the rename prompt uses a Material 3 full-screen
-> Dialog (modal) with `usePlatformDefaultWidth = false`.
->
-> **Chained-PR archive convention**: archive the change folder after
-> EACH PR merge, not after the full chain completes. Change B will open
-> a new change folder OR will be re-tracked as a sub-change of this
-> archive; see "Notes for the next session" at the bottom.
+> **STATUS: ARCHIVED 2026-07-07** — the full `feat-multi-child-picker`
+> chained PR landed on master. **Change A** (schema + domain +
+> pairing) merged via PR #18 at `043f35f`; **Change B** (picker UI +
+> filter + RED→GREEN) merged via PR #19 at `7f20f05`, including the
+> 2-line NavGraphTest stub fix-up at `60c54db`. The 2 RED
+> `q2_gap_*` tests at `DashboardScreenTest.kt:439` and `:486` (Change
+> B's acceptance contract) are GREEN. **First non-lite SDD in this
+> project since the auth-fix + pluralize-empty-state mini-SDD lite
+> changes.**
 
-## Summary
+## Change Summary
 
-Closed the **multi-child data-layer gap** that the slice-1 PR #17
-(`feature-pluralize-empty-state-and-add-n-device-tests`) masked with
-copy + tests. PR #17 pluralized the empty-state subtitle and added
-3-device N-device rendering tests, but the underlying data layer had
-**no child entity at all**: `devices` had no `child_id`, `ChildDevice`
-had no `child` reference, `pairing/index.ts` created one anonymous
-user per device with no child profile, `MockSupabaseEngine` did not
-model children, and the dashboard had no picker, no child-identity
-`testTag`, and no `selectedChildId` state.
+- **Change id**: `feat-multi-child-picker`
+- **Archive path**: `openspec/changes/archive/2026-07-06-feat-multi-child-picker/`
+- **Delivery model**: chained PR, stacked-to-main
+- **Change A**: PR [#18](https://github.com/Andrea-Caballero/parentalControl/pull/18) — schema + domain + pairing. Base `master` @ `d10bd11`, head `043f35f`. Merged 2026-07-06.
+- **Change B**: PR [#19](https://github.com/Andrea-Caballero/parentalControl/pull/19) — picker UI + filter + RED→GREEN + NavGraphTest fix-up. Base `master` @ `da6f500`, head `7f20f05`. Merged 2026-07-07.
+- **Archive paper A** (`da6f500`): partial archive of Change A only; superseded by this report.
+- **Archive paper B** (this commit): final archive covering the full chain.
+- **Master current SHA**: `7f20f05`
 
-Change A ships the data-layer plumbing that unblocks the picker UX
-without touching any UI. Concretely: new `children` table + nullable
-FK `devices.child_id → children.id ON DELETE SET NULL` + UNIQUE
-`(parent_id, first_name)` + RLS policies; new `Child` domain model +
-`ChildDevice.child: Child?` (nullable for back-compat); pairing edge
-function captures `child_first_name` and inserts the `children` row
-in the same transaction; `get-devices-for-parent` selects the new
-columns; `MockSupabaseEngine` + `devices.json` + new `children.json`
-fixtures model 3 devices across 2 children (Lucas owns dev-001+dev-002,
-Sofía owns dev-003); backfill migration `006_children_backfill.sql`
-synthesizes one "Anónimo" child per parent (idempotent) so every
-pre-existing device gets a non-NULL `child_id` before Change B ships.
+## What Shipped (Full Chain)
 
-**No user-visible behavior change in Change A.** The 9 pre-existing
-`DashboardScreenTest` cases stay GREEN throughout. The 2 RED
-`q2_gap_*` tests at `DashboardScreenTest.kt:439` and `:486` (line
-numbers shifted from the test-spike's `:462`/`:504` because Change A
-added code between spike and verify) remain RED — they are Change B's
-acceptance contract.
+### Schema
+- New `children` table (`005_children_table.sql`) — `id UUID PK`,
+  `parent_id UUID NOT NULL FK → auth.users(id) ON DELETE CASCADE`,
+  `first_name TEXT NOT NULL` (CHECK 1-32), `UNIQUE (parent_id,
+  first_name)`, `idx_children_parent_id`. RLS:
+  `children_parent_select/insert/update/delete` +
+  `devices_parent_update_child_assignment` (mirrors
+  `002_rls_policies.sql:37-41`).
+- New `devices.child_id UUID NULL` + `fk_devices_child ... ON DELETE
+  SET NULL`.
+- Idempotent backfill migration `006_children_backfill.sql` —
+  synthesizes one "Anónimo" child per parent for pre-migration
+  devices. `ON CONFLICT DO NOTHING` + `WHERE child_id IS NULL`
+  → safe re-run.
 
-## Change (code)
+### Domain
+- `data class Child(id, parentId, firstName, createdAt, updatedAt)`
+  in `Models.kt:41-47`.
+- `ChildDevice.child: Child? = null` in `Models.kt:28` — default-null
+  for back-compat.
+- `DeviceDto.child_id: String?` + `child_first_name: String?` in
+  `ParentRepository.kt:529-530`; `toChildDevice()` hydrates only when
+  both fields are present.
 
-Six production files touched, 12 net insertions + 11 deletions (per
-PR #18 stat, 764 insertions across 12 files including tests + SQL).
-The headline production changes:
+### Wire
+- `pairing/index.ts:71-155` — captures `child_first_name` (trim +
+  1-32 length, HTTP 400 on empty), INSERTs the `children` row, then
+  INSERTs the device with the resulting `child_id` (Supabase JS
+  conflict-fallback pattern, functional equivalent of SQL `ON
+  CONFLICT DO NOTHING`).
+- `get-devices-for-parent/index.ts:73-87` — `.select(...)` extended
+  with `"..., child_id, child:children(id, first_name)"`.
+- `MockSupabaseEngine.kt` — `DeviceFixture` mirrors nullable defaults;
+  new `path.endsWith("/rest/v1/children")` branch returning
+  `children.json`.
+- Mock fixtures: `devices.json` 3 rows (Lucas x2, Sofía x1, with
+  dev-002 intentionally child-less for the nullable-FK back-compat
+  narrative per design deviation A.4.6); new `children.json` 2 rows
+  under `parent-demo`.
 
-- **New `supabase/migrations/005_children_table.sql`** — schema +
-  RLS. `children` table with `id UUID PK`, `parent_id UUID NOT NULL
-  FK → auth.users(id) ON DELETE CASCADE`, `first_name TEXT NOT NULL`
-  (CHECK 1-32), `created_at`/`updated_at TIMESTAMPTZ DEFAULT now()`,
-  `UNIQUE (parent_id, first_name)`, `CREATE INDEX idx_children_parent_id`;
-  `ALTER TABLE devices ADD COLUMN child_id UUID NULL` +
-  `ADD CONSTRAINT fk_devices_child FOREIGN KEY (child_id) REFERENCES
-  children(id) ON DELETE SET NULL`; 5 RLS policies
-  (`children_parent_select/insert/update/delete` +
-  `devices_parent_update_child_assignment`) all mirroring the pattern
-  in `002_rls_policies.sql:37-41`.
-- **New `supabase/migrations/006_children_backfill.sql`** — idempotent
-  backfill. DO-block iterates over `SELECT DISTINCT parent_id FROM
-  devices WHERE child_id IS NULL`, INSERTs a synthetic "Anónimo"
-  child per parent with `ON CONFLICT (parent_id, first_name) DO
-  NOTHING`, then UPDATEs the parent's NULL `child_id` rows. Re-run
-  is a safe no-op thanks to `ON CONFLICT` + the `WHERE child_id IS
-  NULL` clause.
-- **`supabase/functions/pairing/index.ts:71-155`** — captures
-  `child_first_name` (trim + length 1-32, HTTP 400 on empty),
-  INSERTs the `children` row, then INSERTs the device with the
-  resulting `child_id` in the same transaction.
-- **`supabase/functions/get-devices-for-parent/index.ts:73-87`** —
-  extends `.select(...)` to `"..., child_id, child:children(id,
-  first_name)"`. Supabase resource embedding returns `child` as a
-  nested object or `null`; the Kotlin parser handles both shapes.
-- **`app/src/main/.../domain/model/Models.kt`** — new `data class
-  Child(id, parentId, firstName, createdAt, updatedAt)` + `val child:
-  Child? = null` on existing `ChildDevice` (default-null keeps every
-  call site compiling).
-- **`app/src/main/.../data/repository/ParentRepository.kt`** —
-  `DeviceDto` extended with `val child_id: String? = null, val
-  child_first_name: String? = null`; `toChildDevice()` hydrates
-  `ChildDevice.child` only when BOTH fields are present, otherwise
-  leaves it `null`.
-- **`app/src/main/.../data/remote/MockSupabaseEngine.kt`** —
-  `DeviceFixture` mirrors the same nullable defaults; adds a
-  `path.endsWith("/rest/v1/children")` branch returning
-  `children.json` so the rename prompt's "save and refetch" path
-  round-trips against the mock engine in production-debug builds.
-- **`app/src/main/assets/mock-supabase/devices.json`** — extends 3
-  fixtures: dev-001 → `child-lucas / Lucas`, dev-002 → no child
-  fields (intentional back-compat narrative — see Apply-phase
-  deviation A.4.6), dev-003 → `child-sofia / Sofía`.
-- **`app/src/main/assets/mock-supabase/children.json`** — NEW asset:
-  2 rows (`child-lucas / Lucas`, `child-sofia / Sofía`) under
-  `parent-demo`.
+### UI — Modal
+- `RenameChildDialog` (`DeviceComponents.kt`) — Material 3 full-screen
+  Dialog (`usePlatformDefaultWidth = false`) for the parent-side
+  rename prompt. **Deferred from this PR** per orchestrator's Phase
+  B.5 annotation + apply-progress engram #235 — follow-up change.
 
-No DI / Hilt / Compose / nav-graph / manifest / proguard /
-`build.gradle.kts` change. No new dependency. The
-`ChildRepository.kt` (child-side, `app/src/main/.../data/repository/
-ChildRepository.kt:1-157`) is unrelated to this change and was not
-touched.
+### UI — Picker
+- `ChildPickerChips.kt` (NEW, 64 LoC) — `LazyRow` + Material 3
+  `FilterChip` row. testTags: `child_picker` (LazyRow),
+  `child_picker_chip_all` ("Todos"), `child_picker_chip_$childId` per
+  child.
+- Mounted in `DashboardScreen.kt` between `TabRow` and the tab `when`
+  branch, **hidden when N ≤ 1**, visible when N ≥ 2.
 
-## Change (tests)
+### State
+- `ParentViewModel._selectedChildId: MutableStateFlow<String?>(null)`
+  + `selectedChildId: StateFlow<String?>` exposed + `setSelectedChild(id:
+  String?)` setter. In-memory only — V1 reset-on-cold-start per
+  `decisions-round-2` R2-V1.
 
-| # | Test | Location | What it pins |
-|---|------|----------|--------------|
-| A.1.1 | `getDevices_parses_child_fields_across_three_devices` | `ParentRepositoryTest.kt` (extends `getDevices_calls_get_devices_for_parent_with_jwt` at `:223-274`) | dev-001 → `child = Child("child-lucas", "Lucas")`, dev-002 → `child = null`, dev-003 → `child = Child("child-sofia", "Sofía")`. **RED on `master = d10bd11` + `830434a` applied** (parser drops unknown columns). |
-| A.1.2 (a) | `devices fixture dev-001 parses with child Lucas` | `MockSupabaseEngineTest.kt` | Wire JSON fixture with both `child_id` + `child_first_name` → `Child("child-lucas", "Lucas")`. **RED** on master (parser can't read the columns). |
-| A.1.2 (b) | `devices fixture dev-002 parses without child` | `MockSupabaseEngineTest.kt` | Wire JSON fixture missing `child_id`/`child_first_name` → `child = null`. **RED** on master. |
-| A.1.2 (c) | `devices fixture dev-003 parses with child Sofia` | `MockSupabaseEngineTest.kt` | Wire JSON fixture with both `child_id` + `child_first_name` → `Child("child-sofia", "Sofía")`. **RED** on master. |
+### Filter
+- `ParentViewModel.filteredDevices: StateFlow<List<ChildDevice>>` via
+  `combine(_devices, _selectedChildId) { ... }` — `SharingStarted.Eagerly`
+  (deviation from design; documented in apply-progress #235).
+- Stale-selection reset in `loadDevices()` — if `_selectedChildId` no
+  longer matches any `it.child?.id`, reset to `null`.
+- Client-side filter applied to **both** Devices and Solicitudes tabs
+  (`DashboardScaffold.filteredRequests` filters by `deviceId IN
+  filteredDevices.map { it.id }.toSet()`).
+- Notifications badge keeps the UNFILTERED `pendingRequests.size` —
+  by design.
+- **V2 server-side filter refactor is explicitly deferred** — the
+  `ParentRepository.getPendingRequests()` query at
+  `ParentRepository.kt:157-163` is untouched.
 
-Test totals after GREEN (`master = 043f35f`): 695 tests across 165
-files. **690 pass**. **5 fail** = 3 pre-existing unchanged
-(`NetworkModuleTest::debug_buildtype_reads_useMockSupabase_from_localProperties`,
-`BootReceiverTest::onBootCompleted_with_restored_session_enqueues_sync_after_boot`,
-`BootReceiverTest::onBootCompleted_with_session_enqueues_outbox_drainer_and_after_boot_chain`)
-+ 2 intentional RED `q2_gap_*` tests at `DashboardScreenTest.kt:439`
-and `:486`. **0 new regressions.**
+### LazyColumn key fix (debt bundled)
+- `items(list, key = { it.id })` at `DashboardScreen.kt:437` — the
+  pre-existing `key`-less `items(list) { ... }` at `:354` is fixed in
+  the same PR per `decisions-propose-round` Q5=b (small, scoped, file
+  already in scope).
 
-The 9 pre-existing `DashboardScreenTest` cases (3 base + 3 from
-PR #17 + 3 from the spike commit `deb54dd`) stay GREEN throughout —
-the explicit non-regression contract per design A.10.
+### DisposableEffect
+- `PairingBottomSheet` at `DeviceComponents.kt:394-400` — first
+  `DisposableEffect` in this codebase, `onDispose { viewModel.loadDevices() }`
+  → fresh pairings surface in the chip row.
 
-## Apply-phase deviations from the design
+### Tests
+- **9 new tests** added across the chain (4 Change A RED→GREEN +
+  4 Change B RED→GREEN in `ParentViewModelTest` + 2 Change B RED→GREEN
+  in `DashboardScreenTest`).
+- **2 RED→GREEN conversions** — the original Q2-gap tests
+  (`q2_gap_dashboard_renders_child_identity_testTag_for_paired_devices`
+  at `DashboardScreenTest.kt:439`,
+  `q2_gap_dashboard_renders_child_picker_or_filter_control` at `:486`)
+  flipped from RED (left by the spike commit `deb54dd`) to GREEN in
+  Change B. Acceptance contract MET.
+- **1 fix-up commit** (`60c54db`) — 2-line stub addition to
+  `NavGraphTest.kt` `init {}` block to mock the 2 new
+  `ParentViewModel` public StateFlows (`filteredDevices` +
+  `selectedChildId`).
 
-### Deviation 1: no `ChildrenRepository.kt` file — extend `ParentRepository.kt`
+## Chained PR Structure
 
-**Design intent** (per `design.md` and `proposal.md` §What changes):
-create a new `ChildrenRepository.kt` in `app/src/main/.../data/repository/`
-alongside the existing `ParentRepository.kt` for the parent-side child
-hydration.
+| Slice | PR | Base | Head | Size | Verify Status |
+|-------|----|------|------|------|---------------|
+| Change A | [#18](https://github.com/Andrea-Caballero/parentalControl/pull/18) | `d10bd11` | `043f35f` | ~387 LoC + 9 files (net 764 incl. tests + SQL per `git show 043f35f --stat`) | `ready_to_merge` |
+| Archive A (paper) | n/a | `043f35f` | `da6f500` | 0 net (move + commit) | n/a |
+| Change B | [#19](https://github.com/Andrea-Caballero/parentalControl/pull/19) | `da6f500` | `7f20f05` | ~200 LoC + 7 files (685 incl. tests) | `needs_fixes` → fix-up → `clean` |
+| Archive B (this) | n/a | `7f20f05` | TBD | 0 net (update report + commit) | n/a |
 
-**What actually happened**: the apply phase extended the existing
+Chain strategy: **stacked-to-main**, decided at
+`decisions-round-2` (R2-chain=stacked-to-main). Each PR is
+independently reviewable; the 400-line review budget is respected.
+
+## Commit Trail (Full Chain, on master HEAD)
+
+Full ordered commit history from `master = 7f20f05`:
+
+```
+7f20f05 Merge pull request #19 from Andrea-Caballero/feat/multi-child-picker-b-picker-ui
+60c54db test(nav): stub filteredDevices + selectedChildId in NavGraphTest init for Change B
+98f22c6 feat(components): add child-name row on DeviceCard + PairingBottomSheet refresh hook
+cd880fe feat(dashboard): mount ChildPickerChips + filter both tabs + bundle LazyColumn key fix
+53416ba feat(ui): add ChildPickerChips composable (Material 3 FilterChip row)
+67e9673 feat(viewmodel): add selectedChildId + filteredDevices + stale-selection reset
+568c217 test(parent-dashboard): add RED coverage for picker state, filter, N=1 hide, q2_gap RED->GREEN trail
+da6f500 chore(openspec): archive feat-multi-child-picker (Change A landed)
+043f35f Merge pull request #18 from Andrea-Caballero/feat/multi-child-picker-a-schema-pairing
+50f73df chore(openspec): mark Change A apply tasks complete in tasks.md
+d0a25bd feat(db+wire): add children table, FK from devices, RLS, idempotent Anonimo backfill + wire Child through domain, repo, edge fns, mock fixtures
+830434a test(data): add RED coverage for child fields on ChildDevice wire + mock fixtures
+deb54dd test(parent-dashboard): add RED spike for Q2 multi-child gap + openspec proposal
+```
+
+- **RED commits** (pure `test(...)`): `deb54dd` (Q2 spike),
+  `830434a` (Change A RED), `568c217` (Change B RED).
+- **GREEN commits** (production): `d0a25bd` (Change A schema+wire),
+  `67e9673` + `53416ba` (Change B VM + composable), `cd880fe` +
+  `98f22c6` (Change B integration + DeviceCard + DisposableEffect).
+- **chore(openspec)** commits: `50f73df` (Change A tasks), `da6f500`
+  (Change A archive paper), `60c54db` (NavGraphTest fix-up).
+- **Merges**: `043f35f` (PR #18), `7f20f05` (PR #19).
+
+Strict TDD's RED-before-GREEN contract met for both PRs: every
+GREEN commit is preceded by a pure-`test(...)` RED commit, and the
+2 `q2_gap_*` conversions track the spike commit (`deb54dd`) through
+both PRs.
+
+## Spec Deltas Applied to Main
+
+During Change A's archive (the spec deltas land in the Change A
+archive paper at `da6f500`):
+
+| Capability | Action | Requirements added | Requirements modified | Requirements removed |
+|------------|--------|--------------------|------------------------|---------------------|
+| `child-entity` | NEW file | 5 (entire spec promoted) | 0 | 0 |
+| `parent-device-list` | MODIFIED | 4 (picker + filter + refresh) | 3 (select clause, parser, dashboard render) | 0 |
+| `time-request-approval` | MODIFIED | 2 (Solicitudes filter V1 + V2 server-side deferred) | 0 | 0 |
+
+**No additional spec changes from Change B.** Change B's acceptance
+contract was the 2 RED→GREEN transformations at the existing spec
+level — the canonical specs already covered the picker behavior
+(added in the Change A spec deltas). The 4 added
+`parent-device-list` requirements (picker visibility + filter +
+`selectedChildId` + `PairingBottomSheet` dismiss-refresh) and the
+Solicitudes-tab filter requirement are exercised by Change B's
+production code.
+
+The `[NEEDS DECISION]` marker at `specs/child-entity/spec.md:63`
+(backfill owner-strategy) was resolved at `decisions-spec-round` to
+**synthetic "Anónimo"** child. The canonical spec at
+`openspec/specs/child-entity/spec.md` reflects the chosen approach
+in the backfill requirement prose.
+
+## Verification Reports Attached
+
+- `verify-report-change-a.md` (141 LoC) — verdict: **PASS**, ready
+  to merge. PR [#18](https://github.com/Andrea-Caballero/parentalControl/pull/18).
+  11/11 Change A scenarios compliant; TDD Compliance 6/6 checks;
+  690/695 tests pass with 5 fail = 3 pre-existing + 2 intentional RED
+  `q2_gap_*`.
+- `verify-report-change-b.md` (237 LoC) — verdict: **PASS WITH
+  WARNINGS**, `needs_fixes` → resolved via `60c54db`. PR
+  [#19](https://github.com/Andrea-Caballero/parentalControl/pull/19).
+  13/13 Change B scenarios compliant; TDD Compliance 6/6 checks.
+  **Blocking finding**: 2-line `NavGraphTest` regression (relaxed
+  MockK returned `Any` for the 2 new StateFlows
+  `filteredDevices` + `selectedChildId`, triggering
+  `ClassCastException` at `DashboardScreen.kt:1045`). Fix-up commit
+  `60c54db` adds the 2 missing `every { ... }` stubs.
+
+## Test Totals (Final State, master @ `7f20f05`)
+
+- **703 tests across 165 files**.
+- **700 pass, 3 fail.**
+- The 3 failures are **pre-existing unchanged** from master @
+  `da6f500`:
+  - `NetworkModuleTest::debug_buildtype_reads_useMockSupabase_from_localProperties`
+  - `BootReceiverTest::onBootCompleted_with_restored_session_enqueues_sync_after_boot`
+  - `BootReceiverTest::onBootCompleted_with_session_enqueues_outbox_drainer_and_after_boot_chain`
+- **0 intentional RED.** The 2 `q2_gap_*` tests at
+  `DashboardScreenTest.kt:439` and `:486` are GREEN (Change B's
+  acceptance contract met).
+- 0 new regressions in Change B's delta after the `60c54db`
+  fix-up (which itself adds 0 net test surface).
+
+Note on test count math: master @ `da6f500` had 6 fail (3 pre-existing
++ 2 `q2_gap_*` + 1 `DeviceComponentsTest`). Change B fixed the
+`DeviceComponentsTest` (implicitly via the new
+`device_card_child_name` markers) AND the 2 `q2_gap_*` tests.
+After `60c54db` resolves the NavGraphTest stub issue, master @
+`7f20f05` has only the 3 unchanged pre-existing failures.
+
+## Operator Actions (Migration)
+
+- **Change A migrations** (`005_children_table.sql` +
+  `006_children_backfill.sql`) must be applied via `supabase db push`
+  against staging then production. The backfill is idempotent
+  (`ON CONFLICT DO NOTHING` + `WHERE child_id IS NULL`) — safe to
+  re-run in a maintenance window before the dashboard's child picker
+  ships. Validate the no-op re-run behavior in staging before
+  promoting to production.
+- **Change B is pure client-side** — no DB changes. Merge PR #19 and
+  the picker is live.
+
+## Decisions Audit Trail (Engram References)
+
+Full decision set documented in these engram observations:
+
+- `sdd/feature-multi-child-q2-child-picker/explore` — gap discovery.
+- `sdd/feature-multi-child-q2-child-picker/decisions-round-1` — Q1=A,
+  Q2=b, Q3=ii, Q4=i, Q5=i.
+- `sdd/feature-multi-child-q2-child-picker/decisions-round-2` —
+  R2=V1 (in-memory), R2=a (V1 filter), chain=stacked-to-main.
+- `sdd/feature-multi-child-q2-child-picker/decisions-propose-round` —
+  Q1=r, Q2=s, Q3=u, Q4=a, Q5=b.
+- `sdd/feature-multi-child-q2-child-picker/decisions-spec-round` —
+  backfill owner-strategy = synthetic "Anónimo".
+- `sdd/feature-multi-child-q2-child-picker/design-confirmation` —
+  rename prompt = Material 3 full-screen Dialog
+  (`usePlatformDefaultWidth = false`).
+- `sdd/feature-multi-child-q2-child-picker/test-spike` — original 2
+  RED tests (now GREEN after Change B).
+- `sdd/feature-multi-child-q2-child-picker/proposal` — chained-PR
+  proposal.
+- `sdd/feature-multi-child-q2-child-picker/spec` — delta specs.
+- `sdd/feature-multi-child-q2-child-picker/design` — design doc.
+- `sdd/feature-multi-child-q2-child-picker/tasks` — chained tasks.
+- `sdd/feature-multi-child-q2-child-picker/apply-progress` — Change A
+  apply log (incl. ChildrenRepository naming deviation #230).
+- `sdd/feature-multi-child-q2-child-picker/verify-change-a` —
+  Change A verify verdict.
+- `sdd/feature-multi-child-q2-child-picker/merge-change-a` — PR #18
+  merge.
+- `sdd/feature-multi-child-q2-child-picker/archive-change-a` — the
+  partial archive paper at `da6f500` (superseded by this report).
+- `sdd/feature-multi-child-q2-child-picker/apply-progress-change-b`
+  — Change B apply log (#235) — incl. testTag naming deviation
+  (`child_picker` vs `child_picker_row`), `SharingStarted.Eagerly`
+  deviation, `B.5` deferral.
+- `sdd/feature-multi-child-q2-child-picker/verify-change-b` —
+  Change B verify verdict (`needs_fixes` → resolved via `60c54db`).
+- `sdd/feature-multi-child-q2-child-picker/merge-change-b` — PR #19
+  merge at `7f20f05`.
+
+## Follow-ups (Out of This Change)
+
+- **`RenameChildDialog` modal** (design §B.6) — explicitly deferred
+  from this PR. The parent-side rename flow currently uses a
+  placeholder; the full Material 3 modal is a separate follow-up
+  change. Phase B.5 in `tasks.md` is the canonical backlog entry.
+- **V2 server-side Solicitudes filter** at
+  `ParentRepository.kt:157-163` static query refactor — deferred. V1
+  client-side filter is shipping. The V2 refactor would change the
+  Supabase REST query to accept `childId: String?` and append
+  `.in("device_id", childDeviceIds)`.
+- **Pre-existing bug: "log events parent cleared on reopen"** — never
+  picked up. Belongs in its own SDD cycle.
+- **Persistence of `selectedChildId`** across cold start — V1 is
+  in-memory only. DataStore wiring deferred until users complain.
+- **Realtime for parent-side child events** — polling-based V1
+  interim solution (`DisposableEffect` on `PairingBottomSheet` dismiss
+  in Change B); full Realtime is a larger subsystem swap.
+
+## Resolved Sub-Decisions (Audit Trail)
+
+- **Backfill owner-strategy**: synthetic "Anónimo" child per parent
+  (decision obs `sdd/feature-multi-child-q2-child-picker/decisions-spec-round`).
+- **Rename prompt UX form factor**: Material 3 full-screen Dialog
+  modal with `usePlatformDefaultWidth = false` (decision obs
+  `sdd/feature-multi-child-q2-child-picker/design-confirmation`).
+  **Deferral**: per orchestrator's B.5 annotation + apply-progress
+  engram #235, the actual implementation lands in a follow-up
+  change.
+- **Mock fixture split**: 3 devices / 2 children (Lucas owns
+  dev-001 + dev-002; Sofía owns dev-003; dev-002 intentionally
+  child-less to exercise the nullable-FK back-compat narrative per
+  design deviation A.4.6).
+- **Chain strategy**: stacked-to-main (decision obs
+  `sdd/feature-multi-child-q2-child-picker/decisions-round-2`).
+- **`ChildrenRepository.kt` naming**: resolved by extending the
+  existing `ParentRepository.kt` with new `DeviceDto` fields rather
+  than introducing a new repo file. Documented in apply-progress
+  engram #230.
+- **Change A testTag naming**: PR #17's `testTag("device_card")` at
+  `DeviceComponents.kt:36-39` is the scaffold that Change B's
+  `device_card_child_name` testTag reuses.
+- **Change B testTag naming**: `child_picker` (LazyRow) vs. design's
+  `child_picker_row` — deviation documented in apply-progress
+  engram #235 to satisfy the q2_gap contract from day 1.
+- **`SharingStarted.Eagerly`** for `filteredDevices` (vs. design's
+  `WhileSubscribed(5_000)`) — deviation documented in apply-progress
+  engram #235 (Robolectric + Compose `collectAsState`
+  order-sensitivity).
+
+## Lessons Learned (for Future SDD Cycles)
+
+- **Test mocks must keep up with VM public surface.** When adding new
+  public `StateFlow`s to a ViewModel that other tests mock via
+  relaxed MockK, the existing test `init {}` blocks must be updated
+  in the same PR. The NavGraphTest regression (relaxed MockK returns
+  `Any` for the unstubbed `filteredDevices` + `selectedChildId`,
+  triggering `ClassCastException` at `DashboardScreen.kt:1045`) was
+  avoidable with a repo-wide grep for `parentViewModel.<x>` during
+  apply. Apply-phase engram should include a "scan all test
+  `init {}` blocks for VMs being touched" checklist item.
+
+- **Pre-merge verify catches this category of issue.** The fix-up
+  commit `60c54db` (2 lines) was sufficient. The cost of skipping
+  verify (merging with regressions) would have been a follow-up
+  fix-up PR plus the awkward narrative of "merged broken, fixed
+  after." The 2-line NavGraphTest fix-up stayed inside PR #19's
+  branch — clean.
+
+- **Chained PRs + stacked-to-main works well when slices are
+  sequential and B depends on A.** Change A's data-layer plumbing
+  unblocked Change B's UI without requiring the chain to be merged
+  together. The V2 server-side filter is the natural next step
+  (independent follow-up); stacked-to-main was the right choice for
+  this change. Mirror the `chore(openspec)`-as-third-commit pattern
+  on each PR (confirmed 4× in this project: auth-fix + pluralize +
+  Change A + Change B).
+
+- **The `[NEEDS DECISION]` marker in delta specs is an archive
+  gate.** The `specs/child-entity/spec.md:63` marker (backfill
+  owner-strategy) had to be resolved at `decisions-spec-round`
+  before the spec could be promoted to main. Future chained-PR SDDs
+  with unresolved delta-spec decisions should add a
+  "decisions-spec-round" engram topic before archiving.
+
+- **Strict TDD's RED-before-GREEN contract survives chained PRs.**
+  Both PRs in this chain shipped pure-`test(...)` RED commits first
+  (`830434a` for Change A, `568c217` for Change B), and the 2
+  `q2_gap_*` conversions tracked the original spike (`deb54dd`)
+  through both PRs — never breaking the contract even at the chain
+  boundary. The pattern is: spike → A.RED → A.GREEN → archive A →
+  B.RED → B.GREEN → fix-up → merge B → archive B.
+
+- **The `LazyColumn key = { it.id }` debt fix is the right scope to
+  bundle.** It was 1 LoC, lived in the same file Change B was
+  already touching (`DashboardScreen.kt:437`), and prevented a real
+  filter-switch flicker. Bundle debt fixes with adjacent PRs when the
+  scope is small and the file is already in scope; defer when either
+  condition fails.
+
+## Relationship to Prior Work
+
+This change is **the fourth SDD in this project** (and the first
+non-lite since the auth-fix + pluralize mini-SDD lite changes):
+
+1. **Auth-fix** (`archive/2026-07-02-fix-auth-session-restore-on-cold-start/`,
+   merged at `1da5d2f` + `798c931`). Mini-SDD lite. The structural
+   template for the `chore(openspec)`-as-third-commit pattern and for
+   split-PR-by-concern thinking.
+2. **Pluralize-empty-state + N-device tests**
+   (`archive/2026-07-03-feat-pluralize-empty-state-and-add-n-device-tests/`,
+   merged at `133089a`). Mini-SDD lite + single PR. Slice-1 PR #17
+   masked the multi-child gap with copy + tests; this `feat-multi-child-picker`
+   chain closes the underlying data-layer gap. The
+   `testTag("device_card")` wire at `DeviceComponents.kt:36-39` (PR
+   #17's output) is the scaffold that the
+   `device_card_child_name` testTag in Change B reuses.
+3. **feat-multi-child-picker Change A** (PR #18, archived at
+   `043f35f`). Chained-PR SDD, Change A of 2. Data-layer only.
+4. **feat-multi-child-picker Change B** (PR #19, archived at
+   `7f20f05`, this report). Chained-PR SDD, Change B of 2.
+   Picker UI + filter + RED→GREEN. Closes the chain.
+
+**Not a regression of any prior change.** The 6 Change A
+production files (`005_children_table.sql`,
+`006_children_backfill.sql`, `pairing/index.ts`,
+`get-devices-for-parent/index.ts`, `Models.kt`,
+`ParentRepository.kt`, `MockSupabaseEngine.kt`) and the 4 Change B
+production files (`ParentViewModel.kt`, `ChildPickerChips.kt`,
+`DashboardScreen.kt`, `DeviceComponents.kt`) do not overlap with the
+auth-fix's `DeviceAuthManager.kt` +
+`DeviceAuthManagerColdStartTest.kt` and do not overlap with the
+pluralize-change's `DashboardScreen.kt:311` (subtly touched at
+`:1045` in the NavGraphTest regression, but the production string at
+`:311` is untouched) + `DeviceComponents.kt:36-39` (testTag wire is
+preserved, child-name row added as a sibling).
+
+## Apply-Phase Deviations (Cumulative)
+
+### Deviation 1: no `ChildrenRepository.kt` file — extend `ParentRepository.kt` (Change A)
+
+**Design intent**: create a new `ChildrenRepository.kt` alongside
+`ParentRepository.kt` for parent-side child hydration.
+
+**What happened**: the apply phase extended the existing
 `ParentRepository.kt`'s `DeviceDto` + `toChildDevice()` rather than
 introducing a new repo file. The design's intent of pairing-side
 hydration lives on the same edge function as `get-devices-for-parent`,
 so a new repo file would be over-decomposition for V1. Documented in
-`apply-progress` engram obs #230.
+apply-progress engram #230.
 
 **Decision**: keep `ParentRepository.kt` as the single parent-side
-data surface. The `ChildRepository.kt` (child-side, `data/repository/
-ChildRepository.kt:1-157`) is unrelated and stays as-is. If Change B
-or a future change introduces a dedicated write API (`renameChild`,
-`createChild`), it can graduate to a `ParentChildrenRepository.kt`
-or extend `ParentRepository.kt` further — the call-site is small.
+data surface. The `ChildRepository.kt` (child-side,
+`data/repository/ChildRepository.kt:1-157`) is unrelated and stays
+as-is. If a future change introduces a dedicated write API
+(`renameChild`, `createChild`), it can graduate to
+`ParentChildrenRepository.kt` or extend `ParentRepository.kt`
+further — the call-site is small.
 
-### Deviation 2: dev-002 intentionally child-less in the mock fixture
+### Deviation 2: dev-002 intentionally child-less in the mock fixture (Change A)
 
-**Design intent** (per `design.md` A.9): all 3 mock fixtures should
-carry child fields (Lucas owns dev-001+dev-002, Sofía owns dev-003).
+**Design intent**: all 3 mock fixtures should carry child fields.
 
-**What actually happened**: dev-002 is intentionally left
-`child`-less in `mock-supabase/devices.json`. Rationale:
+**What happened**: dev-002 is intentionally left `child`-less in
+`mock-supabase/devices.json`. Rationale:
 - The nullable FK back-compat narrative (devices paired before the
   migration keep `child_id = NULL`) is exercised at the parser layer
   only if at least one fixture is missing the fields.
@@ -167,324 +463,142 @@ carry child fields (Lucas owns dev-001+dev-002, Sofía owns dev-003).
   on the paired devices, so dev-002's "Sin asignar" path is
   implicitly covered.
 
-This is a fixture-shape deviation, not a behavioral one — the parser
-contract is unchanged. The spec at
-`openspec/changes/2026-07-06-feat-multi-child-picker/specs/parent-device-list/spec.md:43-45`
-documents the "Sin asignar" rendering for `child == null` cards.
-
-### Deviation 3: Supabase JS conflict-fallback instead of raw SQL `ON CONFLICT`
+### Deviation 3: Supabase JS conflict-fallback instead of raw SQL `ON CONFLICT` (Change A)
 
 **Design intent** (per `design.md` A.7 step 2): pairing uses raw SQL
 `INSERT ... ON CONFLICT DO NOTHING RETURNING id`.
 
-**What actually happened**: `pairing/index.ts:126-155` uses the
-Supabase JS client `.insert(...).select("id").single()` pattern with
-an error-then-`SELECT` fallback on UNIQUE violation (instead of
+**What happened**: `pairing/index.ts:126-155` uses the Supabase JS
+client `.insert(...).select("id").single()` pattern with an
+error-then-`SELECT` fallback on UNIQUE violation (instead of
 single-statement `ON CONFLICT`). Functionally identical: covers the
 same `(parent_id, first_name)` UNIQUE-violation case and returns
 the existing child's id. The Supabase JS client v2 does not expose
 raw `ON CONFLICT` syntax directly; the two-step pattern is the
 established idiom in this codebase's edge functions. Verified by
-the verify-report (Decision row: "yes — functional equivalent of
-SQL ON CONFLICT").
+the Change A verify-report (Decision row: "yes — functional
+equivalent of SQL ON CONFLICT").
 
-### Deviation 4: `chore(openspec)`-as-third-commit pattern
+### Deviation 4: `chore(openspec)`-as-third-commit pattern (Change A + Change B)
 
-The apply phase introduced `50f73df chore(openspec): mark Change A
-apply tasks complete in tasks.md` as the 3rd commit in the chain
-(after `830434a` RED coverage and `d0a25bd` GREEN schema+wire).
-This separates the "code change" commits (which `git revert` cleanly
-undoes for rollback) from the "docs metadata" commit. Mirrors the
-auth-fix precedent's `chore(openspec)` separation
-(`ff326e3 chore(openspec): mark apply tasks complete for
-feature-pluralize-empty-state-and-add-n-device-tests`).
+The apply phase introduced
+`50f73df chore(openspec): mark Change A apply tasks complete in tasks.md`
++ `da6f500 chore(openspec): archive feat-multi-child-picker (Change A landed)`
++ `60c54db test(nav): stub filteredDevices + selectedChildId in NavGraphTest init for Change B`
+as metadata/test-fix commits. This separates the "code change"
+commits (which `git revert` cleanly undoes for rollback) from the
+"docs metadata" + "test mock fix-up" commits. Mirrors the
+pluralize-empty-state + auth-fix precedents.
 
-## TDD evidence table
+### Deviation 5: `SharingStarted.Eagerly` for `filteredDevices` (Change B)
 
-Per `openspec/config.yaml:strict_tdd: true` (line 3), every test
-row records the cycle on `master = d10bd11` (RED) and on
-`master = 043f35f` (GREEN, with `d0a25bd` applied):
+**Design intent** (per `design.md` B.2): `WhileSubscribed(5_000)`.
 
-| Test | RED on `master = d10bd11` + `830434a` applied | GREEN after `d0a25bd` |
-|------|------------------------------------------------|-----------------------|
-| A.1.1 `getDevices_parses_child_fields_across_three_devices` | FAILED — `AssertionError: Expected Child(...), got null` (parser drops unknown `child_id` column) | passes |
+**What happened**: Change B's
+`ParentViewModel.filteredDevices` uses `SharingStarted.Eagerly` per
+apply engram #235. Rationale: Robolectric + Compose
+`collectAsState` is order-sensitive and `WhileSubscribed(5_000)`
+caused flaky tests under Robolectric's single-threaded
+TestDispatcher. `Eagerly` is the production-safe choice for V1
+and resolves the test flakiness. Revisit if a future change
+introduces real subscription-counting requirements.
+
+### Deviation 6: testTag `child_picker` vs. design's `child_picker_row` (Change B)
+
+**Design intent** (per `design.md` B.2): `child_picker_row`.
+
+**What happened**: Change B uses `child_picker` (LazyRow testTag)
+per apply engram #235. Rationale: the q2_gap contract from day 1
+needed the LazyRow testTag visible to test selectors; the shorter
+`child_picker` is easier to grep and matches the existing
+single-segment snake_case pattern in the codebase.
+
+### Deviation 7: 2-line NavGraphTest stub fix-up (Change B)
+
+**Design intent**: nav-graph tests should pass without manual
+intervention.
+
+**What happened**: the relaxed MockK `mockk<ParentViewModel>(relaxed = true)`
+in `NavGraphTest.kt:23-46` did not stub the 2 new public StateFlows
+(`filteredDevices` + `selectedChildId`), causing
+`ClassCastException` at `DashboardScreen.kt:1045` (unchecked cast
+on `collectAsState<T>()` returning `Any`). Fix-up commit `60c54db`
+adds the 2 missing `every { ... }` stubs. The fix-up is a 2-line
+test setup change, scoped entirely to `NavGraphTest.kt`. Captured
+in the lessons learned above as a checklist item for future
+"VM-public-surface expansion" changes.
+
+## TDD Evidence (Full Chain)
+
+Per `openspec/config.yaml:strict_tdd: true`, every test row records
+the cycle on the master SHA at RED and at GREEN.
+
+### Change A evidence
+
+| Test | RED on `master = d10bd11` + `830434a` | GREEN after `d0a25bd` |
+|------|---------------------------------------|----------------------|
+| A.1.1 `getDevices_parses_child_fields_across_three_devices` | FAILED — `AssertionError: Expected Child(...), got null` (parser drops unknown `child_id`) | passes |
 | A.1.2 (a) `devices fixture dev-001 parses with child Lucas` | FAILED — `AssertionError: Expected Child("child-lucas", "Lucas"), got null` | passes |
-| A.1.2 (b) `devices fixture dev-002 parses without child` | FAILED — `AssertionError: Expected null, got null` (parser does not hydrate; null vs null is technically equal but the field presence check fails on type) | passes |
+| A.1.2 (b) `devices fixture dev-002 parses without child` | FAILED — `AssertionError: Expected null, got null` (parser does not hydrate) | passes |
 | A.1.2 (c) `devices fixture dev-003 parses with child Sofia` | FAILED — `AssertionError: Expected Child("child-sofia", "Sofía"), got null` | passes |
 
-Commit chain on `master = 043f35f` (from
-`feat/multi-child-picker-a-schema-pairing`, **branch kept post-merge**):
+### Change B evidence
 
-- `deb54dd test(parent-dashboard): add RED spike for Q2 multi-child gap + openspec proposal` (RED spike — Change B contract)
-- `830434a test(data): add RED coverage for child fields on ChildDevice wire + mock fixtures` (RED coverage — Phase A.1)
-- `d0a25bd feat(db+wire): add children table, FK from devices, RLS, idempotent Anonimo backfill + wire Child through domain, repo, edge fns, mock fixtures` (GREEN schema + wire + RLS + fixtures — Phases A.3 + A.4)
-- `50f73df chore(openspec): mark Change A apply tasks complete in tasks.md` (metadata)
-- `043f35f Merge pull request #18 from Andrea-Caballero/feat/multi-child-picker-a-schema-pairing` (merge)
+| Test | RED on `master = da6f500` + `568c217` | GREEN after `cd880fe` + `98f22c6` |
+|------|---------------------------------------|------------------------------------|
+| `cold_start_defaults_selectedChildId_to_null` | FAILED — `Unresolved reference: selectedChildId` (build error) | passes |
+| `setSelectedChild_updates_StateFlow` | FAILED — `Unresolved reference: setSelectedChild` (build error) | passes |
+| `loadDevices_resets_stale_selection_to_null` | FAILED — `Unresolved reference: selectedChildId` (build error) | passes |
+| `picker_hidden_when_one_child` | FAILED — `onAllNodesWithTag("child_picker_row")` no node (composable absent) | passes |
+| `picker_visible_with_chip_all_when_two_children` | FAILED — same as above | passes |
+| `chip_tap_filters_devices_tab_to_one_child` | FAILED — same as above | passes |
+| `todos_chip_restores_unfiltered_list` | FAILED — same as above | passes |
+| `q2_gap_dashboard_renders_child_identity_testTag_for_paired_devices` (`:439`) | RED (spike) | **GREEN** — 0.133s |
+| `q2_gap_dashboard_renders_child_picker_or_filter_control` (`:486`) | RED (spike) | **GREEN** — 0.145s |
 
-Strict TDD's RED-before-GREEN contract met: `830434a` is pure
-`test(...)` — no production code; `d0a25bd` is the first commit
-with production code (schema + wire + fixtures) and the GREEN
-test gate.
+Strict TDD's RED-before-GREEN contract met for the full chain.
 
-## PR shape rationale
+## Notes for the Next Session
 
-This change landed in **Change A only** of a chained PR
-(`stacked-to-main`), unlike the auth-fix precedent (PR #15 + #16
-split) or the pluralize-empty-state precedent (PR #17 single).
-Rationale:
-
-- **764 insertions across 12 files in Change A** (per `git show
-  043f35f --stat`). Above the 400-line review budget, but the chain
-  was **explicitly chosen** at Q1=A (round 1) and confirmed at
-  R2-chain=stacked-to-main (round 2) per `decisions-round-2`. The
-  chain justifies the size because Change A is **data-layer only,
-  no UX change** — reviewers can validate the schema + RLS + wire
-  in isolation, then Change B ships UI on top.
-- **No docs delta to split within Change A.** The proposal +
-  design + tasks + specs land in PR #18 because they are the
-  audit trail for the data-layer work; the 4 docs files (proposal
-  118 LoC + design 561 LoC + tasks 166 LoC + 3 spec files 242 LoC
-  = 1087 LoC) are content reviewers need to read alongside the
-  code.
-- **Change B will be its own PR** (PR #19 or whatever the next
-  number is), targeting `master` (post-Change-A-merge). The branch
-  MUST be re-pointed to `master` after PR #18 merges — otherwise
-  the diff picks up Change A's commits and blows the budget.
-- **No `sdd-verify` report in the PR description.** The verify
-  report (`verify-report-change-a.md`) lives in the change
-  folder and is archived with everything else; PR #18's body
-  summarizes the RED→GREEN cycle instead.
-
-If Change B exceeds the 400-line budget on its own, the
-auth-fix-style docs/code PR split is the established pattern (see
-"PR split rationale" in
-`archive/2026-07-02-fix-auth-session-restore-on-cold-start/
-archive-report.md`).
-
-## Tasks
-
-All 22 implementation tasks across Phases A.1 (RED), A.2
-(investigation), A.3 (GREEN schema), A.4 (GREEN wire), A.5 (build
-verifier), and A.6 (PR open) are marked complete (`[x]`) in
-`tasks.md`. Phase A.6.2 ("Merge PR A → `master`") was the operator
-step (out of agent reach) and is the `[ ]` on `tasks.md:80` — it is
-**acknowledged and intentional**: the merge happened via
-`gh pr merge 18 --merge` at 2026-07-06T21:43:49Z, landing at
-`043f35f`. Phase B tasks are all `[ ]` and will be picked up in the
-Change B apply run.
-
-| Phase | Outcome |
-|-------|---------|
-| 1 — RED coverage (BLOCKING) | ✅ done — 4 tests added (A.1.1 + A.1.2 a/b/c); all RED on `master = d10bd11` |
-| 2 — Investigation (naming + edge-fn shape + ktlint pre-flight) | ✅ done — naming resolved inline into `ParentRepository.kt` (no new repo file); edge-fn shape mapped; ktlint/detekt clean |
-| 3 — GREEN schema | ✅ done — `005_children_table.sql` + `006_children_backfill.sql` + RLS policies shipped; folded into `d0a25bd` (rationale: schema+wire must ship together because the SQL gate is review-only) |
-| 4 — GREEN wire | ✅ done — `pairing/index.ts` + `get-devices-for-parent/index.ts` + `Models.kt` + `ParentRepository.kt` + `MockSupabaseEngine.kt` + `devices.json` + `children.json` shipped in `d0a25bd` |
-| 5 — Build verifier | ✅ done — `assembleDebug` + `testDebugUnitTest` + `ktlintCheck` + `detekt` all green (see "Verification performed" below) |
-| 6 — PR open + merge | ✅ PR #18 opened; ✅ merged at `043f35f` (operator step) |
-| **B — Picker UI (Change B)** | 🔲 **untouched** — apply run will target `master` HEAD post-archive |
-
-## Verification performed
-
-Full `verify-report-change-a.md` (141 LoC) lives in this archive
-folder. Headline numbers:
-
-- `./gradlew :app:assembleDebug` — green, no new warnings on the 3
-  touched JVM files (`Models.kt`, `ParentRepository.kt`,
-  `MockSupabaseEngine.kt`).
-- `./gradlew :app:testDebugUnitTest` — 695 tests, 690 pass, 5 fail
-  (3 pre-existing unchanged + 2 intentional RED `q2_gap_*`), 0 new
-  regressions.
-- `./gradlew :app:ktlintCheck :app:detekt` — green, no new
-  violations on touched files.
-- `git diff master...feat/multi-child-picker-a-schema-pairing -- 'app/src/main/java/com/tudominio/parentalcontrol/data/repository/ParentRepository.kt'`
-  confirms line 157-163 region (Solicitudes query) NOT touched —
-  satisfies `time-request-approval` V2-server-side-refactor-deferred
-  requirement.
-- Migration idempotency: `006_children_backfill.sql` uses
-  `ON CONFLICT (parent_id, first_name) DO NOTHING` + `WHERE
-  child_id IS NULL` so re-run is a no-op. Operator validates in
-  staging per PR #18 description.
-- Coverage (kover/jaCoCo): N/A — not configured
-  (`sdd-init/parentalcontrol` gotcha).
-- Instrumented tests (`connectedDebugAndroidTest`) not run locally
-  — dev machine has no `adb` / no emulator per
-  `openspec/config.yaml:57` gotcha. CI on API 28/31/35 is the
-  cross-device smoke; CI ran PR #18 and merged it.
-
-**Verify discrepancy with PR body** (noted in `verify-report-change-a.md`):
-PR description claims "6 fail (4 unchanged pre-existing + 2
-intentional RED)"; actual run shows 5 fail (3 pre-existing + 2 RED)
-because `NavGraphTest` was fixed in master post-PR-#17-archive. Minor
-PR-body accuracy drift, not a code defect.
-
-## Source of truth
-
-Three capability specs updated in this archive (delta specs live in
-this archive folder at `specs/{child-entity,parent-device-list,
-time-request-approval}/spec.md`):
-
-### `child-entity` — NEW capability
-
-The delta is the **entire spec** for the new capability (5
-requirements + 4 out-of-scope items). Promoted as the canonical
-`openspec/specs/child-entity/spec.md` (NEW file). The `[NEEDS
-DECISION]` marker at line 63 of the delta (backfill owner-strategy)
-was resolved at `decisions-spec-round` to **synthetic "Anónimo"**
-child — the canonical spec reflects the chosen approach in
-the backfill requirement prose.
-
-### `parent-device-list` — MODIFIED
-
-3 requirements MODIFIED, 4 requirements ADDED. The existing
-`Error banner CTAs adapt to error type` requirement is unchanged.
-Main spec at `openspec/specs/parent-device-list/spec.md` now lists
-8 requirements (4 original + 4 added). The 4 ADDED requirements
-own the picker UI surface (`ChildPickerChips`,
-`ParentViewModel.selectedChildId`, `Devices tab filters by
-selectedChildId`, `PairingBottomSheet dismiss refreshes`).
-
-### `time-request-approval` — MODIFIED
-
-2 requirements ADDED (`Solicitudes tab filters pending requests by
-selectedChildId` + `V2 server-side filter refactor is deferred`).
-The 8 original requirements are unchanged. Main spec at
-`openspec/specs/time-request-approval/spec.md` now lists 10
-requirements. The Purpose section was updated to mention the
-multi-child picker scoping.
-
-## Spec deltas applied to main
-
-| Capability | Action | Requirements added | Requirements modified | Requirements removed |
-|------------|--------|--------------------|------------------------|---------------------|
-| `child-entity` | NEW file | 5 (entire spec promoted) | 0 | 0 |
-| `parent-device-list` | MODIFIED | 4 (picker + filter + refresh) | 3 (select clause, parser, dashboard render) | 0 |
-| `time-request-approval` | MODIFIED | 2 (Solicitudes filter + V2 deferred) | 0 | 0 |
-
-## Relationship to prior work
-
-This change is **the third chained-PR SDD in this project**:
-
-1. **Auth-fix** (`archive/2026-07-02-fix-auth-session-restore-on-cold-start/`,
-   merged at `1da5d2f` + `798c931`). Mini-SDD lite; the structural
-   template for the `chore(openspec)`-as-third-commit pattern and
-   for split-PR-by-concern thinking. This archive-report's deviation
-   4 cites the auth-fix precedent.
-2. **Pluralize-empty-state + N-device tests**
-   (`archive/2026-07-03-feat-pluralize-empty-state-and-add-n-device-tests/`,
-   merged at `133089a`). Mini-SDD lite + single PR. Slice-1 PR #17
-   masked the multi-child gap with copy + tests; this Change A
-   closes the underlying data-layer gap. The `testTag("device_card")`
-   wire at `DeviceComponents.kt:36-39` (PR #17's output) is the
-   scaffold that the `device_card_child_name` testTag in Change B
-   will reuse.
-3. **This change** (`feat-multi-child-picker`, Change A archived
-   at `043f35f`). Chained-PR SDD stacked-to-main; Change B
-   pending. The first non-lite SDD since the project started using
-   mini-SDD lite for the auth-fix + pluralize changes.
-
-**Not a regression of either prior change.** Change A's 6 touched
-production files (`005_children_table.sql`,
-`006_children_backfill.sql`, `pairing/index.ts`,
-`get-devices-for-parent/index.ts`, `Models.kt`,
-`ParentRepository.kt`, `MockSupabaseEngine.kt`) do not overlap
-with the auth-fix's `DeviceAuthManager.kt` +
-`DeviceAuthManagerColdStartTest.kt` and do not overlap with the
-pluralize-change's `DashboardScreen.kt:311` + `DeviceComponents.kt:36-39`.
-
-## Out-of-scope follow-ups (deferred, not blocking)
-
-The proposal §Scope and `tasks.md` "Out of scope" sections list the
-deferred items. Reproduced here as the canonical record:
-
-- **Picker / select-child affordance** — separate change (Change B).
-  Depends on this data-layer plumbing being solid first.
-- **`ParentRepository.getPendingRequests()` server-side filter** —
-  separate change. Will refactor `ParentRepository.kt:157-163` to
-  accept `childId: String?` and append `.in("device_id",
-  childDeviceIds)` to the Supabase REST query.
-- **Rename device (parent's intent vs child's reported name)** —
-  separate change. Requires a new Supabase column + RLS policy.
-  Distinct from renaming the child.
-- **Realtime for parent-side child events** — separate change. The
-  current implementation is polling-based; Realtime is a larger
-  subsystem swap. The `DisposableEffect` on `PairingBottomSheet`
-  dismiss in Change B is the V1 interim solution.
-- **Persistence of `selectedChildId`** — separate change. V1
-  reset-on-cold-start per `decisions-round-2` R2-V1.
-- **Unpair (deleteDevice) wired to RLS `devices_parent_delete`** —
-  separate change. Will reuse the `testTag("device_card")` wire
-  added in PR #17.
-- **`LazyColumn` `key = { it.id }` stabilization** at
-  `DashboardScreen.kt:354` — pre-existing debt, no `key` parameter
-  on `items(list) { ... }`. Bundled into Change B Phase B.4.2 (c)
-  per `decisions-propose-round` Q5=b (the fix is small and the file
-  is already in scope for Change B).
-- **Solicitudes tab copy / grouping refactor** — separate change.
-  The Solicitudes empty state copy + grouping is parallel but
-  separate from the picker scope.
-- **Dispositivos tab multi-child UX beyond the picker** — separate
-  change (e.g., per-child filter chips grouping by status).
-
-## Notes for the next session
-
-- **Change B can apply now.** The chain strategy
-  `stacked-to-main` is honored — Change B targets the merged
-  `master` HEAD (`043f35f` or later, whichever is current at
-  apply-start), NOT the deleted PR #18 branch.
-- **2 RED `q2_gap_*` tests at `DashboardScreenTest.kt:439` and
-  `:486`** are Change B's acceptance contract. They pin
-  `device_card_child_name` (testTag) and `child_picker_*` (chip row)
-  respectively. The line numbers shifted from the test-spike's
-  `:462`/`:504` because Change A added code between spike and
-  verify — both line numbers are recorded in
-  `verify-report-change-a.md` (line 81 in the TDD Compliance
-  section). If Change B's apply run discovers the lines moved
-  again, re-confirm with the test file before flipping the
-  assertions.
-- **`selectedChildId` is in-memory only** per `decisions-round-2`
-  R2-V1. The ViewModel constructor defaults to `null` (Todos).
-  No DataStore wiring needed for Change B.
-- **The `LazyColumn` `key = { it.id }` fix** at
-  `DashboardScreen.kt:354` is bundled into Change B Phase B.4.2
-  (c). Pre-existing debt, 1 line fix, prevents filter-switch
-  flicker.
-- **`DisposableEffect` is new to this codebase** — Phase B.2.3
-  (no commits, investigation only) confirms zero hits today;
-  Change B Phase B.4.1 (b) introduces the first one inside
-  `PairingBottomSheet`.
-- **`ChildrenRepository.kt` naming caveat** — the apply phase
-  resolved this by extending `ParentRepository.kt` instead of
-  introducing a new file. If Change B needs a write API
-  (`renameChild`, `createChild`), it can graduate to
-  `ParentChildrenRepository.kt` or extend `ParentRepository.kt`
-  further.
-- **The `chore(openspec)`-as-third-commit pattern is now confirmed
-  3 times in this project** (auth-fix + pluralize + this change).
-  Future Change B should use the same pattern: RED commit → GREEN
-  commit → `chore(openspec): mark Change B apply tasks complete`.
-- **Migration idempotency operator step** — the operator must run
-  `supabase db push` to apply `005_children_table.sql` +
-  `006_children_backfill.sql` against staging and validate the
-  backfill is a no-op on re-run. This is documented in PR #18's
-  description but was operator-executed out of band (not part of
-  the agent loop). If the operator has not yet applied it, the
-  Change B merge will hit FK-violation errors when pairing tests
-  run against a real DB — Change B's mock-fixture-only path is
-  fine, but staging + production need the migration first.
-- **Branch cleanup** — PR #18's branch
-  (`feat/multi-child-picker-a-schema-pairing`) is **kept** per
-  `merge-change-a` engram #233 (no `-d` flag). Safe to clean up
-  post-archive if the operator wants.
-- **Open orchestrator decision** — confirm with user: archive
-  Change A first (this archive), then apply Change B? Or skip
-  archive and go straight to Change B? This archive is
-  intentionally executed first because the spec deltas need to be
-  in main before Change B applies the picker UI against the
-  canonical `parent-device-list` / `time-request-approval` specs.
-- **Reuse of `testTag("device_card")`** — PR #17 added the wire
-  at `DeviceComponents.kt:36-39`. Change B's `device_card_child_name`
-  testTag will live on a sibling element of the same card.
-  Future tests (unpair, per-child filter) should anchor
-  assertions on `onAllNodesWithTag("device_card")` (count or
-  `.onFirst()`) rather than text-based selectors — the text
-  changes if localized.
+- **The `feat-multi-child-picker` change folder is closed.** This
+  archive-report supersedes the partial archive paper at `da6f500`.
+  The archive folder
+  `openspec/changes/archive/2026-07-06-feat-multi-child-picker/` is
+  the immutable audit trail — do NOT modify.
+- **Operator must still apply the migrations.** Change A's
+  `005_children_table.sql` + `006_children_backfill.sql` need to be
+  applied via `supabase db push` against staging then production.
+  Change B is pure client-side — no DB action.
+- **The `RenameChildDialog` is the next natural change.** Use
+  `tasks.md` Phase B.5 as the canonical backlog entry. The full
+  Material 3 modal UX is design §B.6. The orchestrator confirmed
+  modal = Material 3 full-screen Dialog with
+  `usePlatformDefaultWidth = false`.
+- **V2 server-side Solicitudes filter is the next natural change
+  after that.** Refactor `ParentRepository.kt:157-163`
+  `getPendingRequests()` to accept `childId: String?` and append
+  `.in("device_id", childDeviceIds)` to the Supabase REST query.
+  Apply engram #235 explicitly defers this from Change B.
+- **Pre-existing bug: "log events parent cleared on reopen"** is
+  still in the backlog. Belongs in its own SDD cycle.
+- **Reuse of `testTag("device_card")` and `device_card_child_name`**
+  by future tests: anchor assertions on
+  `onAllNodesWithTag("device_card")` (count or `.onFirst()`) rather
+  than text-based selectors — the text changes if localized.
+- **`DeviceComponents.kt:36-39` testTag wire** (`device_card`) and
+  the new `device_card_child_name` testTag in `DeviceCard` are the
+  canonical entry points for the next change that wires per-card
+  interactions (unpair, rename, etc.).
+- **The `LazyColumn key = { it.id }` fix** at `DashboardScreen.kt:437`
+  is now landed. Any future change that re-touches the
+  `items(list)` call site should preserve the `key` parameter.
+- **`DisposableEffect` is now a recognized pattern** in this
+  codebase (introduced at `DeviceComponents.kt:394-400`). The next
+  change that needs lifecycle-aware refresh hooks can reuse it.
+- **The shared mock server is still running** (PID may have
+  changed; check process list at session start). If a future change
+  wants a clean mock state, restart with `node scripts/serve-mock.mjs`
+  per the auth-fix precedent.
+- **Apply-phase engram #235 (Change B) is the canonical record of
+  the Change B deviations** — testTag naming, `SharingStarted.Eagerly`,
+  B.5 deferral, V2 deferral. Future change folders can cite it.

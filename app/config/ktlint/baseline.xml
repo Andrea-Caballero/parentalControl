@@ -153,11 +153,11 @@
 		<error line="16" column="1" source="no-wildcard-imports" />
 		<error line="17" column="1" source="no-wildcard-imports" />
 		<error line="18" column="1" source="no-wildcard-imports" />
-		<error line="160" column="1" source="max-line-length" />
-		<error line="230" column="46" source="string-template" />
-		<error line="284" column="46" source="string-template" />
-		<error line="339" column="46" source="string-template" />
-		<error line="352" column="1" source="no-blank-line-before-rbrace" />
+		<error line="162" column="1" source="max-line-length" />
+		<error line="233" column="46" source="string-template" />
+		<error line="287" column="46" source="string-template" />
+		<error line="342" column="46" source="string-template" />
+		<error line="355" column="1" source="no-blank-line-before-rbrace" />
 	</file>
 	<file name="src/main/java/com/tudominio/parentalcontrol/auth/DeviceAuthService.kt">
 		<error line="26" column="1" source="no-trailing-spaces" />

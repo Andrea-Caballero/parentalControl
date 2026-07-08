@@ -183,6 +183,13 @@ class DeviceAuthManager private constructor(
      * does NOT call Supabase, so it works even when `SUPABASE_URL` is a
      * placeholder (the current `local.properties` state).
      *
+     * For the [Role.PARENT] case also persists `parent_id =
+     * [MockSupabaseEngine.MOCK_PARENT_ID]` so [getParentId] returns a
+     * non-null value matching the `parent_id` written by the mock-engine
+     * fixtures (`parent_id = "parent-demo"`). Without this, the
+     * `BehaviorLogViewModel` `.orEmpty()` coercion collapses to `""` and
+     * the DAO filter `WHERE parent_id = ''` matches zero fixture rows.
+     *
      * The synthetic token is acknowledged throwaway; the eventual
      * `parent-auth-flow` change will replace this with real sign-up/sign-in.
      * The [Role] flag is the seam between the synthetic hotfix and the
@@ -202,11 +209,21 @@ class DeviceAuthManager private constructor(
                 _deviceId.value = null
                 _sessionState.value = SessionState.ANONYMOUS
 
-                context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                val prefsEditor = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
                     .edit()
                     .putString("role", role.name)
                     .putString(KEY_SYNTHETIC_ACCESS_TOKEN, token)
-                    .apply()
+
+                if (role == Role.PARENT) {
+                    // Synthetic PARENT auth must write parent_id alongside role +
+                    // synthetic_access_token so BehaviorLogViewModel can read it back
+                    // via getParentId() and the DAO filter matches fixture rows.
+                    // CHILD path deliberately omits parent_id per proposal Q2=(n)
+                    // (no child reader of parent_id exists today).
+                    prefsEditor.putString("parent_id", MockSupabaseEngine.MOCK_PARENT_ID)
+                }
+
+                prefsEditor.apply()
 
                 Result.success(Unit)
             } catch (e: Exception) {

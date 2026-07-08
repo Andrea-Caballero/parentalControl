@@ -351,6 +351,23 @@ class MockSupabaseEngine(private val context: Context) {
             json
         }
     }
+
+    companion object {
+        /**
+         * Single source of truth for the demo parent id used by the mock
+         * engine. Matches every `parent_id` field in
+         * `app/src/main/assets/mock-supabase/behavioral_events.json` (the
+         * 5 seeded events) byte-for-byte. Read by
+         * `DeviceAuthManager.authenticateOrCreate(Role.PARENT)` so the
+         * synthetic auth path writes the same value the DAO filter
+         * `WHERE parent_id = :parentId` expects when serving the fixture.
+         *
+         * Only used by the synthetic hotfix path until the future
+         * `parent-auth-flow` change retires both this constant and the
+         * coupling together.
+         */
+        const val MOCK_PARENT_ID = "parent-demo"
+    }
 }
 
 /**

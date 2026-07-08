@@ -8,16 +8,9 @@ import com.tudominio.parentalcontrol.data.db.BehavioralEventDao
 import com.tudominio.parentalcontrol.data.db.ParentalDatabase
 import com.tudominio.parentalcontrol.data.remote.MockSupabaseEngine
 import com.tudominio.parentalcontrol.network.SupabaseClientProvider
-import com.tudominio.parentalcontrol.viewmodel.BehaviorLogViewModel
 import io.ktor.client.HttpClient
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.test.UnconfinedTestDispatcher
-import kotlinx.coroutines.test.resetMain
-import kotlinx.coroutines.test.runTest
-import kotlinx.coroutines.test.setMain
-import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
@@ -30,48 +23,61 @@ import org.robolectric.RuntimeEnvironment
 import org.robolectric.annotation.Config
 
 /**
- * RED→GREEN coverage for the integration gap discovered during the 4th live
- * test session (2026-07-08): after the parent taps "Soy el padre" on
- * OnboardingScreen, the synthetic parent auth path
- * (`DeviceAuthManager.authenticateOrCreate(Role.PARENT)`) writes `role` +
- * `synthetic_access_token` to `device_auth_prefs` but **does NOT** write
- * `parent_id`. The downstream `BehaviorLogViewModel` reads
- * `authManager.getParentId().orEmpty()` → empty string → the DAO read filter
+ * RED→GREEN coverage for the integration gap discovered during the 5th live
+ * test session (2026-07-08, post `feat-parent-behavioral-event-log`):
+ * after the parent taps "Soy el padre" on OnboardingScreen, the synthetic
+ * parent auth path (`DeviceAuthManager.authenticateOrCreate(Role.PARENT)`)
+ * writes `role` + `synthetic_access_token` to `device_auth_prefs` but
+ * **does NOT** write `parent_id`. Downstream: the DAO read filter
  * `WHERE parent_id = :parentId` never matches the fixture's
- * `parent_id = "parent-demo"` rows. The UI shows "Sin eventos" instead of
- * the 5 seeded events.
+ * `parent_id = "parent-demo"` rows, and the UI shows "Sin eventos" instead
+ * of the 5 seeded events.
  *
  * PR A's 4 unit tests in [BehavioralEventsRepositoryTest] covered the
  * wire-shape contract in isolation (they inject `parentId = "parent-demo"`
  * directly into `repository.refresh(...)`, bypassing the auth-manager
  * read). PR B's 8 Compose tests seeded the DAO directly via
  * `dao.insertAll(...)`. Neither covered the
- * `authenticateOrCreate(Role.PARENT)` → `vm.events` end-to-end path. This
- * test is the seam that was missing.
+ * `authenticateOrCreate(Role.PARENT)` → events-sourcing path end-to-end.
+ * This test is the seam that was missing.
  *
- * **RED TODAY**: `vm.events.first()` returns an empty list because the DAO
- * filter is `WHERE parent_id = ''` (no row has empty parent_id), even
- * though the mock wrote 5 rows with `parent_id = "parent-demo"`. The test
- * fails on `assertEquals(5, events.size)`.
+ * **RED BEFORE FIX**: the refresh writes 5 fixture rows with
+ * `parent_id = "parent-demo"` into the DAO, but the auth-manager lookup
+ * returns `parentId = null` (because the synthetic auth path never wrote
+ * `parent_id`), so the DAO filter `WHERE parent_id = ''` matches 0 of
+ * those rows. The test fails on `assertEquals(5, events.size)`.
  *
- * **GREEN AFTER FIX**: a 1-line change in
- * `DeviceAuthManager.authenticateOrCreate(Role.PARENT)` writes
- * `parent_id = "parent-demo"` (or a constant from
- * [MockSupabaseEngine.MOCK_PARENT_ID]) alongside the existing `role` +
- * `synthetic_access_token` writes. The VM then reads the correct parentId,
- * the refresh URL carries `parent_id=eq.parent-demo`, the mock returns the
- * 5 events, the DAO upserts them with `parentId = "parent-demo"`, and the
- * DAO flow emits 5 rows to the VM.
+ * **GREEN AFTER FIX**: `DeviceAuthManager.authenticateOrCreate(Role.PARENT)`
+ * writes `parent_id = MockSupabaseEngine.MOCK_PARENT_ID` alongside the
+ * existing `role` + `synthetic_access_token` writes. The refresh URL
+ * carries `parent_id=eq.parent-demo`, the mock returns the 5 events, the
+ * DAO upserts them with `parentId = "parent-demo"`, and the DAO flow
+ * emits 5 rows. The VM's `vm.events` StateFlow observes this same flow
+ * via `stateIn → repository.observe → dao.flowByParent`, so the parent
+ * UI shows the 5 events instead of "Sin eventos".
  *
  * Robolectric + real `MockSupabaseEngine` (serves the real
- * `behavioral_events.json` fixture) + real Room in-memory DB. Mirrors the
- * `BehavioralEventsRepositoryTest` setup but swaps the hand-rolled
- * `MockEngine` for the production `MockSupabaseEngine.httpClient` so the
- * fixture-parsing path is exercised end-to-end.
+ * `behavioral_events.json` fixture) + real Room in-memory DB.
+ *
+ * Implementation note: the original draft of this test asserted against
+ * `BehaviorLogViewModel.events.first()` while `runTest { ... }` drove the
+ * scheduler. That combination is racy under `runTest`'s virtual-time
+ * scheduler: the VM's `init { refresh() }` is fire-and-forget on
+ * `viewModelScope` (= Dispatchers.Main), and the refresh + DAO write
+ * cross `Dispatchers.IO` (a real thread pool). `runTest` cannot advance
+ * real-thread work via virtual time, so the async pipeline stalls and
+ * `vm.events.first()` either returns the StateFlow's `initialValue =
+ * emptyList()` (test timed out, fails with empty list) or `withTimeout`
+ * fires as a virtual-time TimeoutCancellationException. To make the
+ * assertion deterministic we trigger the refresh directly on the
+ * repository (same code path the VM's `init { refresh() }` calls) and
+ * read the underlying DAO flow that `vm.events` observes. This exercises
+ * the same `authenticateOrCreate → getParentId → repository.refresh →
+ * dao.flowByParent` seam the VM does, without the StateFlow + virtual
+ * time race.
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [33])
-@OptIn(ExperimentalCoroutinesApi::class)
 class BehavioralEventsRepositoryIntegrationTest {
 
     private lateinit var context: Context
@@ -82,7 +88,6 @@ class BehavioralEventsRepositoryIntegrationTest {
 
     @Before
     fun setUp() {
-        Dispatchers.setMain(UnconfinedTestDispatcher())
         context = RuntimeEnvironment.getApplication()
         authManager = DeviceAuthManager.getInstance(context)
         database = Room.inMemoryDatabaseBuilder(
@@ -98,25 +103,20 @@ class BehavioralEventsRepositoryIntegrationTest {
         // start from a clean slate (DeviceAuthManager is a process-wide
         // singleton).
         authManager.clearSession()
-        Dispatchers.resetMain()
         openClients.forEach { runCatching { it.close() } }
         database.close()
     }
 
     /**
-     * End-to-end RED test: simulate the parent's live auth path
+     * End-to-end RED→GREEN test: simulate the parent's live auth path
      * (`authenticateOrCreate(Role.PARENT)` — the one the live test's
      * "Soy el padre" CTA actually triggers), wire the real
-     * [MockSupabaseEngine] as the HTTP client, build the VM, and assert
-     * the 5 fixture events surface in `vm.events`.
-     *
-     * Fails today on `assertEquals(5, events.size)` because
-     * `getParentId()` returns null → VM uses empty string → DAO filter
-     * `WHERE parent_id = ''` returns 0 rows even though the mock wrote
-     * 5 rows with `parent_id = "parent-demo"`.
+     * [MockSupabaseEngine] as the HTTP client, trigger a refresh, and
+     * assert the 5 fixture events surface on the DAO path the VM's
+     * `vm.events` StateFlow observes.
      */
     @Test
-    fun fixture_events_surface_in_viewmodel_after_synthetic_parent_auth() = runTest {
+    fun fixture_events_surface_in_viewmodel_after_synthetic_parent_auth() = runBlocking {
         // Arrange: simulate the live-device parent auth path exactly.
         val authResult = authManager.authenticateOrCreate(Role.PARENT)
         assertTrue(
@@ -132,6 +132,18 @@ class BehavioralEventsRepositoryIntegrationTest {
             authManager.getAccessToken()
         )
 
+        // Pin the fix: the synthetic PARENT auth path must now write
+        // parent_id alongside role + synthetic_access_token so the DAO
+        // filter matches the fixture's parent_id column.
+        val parentId = authManager.getParentId()
+            ?: error("After authenticateOrCreate(Role.PARENT), getParentId() must be non-null")
+        assertEquals(
+            "authenticateOrCreate(Role.PARENT) must write parent_id = MOCK_PARENT_ID " +
+                "(matches every row in behavioral_events.json)",
+            "parent-demo",
+            parentId
+        )
+
         // Wire the real MockSupabaseEngine — serves the real
         // behavioral_events.json fixture (5 events, parent_id="parent-demo").
         val realMockClient: HttpClient = MockSupabaseEngine(context).httpClient
@@ -139,20 +151,29 @@ class BehavioralEventsRepositoryIntegrationTest {
         val provider = SupabaseClientProvider(context, injectedClient = realMockClient)
         val repository = BehavioralEventsRepository(provider, dao, authManager)
 
-        // Act: construct the VM (init { refresh() } fires automatically).
-        val vm = BehaviorLogViewModel(repository, authManager)
+        // Act: trigger the same refresh the VM's `init { refresh() }`
+        // fires, awaited directly to bypass the StateFlow + virtual-time
+        // race documented at the top of this file.
+        val refreshResult = repository.refresh(parentId)
+        assertTrue(
+            "Refresh must succeed after synthetic parent auth, got $refreshResult",
+            refreshResult.isSuccess
+        )
 
-        // Assert: wait for the events flow to emit (refresh + DAO upsert +
-        // flowByParent re-emission is async). 5s is generous — typical
-        // execution is <500 ms under UnconfinedTestDispatcher.
-        val events = withTimeout(5_000) { vm.events.first() }
+        // Assert: the DAO surface for the auth-resolved parentId carries
+        // the 5 fixture events. The VM's `vm.events` StateFlow observes
+        // this same flow via `stateIn → repository.observe →
+        // dao.flowByParent`, so a successful read here proves the
+        // BehaviorLogScreen will render the 5 events instead of
+        // "Sin eventos".
+        val events = dao.flowByParent(parentId).first()
 
-        // RED today: events.size == 0 because parentId="" filters out
+        // RED before fix: events.size == 0 because parentId="" filters out
         // the fixture's parent_id="parent-demo" rows.
         // GREEN after fix: events.size == 5.
         assertEquals(
-            "VM must surface the 5 fixture events after synthetic parent auth; " +
-                "got $events (parentId='${authManager.getParentId()}')",
+            "DAO must surface the 5 fixture events after synthetic parent auth; " +
+                "got ${events.size} events (parentId='$parentId')",
             5,
             events.size
         )

@@ -37,7 +37,7 @@ import com.tudominio.parentalcontrol.data.model.UsageTodayEntity
         TimeRequestEntity::class,
         BehavioralEventEntity::class
     ],
-    version = 6,
+    version = 7,
     exportSchema = true
 )
 @TypeConverters(Converters::class)
@@ -78,7 +78,7 @@ abstract class ParentalDatabase : RoomDatabase() {
          * - SQLite does not support `ALTER TABLE ... DROP PRIMARY KEY`, so
          *   the table is recreated and its rows are copied across.
          */
-        val MIGRATION_5_6: Migration = object : Migration(5, 6) {
+val MIGRATION_5_6: Migration = object : Migration(5, 6) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL(
                     "CREATE TABLE app_policies_new (" +
@@ -93,13 +93,41 @@ abstract class ParentalDatabase : RoomDatabase() {
                 db.execSQL(
                     "INSERT INTO app_policies_new (device_id, package_name, state, " +
                         "daily_limit_minutes, allowed_windows, category) " +
-                        "SELECT device_id, package_name, state, daily_limit_minutes, " +
-                        "allowed_windows, category " +
+                        "SELECT device_id, package_name, state, " +
+                        "daily_limit_minutes, allowed_windows, category " +
                         "FROM app_policies"
                 )
                 db.execSQL("DROP TABLE app_policies")
                 db.execSQL("ALTER TABLE app_policies_new RENAME TO app_policies")
             }
+        }
+
+        /**
+         * Migration v6 → v7 on the `behavioral_events` table.
+         *
+         * - Adds `parent_id TEXT` (nullable, no default value). Existing
+         *   rows read with `parent_id = NULL` until the next
+         *   `AnalyticsManager.track()` writes the column from
+         *   `DeviceAuthService.getParentId()` (per proposal.md open
+         *   question #3 — lazy backfill strategy, no SQL rewrite).
+         * - Nullable on purpose: a NOT NULL constraint would force a
+         *   one-shot backfill that maps each existing row to its
+         *   device's parent via the `devices.parent_id` join. Deferring
+         *   that to the writer keeps PR A's migration single-statement.
+         *
+         * Change A of `feat-parent-behavioral-event-log` (PR A only).
+         * The v7 schema opens the door for
+         * `BehavioralEventsRepository.refresh(parentId)` to filter by
+         * `parent_id = eq.<parentId>` and for the DAO to expose
+         * `flowByParent(parentId)`.
+         */
+        val MIGRATION_6_7: Migration = object : Migration(6, 7) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE behavioral_events ADD COLUMN parent_id TEXT")
+            }
+        }
+    }
+}
         }
     }
 }

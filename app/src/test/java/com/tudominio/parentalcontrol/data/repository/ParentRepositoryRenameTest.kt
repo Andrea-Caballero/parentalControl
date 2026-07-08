@@ -72,14 +72,16 @@ class ParentRepositoryRenameTest {
     fun setUp() {
         context = org.robolectric.RuntimeEnvironment.getApplication()
         captured = mutableListOf()
-        mockClient = HttpClient(MockEngine { request ->
-            captured.add(request)
-            respond(
-                content = ByteReadChannel(EMPTY_CHILDREN_RESPONSE),
-                status = HttpStatusCode.OK,
-                headers = headersOf(HttpHeaders.ContentType, "application/json")
-            )
-        }) {
+        mockClient = HttpClient(
+            MockEngine { request ->
+                captured.add(request)
+                respond(
+                    content = ByteReadChannel(EMPTY_CHILDREN_RESPONSE),
+                    status = HttpStatusCode.OK,
+                    headers = headersOf(HttpHeaders.ContentType, "application/json")
+                )
+            }
+        ) {
             install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
         }
         // SupabaseClientProvider exposes an `internal` constructor that
@@ -188,9 +190,11 @@ class ParentRepositoryRenameTest {
     fun renameChild_non_2xx_returns_Transient_failure() = runTest {
         // Close the happy-path mockClient, then provide a failing one.
         mockClient.close()
-        val failingClient = HttpClient(MockEngine { _ ->
-            respondError(HttpStatusCode.Conflict)
-        })
+        val failingClient = HttpClient(
+            MockEngine { _ ->
+                respondError(HttpStatusCode.Conflict)
+            }
+        )
         val failingProvider = SupabaseClientProvider(context, injectedClient = failingClient)
 
         try {

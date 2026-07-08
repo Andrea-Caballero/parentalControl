@@ -1,6 +1,7 @@
 package com.tudominio.parentalcontrol.auth
 
 import android.content.Context
+import android.content.SharedPreferences
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import android.util.Base64
@@ -547,6 +548,45 @@ class DeviceAuthManager private constructor(
                 sessionExpiresAt = 0
             }
         }
+
+        // Migration: backfill `parent_id` for parents whose auth state predates
+        // PR #27 (the change that first wrote `parent_id` alongside `role` +
+        // `synthetic_access_token` in `authenticateOrCreate(Role.PARENT)`).
+        // Parents who authenticated before PR #27 keep their stale
+        // `role=PARENT` + `synthetic_access_token` prefs but lack `parent_id`,
+        // which collapses `BehaviorLogViewModel`'s `.orEmpty()` to `""` and
+        // makes the DAO filter `WHERE parent_id = ''` match zero fixture rows.
+        // The migration is role-gated (PARENT only) and idempotent
+        // (`isNullOrEmpty()` guard), so it is a no-op for fresh installs,
+        // post-PR-#27 parents, CHILD users, and orphan-token prefs. See
+        // sdd/fix-migrate-stale-parent-id-on-load/proposal decisions
+        // Q1=(a) async `apply()`, Q2=(n) no CHILD-path migration, Q3=(h)
+        // dedicated helper, Q4=(y) one-shot WARN log, Q5=(e)
+        // `isNullOrEmpty()` guard.
+        migrateStaleParentId(prefs)
+    }
+
+    /**
+     * Lazy on-cold-start migration for parents with pre-PR-#27 auth state.
+     *
+     * Backfills `parent_id = MOCK_PARENT_ID` in [prefs] when the role is
+     * PARENT and `parent_id` is missing (null or empty). Idempotent: when
+     * `parent_id` is already present (post-PR-#27 fresh auth, or already
+     * migrated) the helper returns without writing. Role-gated: CHILD and
+     * orphan-token prefs are left untouched. Emits one WARN log per
+     * affected cold start for observability. See
+     * `sdd/fix-migrate-stale-parent-id-on-load/proposal` for the decision
+     * matrix (Q1=a, Q2=n, Q3=h, Q4=y, Q5=e).
+     */
+    private fun migrateStaleParentId(prefs: SharedPreferences) {
+        val roleName = prefs.getString("role", null)
+        if (roleName != Role.PARENT.name) return
+        if (!prefs.getString("parent_id", null).isNullOrEmpty()) return
+
+        prefs.edit()
+            .putString("parent_id", MockSupabaseEngine.MOCK_PARENT_ID)
+            .apply()
+        Log.w(TAG, "migrated stale parent_id for pre-PR-#27 parent")
     }
 
     private fun encryptWithKeystore(data: String): String {

@@ -398,6 +398,18 @@ class DeviceAuthManager private constructor(
 
     fun getAccessToken(): String? = currentAccessToken
 
+    /**
+     * Returns the Supabase parent UUID persisted by [savePairedSession] in
+     * `device_auth_prefs.parent_id`, or `null` if the device is not yet
+     * paired. Used by the parent-side flows that need to scope a server
+     * call by parent (e.g. `BehavioralEventsRepository.refresh` filters
+     * by `parent_id`). Non-suspend so it can be called from a ViewModel
+     * constructor.
+     */
+    fun getParentId(): String? =
+        context.getSharedPreferences("device_auth_prefs", Context.MODE_PRIVATE)
+            .getString("parent_id", null)
+
     fun isPaired(): Boolean = _sessionState.value == SessionState.PAIRED
 
     fun isSessionExpiringSoon(): Boolean {

@@ -10,6 +10,7 @@ import com.tudominio.parentalcontrol.domain.model.ApprovalResult
 import com.tudominio.parentalcontrol.domain.model.ChildDevice
 import com.tudominio.parentalcontrol.domain.model.PolicyTemplate
 import com.tudominio.parentalcontrol.domain.model.TimeRequest
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -106,6 +107,81 @@ class ParentViewModel @Inject constructor(
     // Código de emparejamiento generado
     private val _pairingCode = MutableStateFlow<PairingCodeResult?>(null)
     val pairingCode: StateFlow<PairingCodeResult?> = _pairingCode.asStateFlow()
+
+    // RenameChildState — hoisted StateFlow per Q2=h (engram #294). The
+    // dashboard pattern-matches on the sealed UI state to render the
+    // rename dialog at the right time. The dialog composable itself
+    // stays stateless — only the text field holds local mutable state;
+    // transitions live here so the dialog surface contract is testable
+    // without a Compose rule.
+    //
+    // Transitions:
+    //   requestRename(...)               Hidden   -> Editing
+    //   confirmRename(newName) on success Editing -> Saving -> Saved -> Hidden (auto-dismiss)
+    //   confirmRename(newName) on failure Editing -> Saving -> Failed
+    //   dismissRename()                  any      -> Hidden (short-circuit)
+    private val _renameChildState =
+        MutableStateFlow<RenameChildState>(RenameChildState.Hidden)
+    val renameChildState: StateFlow<RenameChildState> = _renameChildState.asStateFlow()
+
+    /**
+     * Opens the rename dialog for [childId], seeding it with the child's
+     * current [currentName]. The dialog pre-populates its text field
+     * with [currentName] so the parent only edits what changes.
+     * Mirrors the established `requestRename` request-style naming of
+     * the dialog's intent surface.
+     */
+    fun requestRename(childId: String, currentName: String) {
+        _renameChildState.value = RenameChildState.Editing(childId, currentName)
+    }
+
+    /**
+     * Submits the rename. Validates that we're in [RenameChildState.Editing],
+     * moves into [RenameChildState.Saving], awaits the PATCH, then lands
+     * in [RenameChildState.Saved] (auto-dismisses to Hidden after 1.5s)
+     * on success or [RenameChildState.Failed] on error. Per Q4=p the call
+     * is pessimistic — no optimistic UI update before the await.
+     *
+     * The post-success branch calls [loadDevices] so the dashboard
+     * devices list (and its chip row) see the new first name in the
+     * next frame; then schedules a 1.5s auto-dismiss that guards on
+     * the saved snapshot still being current — a fresh `requestRename`
+     * during the window replaces the snapshot and the old dismissal
+     * no-ops.
+     */
+    fun confirmRename(newName: String) {
+        val editing = _renameChildState.value as? RenameChildState.Editing ?: return
+        _renameChildState.value = RenameChildState.Saving(editing.childId)
+        viewModelScope.launch {
+            val result = repository.renameChild(editing.childId, newName.trim())
+            _renameChildState.value = if (result.isSuccess) {
+                loadDevices()
+                val saved = RenameChildState.Saved(editing.childId)
+                viewModelScope.launch {
+                    delay(RENAME_AUTO_DISMISS_MS)
+                    if (_renameChildState.value == saved) {
+                        _renameChildState.value = RenameChildState.Hidden
+                    }
+                }
+                saved
+            } else {
+                RenameChildState.Failed(
+                    childId = editing.childId,
+                    error = result.exceptionOrNull()?.message ?: "Error al renombrar"
+                )
+            }
+        }
+    }
+
+    /**
+     * Closes the dialog from any state. The Saved state's auto-dismiss
+     * guard (see [confirmRename]) ensures a manual dismiss during the
+     * 1.5s confirmation window is honored — the inner `delay` only
+     * dismisses when the snapshot still matches.
+     */
+    fun dismissRename() {
+        _renameChildState.value = RenameChildState.Hidden
+    }
 
     init {
         loadDevices()
@@ -392,6 +468,43 @@ data class PairingCodeResult(
     val expiresAt: String,
     val deeplink: String
 )
+
+/**
+ * Confirmation-window duration for [RenameChildState.Saved] before the
+ * dialog auto-dismisses back to [RenameChildState.Hidden]. Tuned so
+ * the chip-row's freshly-updated first name is briefly visible inside
+ * the still-open dialog before the dialog closes — gives the parent
+ * feedback that the rename landed without requiring a second tap.
+ * 1.5s is the proposal's open-question default; tweakable in one
+ * place if the manual smoke test finds it too long.
+ */
+private const val RENAME_AUTO_DISMISS_MS = 1_500L
+
+/**
+ * Sealed UI state for the parent-side rename flow
+ * (`openspec/changes/2026-07-07-fix-rename-child-dialog/`). The
+ * dashboard pattern-matches on this state to decide whether to render
+ * the dialog, what [RenameChildDialog.initialName] to pass, and which
+ * of the three intents ([requestRename] / [confirmRename] /
+ * [dismissRename]) the dialog should invoke.
+ *
+ *  - [Hidden]: no dialog rendered.
+ *  - [Editing]: dialog open at rest, awaiting Guardar / Cancelar.
+ *  - [Saving]: dialog open with spinner; the PATCH is in-flight.
+ *  - [Saved]: dialog open with confirmation copy; auto-dismisses
+ *    via [ParentViewModel.confirmRename]'s inner `delay`.
+ *  - [Failed]: dialog open with inline server error.
+ *
+ * Per Q2=h (engram #294) this state is hoisted onto the VM so
+ * renaming is testable without a Compose rule.
+ */
+sealed interface RenameChildState {
+    data object Hidden : RenameChildState
+    data class Editing(val childId: String, val currentName: String) : RenameChildState
+    data class Saving(val childId: String) : RenameChildState
+    data class Saved(val childId: String) : RenameChildState
+    data class Failed(val childId: String, val error: String) : RenameChildState
+}
 
 /**
  * Sealed UI state for the parent dashboard's device list (PR 2 of

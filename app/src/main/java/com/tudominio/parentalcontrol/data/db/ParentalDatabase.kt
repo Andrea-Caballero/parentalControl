@@ -128,6 +128,3 @@ val MIGRATION_5_6: Migration = object : Migration(5, 6) {
         }
     }
 }
-        }
-    }
-}

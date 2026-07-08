@@ -14,9 +14,11 @@ import io.ktor.http.content.TextContent
 import io.ktor.http.headersOf
 import io.ktor.serialization.kotlinx.json.json
 import io.ktor.utils.io.ByteReadChannel
+import com.tudominio.parentalcontrol.data.model.BehavioralEventEntity
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.Json
 
 /**
@@ -73,6 +75,16 @@ class MockSupabaseEngine(private val context: Context) {
     fun children(): List<ChildFixture> {
         val raw = readAsset("mock-supabase/children.json")
         return json.decodeFromString<List<ChildFixture>>(raw)
+    }
+
+    /**
+     * Loads `behavioral_events.json` (5 events owned by `parent-demo`).
+     * Mirrors the `devices()` / `pendingRequests()` test-seam pattern.
+     * Change A of `feat-parent-behavioral-event-log`.
+     */
+    fun events(): List<BehavioralEventFixture> {
+        val raw = readAsset("mock-supabase/behavioral_events.json")
+        return json.decodeFromString<List<BehavioralEventFixture>>(raw)
     }
 
     /**
@@ -140,6 +152,8 @@ class MockSupabaseEngine(private val context: Context) {
                     readAsset("mock-supabase/pairing.json")
                 path.startsWith("/rest/v1/time_requests") ->
                     readAsset("mock-supabase/pending-requests.json")
+                path.startsWith("/rest/v1/behavioral_events") ->
+                    handleBehavioralEventsGet(request)
                 path.endsWith("/rest/v1/children") && request.method == HttpMethod.Patch ->
                     handleChildrenPatch(request)
                 path.endsWith("/rest/v1/children") ->
@@ -261,6 +275,37 @@ class MockSupabaseEngine(private val context: Context) {
         if (query.isNullOrBlank()) return null
         val match = Regex("^id=eq\\.([^&]+)").find(query) ?: return null
         return match.groupValues[1]
+    }
+
+    /**
+     * Handles `GET /rest/v1/behavioral_events` (Change A of
+     * `feat-parent-behavioral-event-log`). Filters the
+     * `behavioral_events.json` fixture client-side by
+     * `parent_id=eq.<parentId>` and sorts newest-first by `created_at`.
+     * V1 caps at `limit=50` (ignored here — the fixture is 5 rows).
+     */
+    private fun handleBehavioralEventsGet(request: HttpRequestData): String {
+        val parentId = parseParentIdEqFilter(request.url.encodedQuery)
+        val rows = events().let { all ->
+            val filtered = if (parentId != null) all.filter { it.parent_id == parentId } else all
+            filtered.sortedByDescending { it.created_at }
+        }
+        return json.encodeToString(
+            ListSerializer(BehavioralEventFixture.serializer()),
+            rows
+        )
+    }
+
+    /**
+     * `parent_id=eq.<value>` filter extractor. Mirrors [parseIdEqFilter]
+     * for the `parent_id` column. Returns `null` when the query string
+     * omits the filter, in which case the handler falls back to the
+     * full fixture (PostgREST unfiltered-read semantics).
+     */
+    private fun parseParentIdEqFilter(query: String?): String? {
+        if (query.isNullOrBlank()) return null
+        val match = Regex("(^|&)parent_id=eq\\.([^&]+)").find(query) ?: return null
+        return match.groupValues[2]
     }
 
     /**
@@ -413,3 +458,42 @@ data class TemplateFixture(
     val name: String,
     val policyJson: String
 )
+
+/**
+ * Wire shape for `GET /rest/v1/behavioral_events`. Mirrors the
+ * `BehavioralEventEntity` columns added by
+ * `ParentalDatabase.MIGRATION_6_7` (Change A of
+ * `feat-parent-behavioral-event-log`).
+ */
+@Serializable
+data class BehavioralEventFixture(
+    val id: Long = 0,
+    val event_type: String,
+    val event_version: Int = 1,
+    val device_id: String,
+    val client_ts: String,
+    val props: String,
+    val synced: Boolean = true,
+    val created_at: String,
+    val parent_id: String? = null
+) {
+    /**
+     * Maps the wire row to the [BehavioralEventEntity] the DAO writes.
+     * The `id` is forwarded verbatim so `OnConflictStrategy.REPLACE`
+     * keeps the row identity stable across replays (the contract the
+     * `BehavioralEventsRepositoryTest.refresh_idempotency_…` case
+     * exercises).
+     */
+    fun toEntity(): BehavioralEventEntity =
+        BehavioralEventEntity(
+            id = id,
+            event_type = event_type,
+            event_version = event_version,
+            device_id = device_id,
+            client_ts = client_ts,
+            props = props,
+            synced = synced,
+            created_at = created_at,
+            parentId = parent_id
+        )
+}

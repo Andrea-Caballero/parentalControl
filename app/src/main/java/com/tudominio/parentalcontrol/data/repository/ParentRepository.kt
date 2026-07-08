@@ -16,6 +16,7 @@ import com.tudominio.parentalcontrol.viewmodel.PairingCodeResult
 import dagger.hilt.android.qualifiers.ApplicationContext
 import io.ktor.client.request.get
 import io.ktor.client.request.header
+import io.ktor.client.request.patch
 import io.ktor.client.request.post
 import io.ktor.client.request.setBody
 import io.ktor.client.statement.bodyAsText
@@ -59,7 +60,7 @@ import javax.inject.Singleton
     // cap is a soft guideline for this kind of remote-API layer.
     "LargeClass"
 )
-class ParentRepository @Inject constructor(
+open class ParentRepository @Inject constructor(
     @ApplicationContext private val context: Context,
     private val authManager: DeviceAuthManager,
     private val clientProvider: SupabaseClientProvider
@@ -87,7 +88,7 @@ class ParentRepository @Inject constructor(
      * channel for collectors.
      */
     private val _pendingRequestsFlow = MutableStateFlow<List<TimeRequest>>(emptyList())
-    val pendingRequestsFlow: StateFlow<List<TimeRequest>> = _pendingRequestsFlow.asStateFlow()
+    open val pendingRequestsFlow: StateFlow<List<TimeRequest>> = _pendingRequestsFlow.asStateFlow()
 
     /**
      * Mirror of the most recent `getDevices()` fetch, used by
@@ -289,7 +290,7 @@ class ParentRepository @Inject constructor(
      *  - [DeviceListError.Transient] for any other failure (network,
      *    HTTP non-2xx, parse error).
      */
-    suspend fun getDevices(): Result<List<ChildDevice>> = withContext(Dispatchers.IO) {
+    open suspend fun getDevices(): Result<List<ChildDevice>> = withContext(Dispatchers.IO) {
         try {
             val token = authManager.getAccessToken()
                 ?: return@withContext Result.failure(DeviceListError.AuthMissing)
@@ -364,7 +365,7 @@ class ParentRepository @Inject constructor(
      * [Result.failure] on a non-2xx response or on any network exception
      * (including the "not authenticated" case).
      */
-    suspend fun getPendingRequests(): Result<List<TimeRequest>> =
+    open suspend fun getPendingRequests(): Result<List<TimeRequest>> =
         getPendingRequests(selectedChildId = null)
 
     /**
@@ -395,7 +396,7 @@ class ParentRepository @Inject constructor(
      * overload above delegates here so `SolicitudesPollingWorker` keeps
      * its Todos-only polling semantics with zero behavioural change.
      */
-    suspend fun getPendingRequests(selectedChildId: String?): Result<List<TimeRequest>> =
+    open suspend fun getPendingRequests(selectedChildId: String?): Result<List<TimeRequest>> =
         withContext(Dispatchers.IO) {
             // Cold-start lazy-hydration gate (per Q1=f / Q2=m from
             // `sdd/fix-v2-filter-production-lazy-hydration/decisions`):
@@ -710,6 +711,52 @@ class ParentRepository @Inject constructor(
      */
     private fun jsonStringOrNull(value: String?): String =
         if (value == null) "null" else "\"${value.replace("\\", "\\\\").replace("\"", "\\\"")}\""
+
+    /**
+     * Renames a child by PATCHing the `children` table at
+     * `${SUPABASE_URL}/rest/v1/children?id=eq.{childId}` with body
+     * `{"first_name":"<newName>"}`. RLS-guarded by `children_parent_update`
+     * (`parent_id = auth.uid()`), so an unknown id surfaces as a non-2xx
+     * response (404 from PostgREST) and the parent UI shows the inline
+     * error.
+     *
+     * Mirrors the existing `approveRequest` / `denyRequest` HTTP pattern:
+     * `withContext(Dispatchers.IO)`, parent bearer token + apikey
+     * header, `setBody(...)`. Returns [Result.success] on 2xx,
+     * [Result.failure] carrying a typed [DeviceListError] otherwise.
+     *
+     * Added by `fix-rename-child-dialog` (greenfield Material 3 modal
+     * per design §B.6 of the Q2 chain archive). The dialog passes the
+     * already-validated + trimmed name into this method; we send it
+     * verbatim. Per Q4=p (pessimistic rename) no optimistic update
+     * happens before the await.
+     */
+    open suspend fun renameChild(childId: String, newName: String): Result<Unit> =
+        withContext(Dispatchers.IO) {
+            try {
+                val token = authManager.getAccessToken()
+                    ?: return@withContext Result.failure(DeviceListError.AuthMissing)
+
+                val httpResponse = clientProvider.httpClient.patch(
+                    "${SupabaseClientProvider.SUPABASE_URL}/rest/v1/children?id=eq.$childId"
+                ) {
+                    header("Authorization", "Bearer $token")
+                    header("apikey", SupabaseClientProvider.SUPABASE_ANON_KEY)
+                    contentType(ContentType.Application.Json)
+                    setBody("""{"first_name":"${newName.replace("\\", "\\\\").replace("\"", "\\\"")}"}""")
+                }
+
+                if (!httpResponse.status.isSuccess()) {
+                    return@withContext Result.failure(
+                        DeviceListError.Transient("HTTP ${httpResponse.status}")
+                    )
+                }
+
+                Result.success(Unit)
+            } catch (e: Exception) {
+                Result.failure(DeviceListError.Transient(e.message ?: "Unknown error"))
+            }
+        }
 
     /**
      * Bloquea dispositivo inmediatamente.

@@ -59,11 +59,13 @@ import com.tudominio.parentalcontrol.domain.model.TimeRequest
 import com.tudominio.parentalcontrol.ui.parent.components.ChildPickerChips
 import com.tudominio.parentalcontrol.ui.parent.components.DeviceCard
 import com.tudominio.parentalcontrol.ui.parent.components.PairingBottomSheet
+import com.tudominio.parentalcontrol.ui.parent.components.RenameChildDialog
 import com.tudominio.parentalcontrol.ui.parent.components.RequestCard
 import com.tudominio.parentalcontrol.ui.screen.apps.AppsScreen
 import com.tudominio.parentalcontrol.ui.screen.apps.AppsViewModel
 import com.tudominio.parentalcontrol.viewmodel.DeviceListUiState
 import com.tudominio.parentalcontrol.viewmodel.ParentViewModel
+import com.tudominio.parentalcontrol.viewmodel.RenameChildState
 
 /**
  * Pantalla principal del padre.
@@ -95,6 +97,7 @@ fun DashboardScreen(
     val pendingRequests by viewModel.pendingRequests.collectAsState()
     val isLoading by viewModel.isLoading.collectAsState()
     val error by viewModel.error.collectAsState()
+    val renameState by viewModel.renameChildState.collectAsState()
 
     var showPairingSheet by remember { mutableStateOf(false) }
     var selectedTab by remember { mutableIntStateOf(0) }
@@ -117,12 +120,19 @@ fun DashboardScreen(
                 pendingRequests = pendingRequests,
                 isLoading = isLoading,
                 error = error,
+                renameState = renameState,
                 selectedTab = selectedTab,
                 showPairingSheet = showPairingSheet,
                 onSelectTab = { selectedTab = it },
                 onShowPairingSheet = { showPairingSheet = true },
                 onDismissPairingSheet = { showPairingSheet = false },
                 onSelectChild = { id -> viewModel.setSelectedChild(id) },
+                onLongPressChild = { child ->
+                    viewModel.requestRename(
+                        childId = child.id,
+                        currentName = child.firstName
+                    )
+                },
                 onNavigateToDevice = { id -> navTarget = NavTarget.DeviceDetail(id) },
                 onNavigateToRequests = onNavigateToRequests,
                 onClearError = { viewModel.clearError() }
@@ -168,12 +178,14 @@ private fun DashboardScaffold(
     pendingRequests: List<TimeRequest>,
     isLoading: Boolean,
     error: String?,
+    renameState: RenameChildState,
     selectedTab: Int,
     showPairingSheet: Boolean,
     onSelectTab: (Int) -> Unit,
     onShowPairingSheet: () -> Unit,
     onDismissPairingSheet: () -> Unit,
     onSelectChild: (String?) -> Unit,
+    onLongPressChild: (com.tudominio.parentalcontrol.domain.model.Child) -> Unit,
     onNavigateToDevice: (String) -> Unit,
     onNavigateToRequests: () -> Unit,
     onClearError: () -> Unit
@@ -279,7 +291,8 @@ private fun DashboardScaffold(
                 ChildPickerChips(
                      children = distinctChildren,
                      selected = selectedChildId,
-                     onSelect = onSelectChild
+                     onSelect = onSelectChild,
+                     onLongPress = { child -> onLongPressChild(child) }
                  )
              }
 
@@ -326,6 +339,38 @@ private fun DashboardScaffold(
             )
         }
 
+        // Rename dialog render — `fix-rename-child-dialog` apply phase
+        // (Q2=h per engram #294 — hoisted RenameChildState). The dialog
+        // is mounted at the bottom of DashboardScaffold alongside
+        // `PairingBottomSheet`, and pattern-matches on the StateFlow so
+        // any Editing / Saving / Failed variant opens it; Hidden / Saved
+        // (after the 1.5s auto-dismiss) close it.
+        when (val rs = renameState) {
+            is RenameChildState.Editing -> RenameChildDialog(
+                initialName = rs.currentName,
+                isLoading = false,
+                errorMessage = null,
+                onConfirm = { newName -> viewModel.confirmRename(newName) },
+                onDismiss = { viewModel.dismissRename() }
+            )
+            is RenameChildState.Saving -> RenameChildDialog(
+                initialName = _resolveInitialName(devices, rs.childId),
+                isLoading = true,
+                errorMessage = null,
+                onConfirm = {},
+                onDismiss = {}
+            )
+            is RenameChildState.Failed -> RenameChildDialog(
+                initialName = _resolveInitialName(devices, rs.childId),
+                isLoading = false,
+                errorMessage = rs.error,
+                onConfirm = { newName -> viewModel.confirmRename(newName) },
+                onDismiss = { viewModel.dismissRename() }
+            )
+            RenameChildState.Hidden,
+            is RenameChildState.Saved -> Unit
+        }
+
         // Snackbar de error
         error?.let {
             LaunchedEffect(it) {
@@ -334,6 +379,19 @@ private fun DashboardScaffold(
         }
     }
 }
+
+/**
+ * Re-derives the latest firstName for a given [childId] from the cached
+ * devices list (so a Saving / Failed re-render shows the latest value
+ * the parent typed, not a stale snapshot).
+ *
+ * Falls back to the empty string when the child id is not present in
+ * the cache — for example, the parent deleted the child between
+ * requestRename and confirmRename. The dialog treats "" as a
+ * validation error, so the parent must re-type.
+ */
+private fun _resolveInitialName(devices: List<ChildDevice>, childId: String): String =
+    devices.firstOrNull { it.child?.id == childId }?.child?.firstName ?: ""
 
 @Composable
 private fun DevicesTab(

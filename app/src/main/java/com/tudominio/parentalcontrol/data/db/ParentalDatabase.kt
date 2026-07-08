@@ -75,10 +75,10 @@ abstract class ParentalDatabase : RoomDatabase() {
          * - Changes primary key from `package_name` alone to composite
          *   `(device_id, package_name)` so the same package may have distinct
          *   policy rows per child device.
-         * - SQLite does not support `ALTER TABLE ... DROP PRIMARY KEY`, so
-         *   the table is recreated and its rows are copied across.
-         */
-val MIGRATION_5_6: Migration = object : Migration(5, 6) {
+          * - SQLite does not support `ALTER TABLE ... DROP PRIMARY KEY`, so
+          *   the table is recreated and its rows are copied across.
+          */
+        val MIGRATION_5_6: Migration = object : Migration(5, 6) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL(
                     "CREATE TABLE app_policies_new (" +

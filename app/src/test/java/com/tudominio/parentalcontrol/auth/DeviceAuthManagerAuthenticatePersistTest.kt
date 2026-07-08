@@ -298,7 +298,7 @@ class DeviceAuthManagerAuthenticatePersistTest {
      * auth's read).
      */
     @Test
-    fun `authenticateOrCreate PARENT then clearSession then authenticateOrCreate PARENT round-trips without stale-token leak`() = runTest {
+    fun `round-trip after clearSession produces fresh token`() = runTest {
         val first = newManager()
         first.authenticateOrCreate(Role.PARENT)
         val tokenA = first.getAccessToken()

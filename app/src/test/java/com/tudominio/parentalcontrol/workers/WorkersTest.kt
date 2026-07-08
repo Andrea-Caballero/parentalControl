@@ -7,12 +7,7 @@ import androidx.work.WorkInfo
 import androidx.work.WorkManager
 import androidx.work.testing.WorkManagerTestInitHelper
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
-import org.junit.Assert.assertFalse
-import org.junit.Assert.assertNull
-import org.junit.Assert.assertThrows
-import org.junit.Assert.fail
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -55,14 +50,14 @@ class BackoffPolicyTest {
     fun `backoff uses exponential policy`() {
         // Backoff exponencial: 1s, 2s, 4s, 8s, 16s...
         val baseDelay = androidx.work.WorkRequest.MIN_BACKOFF_MILLIS
-        
+
         val delays = listOf(
             baseDelay,
             baseDelay * 2,
             baseDelay * 4,
             baseDelay * 8
         )
-        
+
         // Verificar que los delays crecen exponencialmente
         assertEquals(baseDelay, delays[0])
         assertEquals(baseDelay * 2, delays[1])
@@ -111,7 +106,7 @@ class WorkerSchedulingTest {
             SyncWorker.TAG_AFTER_PAIRING,
             SyncWorker.TAG_AFTER_FCM
         )
-        
+
         // Verificar que todos son únicos
         assertEquals(tags.size, tags.toSet().size)
     }
@@ -155,7 +150,7 @@ class WorkerChainingTest {
     fun `fcm sequence triggers sync`() {
         // FCM trigger: solo SyncWorker
         val fcmSequence = listOf(SyncWorker.TAG_AFTER_FCM)
-        
+
         assertEquals(1, fcmSequence.size)
         assertEquals("after_fcm", fcmSequence[0])
     }

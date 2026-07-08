@@ -9,19 +9,7 @@ import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTextInput
-import com.tudominio.parentalcontrol.auth.DeviceAuthManager
-import com.tudominio.parentalcontrol.data.repository.ParentRepository
 import com.tudominio.parentalcontrol.ui.theme.ParentalControlTheme
-import com.tudominio.parentalcontrol.viewmodel.ParentViewModel
-import io.mockk.every
-import io.mockk.mockk
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.ExperimentalCoroutinesApi
-import kotlinx.coroutines.test.UnconfinedTestDispatcher
-import kotlinx.coroutines.test.resetMain
-import kotlinx.coroutines.test.setMain
-import org.junit.After
-import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -75,31 +63,22 @@ import org.robolectric.annotation.Config
  *   - `rename_child_cancel_button`  — Cancelar button
  *   - `rename_child_error_text`     — inline error label
  *   - `rename_child_loading_indicator` — progress inside Guardar
+ *
+ * setUp note (added during the `fix-rename-child-dialog` apply phase):
+ * the original draft constructed a `ParentViewModel` as a sanity check
+ * but never used it in any of the 8 tests below. Dropping it removes
+ * a dependency on a project-wide MockK infrastructure bug (mockk 1.13.7
+ * cannot mock `ParentRepository`/`DeviceAuthManager` on this codebase).
+ * The 8 dialog tests do NOT depend on the VM at all — they construct
+ * `RenameChildDialog` directly with mock callbacks.
  */
-@OptIn(ExperimentalMaterial3Api::class, ExperimentalCoroutinesApi::class)
+@OptIn(ExperimentalMaterial3Api::class)
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [33])
 class RenameChildDialogTest {
 
     @get:Rule
     val composeTestRule = createComposeRule()
-
-    private lateinit var viewModel: ParentViewModel
-
-    @Before
-    fun setUp() {
-        Dispatchers.setMain(UnconfinedTestDispatcher())
-        val mockRepository = mockk<ParentRepository>(relaxed = true)
-        every { mockRepository.pendingRequestsFlow } returns
-            kotlinx.coroutines.flow.MutableStateFlow(emptyList())
-        val mockAuthManager = mockk<DeviceAuthManager>(relaxed = true)
-        viewModel = ParentViewModel(mockRepository, mockAuthManager)
-    }
-
-    @After
-    fun tearDown() {
-        Dispatchers.resetMain()
-    }
 
     /**
      * RED: the dialog root must exist with the documented `testTag` and

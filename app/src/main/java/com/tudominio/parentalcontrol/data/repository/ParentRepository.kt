@@ -60,7 +60,7 @@ import javax.inject.Singleton
     // cap is a soft guideline for this kind of remote-API layer.
     "LargeClass"
 )
-class ParentRepository @Inject constructor(
+open class ParentRepository @Inject constructor(
     @ApplicationContext private val context: Context,
     private val authManager: DeviceAuthManager,
     private val clientProvider: SupabaseClientProvider
@@ -88,7 +88,7 @@ class ParentRepository @Inject constructor(
      * channel for collectors.
      */
     private val _pendingRequestsFlow = MutableStateFlow<List<TimeRequest>>(emptyList())
-    val pendingRequestsFlow: StateFlow<List<TimeRequest>> = _pendingRequestsFlow.asStateFlow()
+    open val pendingRequestsFlow: StateFlow<List<TimeRequest>> = _pendingRequestsFlow.asStateFlow()
 
     /**
      * Mirror of the most recent `getDevices()` fetch, used by
@@ -290,7 +290,7 @@ class ParentRepository @Inject constructor(
      *  - [DeviceListError.Transient] for any other failure (network,
      *    HTTP non-2xx, parse error).
      */
-    suspend fun getDevices(): Result<List<ChildDevice>> = withContext(Dispatchers.IO) {
+    open suspend fun getDevices(): Result<List<ChildDevice>> = withContext(Dispatchers.IO) {
         try {
             val token = authManager.getAccessToken()
                 ?: return@withContext Result.failure(DeviceListError.AuthMissing)
@@ -365,7 +365,7 @@ class ParentRepository @Inject constructor(
      * [Result.failure] on a non-2xx response or on any network exception
      * (including the "not authenticated" case).
      */
-    suspend fun getPendingRequests(): Result<List<TimeRequest>> =
+    open suspend fun getPendingRequests(): Result<List<TimeRequest>> =
         getPendingRequests(selectedChildId = null)
 
     /**
@@ -396,7 +396,7 @@ class ParentRepository @Inject constructor(
      * overload above delegates here so `SolicitudesPollingWorker` keeps
      * its Todos-only polling semantics with zero behavioural change.
      */
-    suspend fun getPendingRequests(selectedChildId: String?): Result<List<TimeRequest>> =
+    open suspend fun getPendingRequests(selectedChildId: String?): Result<List<TimeRequest>> =
         withContext(Dispatchers.IO) {
             // Cold-start lazy-hydration gate (per Q1=f / Q2=m from
             // `sdd/fix-v2-filter-production-lazy-hydration/decisions`):
@@ -731,16 +731,15 @@ class ParentRepository @Inject constructor(
      * verbatim. Per Q4=p (pessimistic rename) no optimistic update
      * happens before the await.
      */
-    suspend fun renameChild(childId: String, newName: String): Result<Unit> =
+    open suspend fun renameChild(childId: String, newName: String): Result<Unit> =
         withContext(Dispatchers.IO) {
             try {
                 val token = authManager.getAccessToken()
                     ?: return@withContext Result.failure(DeviceListError.AuthMissing)
 
-                val httpResponse = clientProvider.httpClient.request(
+                val httpResponse = clientProvider.httpClient.patch(
                     "${SupabaseClientProvider.SUPABASE_URL}/rest/v1/children?id=eq.$childId"
                 ) {
-                    method = HttpMethod.Patch
                     header("Authorization", "Bearer $token")
                     header("apikey", SupabaseClientProvider.SUPABASE_ANON_KEY)
                     contentType(ContentType.Application.Json)

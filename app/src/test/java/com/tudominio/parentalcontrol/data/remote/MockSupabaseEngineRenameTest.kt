@@ -1,23 +1,13 @@
 package com.tudominio.parentalcontrol.data.remote
 
 import androidx.test.core.app.ApplicationProvider
-import io.ktor.client.engine.mock.MockEngine
-import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
-import io.ktor.client.request.HttpRequestData
 import io.ktor.client.request.patch
 import io.ktor.client.request.setBody
-import io.ktor.client.utils.EmptyContent
 import io.ktor.http.ContentType
-import io.ktor.http.HttpMethod
-import io.ktor.http.content.TextContent
 import io.ktor.http.contentType
-import io.ktor.serialization.kotlinx.json.json
 import kotlinx.coroutines.test.runTest
-import kotlinx.serialization.json.Json
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
-import org.junit.Assert.assertTrue
-import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
@@ -41,34 +31,6 @@ import org.robolectric.annotation.Config
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [33])
 class MockSupabaseEngineRenameTest {
-
-    private lateinit var engine: MockSupabaseEngine
-    private lateinit var captured: MutableList<HttpRequestData>
-
-    @Before
-    fun setUp() {
-        val context = ApplicationProvider.getApplicationContext<android.content.Context>()
-        captured = mutableListOf()
-        // Wrap the engine's existing httpClient with an inner MockEngine
-        // so the test can capture the inbound HttpRequestData + delegate
-        // routing to the original `when` block.
-        val inner = engine.httpClient
-        // We can't access the inner MockEngine lambda directly — instead
-        // we use a capturing MockEngine that forwards via inner.request(req)
-        // and copy `captured` from the captured stream.
-        // For brevity in this RED test we only need `engine.currentChildren()`
-        // and `engine.httpClient.patch(...)` — the body assertion is
-        // moved into the wire-shape check below by reading the captured
-        // request from the engine's own MockEngine.
-        // (The wire-shape assertion is intentionally light; the
-        // currentChildren() mutate is the strict Q3=m contract.)
-    }
-
-    private fun bodyText(req: HttpRequestData): String = when (val body = req.body) {
-        is TextContent -> body.text
-        EmptyContent -> ""
-        else -> body.toString()
-    }
 
     /**
      * Happy path: PATCH /rest/v1/children?id=eq.child-lucas with
@@ -108,9 +70,10 @@ class MockSupabaseEngineRenameTest {
         // here because we don't have direct visibility into the
         // MockEngine's captured request — the strict body assertion is
         // covered by `ParentRepositoryRenameTest`.
-        assertTrue(
-            "PATCH /rest/v1/children must return 2xx, got ${response.status}",
-            response.status.value in 200..299
+        assertEquals(
+            "PATCH /rest/v1/children must return 200, got ${response.status}",
+            200,
+            response.status.value
         )
 
         // 2) In-memory mutate: the Q3=m contract — currentChildren()

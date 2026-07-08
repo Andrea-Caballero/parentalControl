@@ -17,8 +17,6 @@ import io.ktor.http.content.TextContent
 import io.ktor.http.headersOf
 import io.ktor.serialization.kotlinx.json.json
 import io.ktor.utils.io.ByteReadChannel
-import io.mockk.every
-import io.mockk.mockk
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.Json
 import org.junit.After
@@ -27,6 +25,10 @@ import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
+import java.lang.reflect.Field
 
 /**
  * RED coverage for the deferred `renameChild` from
@@ -39,10 +41,24 @@ import org.junit.Test
  *  - Success on a 2xx; failure otherwise (typed as `DeviceListError.Transient`).
  *  - Mirrors the existing `approveRequest` / `denyRequest` HTTP pattern.
  *
- * RED today: `renameChild` does not exist on `ParentRepository`. The
- * assertions below fail to compile (`Unresolved reference: renameChild`).
+ * RED today (without this feature): `renameChild` does not exist on
+ * `ParentRepository` — test fails to compile (`Unresolved reference`).
  * The apply phase lands `renameChild` and the tests turn GREEN.
+ *
+ * Implementation note: this test deliberately avoids `mockk<DeviceAuthManager>`
+ * and `mockk<SupabaseClientProvider>` because mockk 1.13.7's
+ * SubclassMockMaker cannot mock Kotlin final-class private constructors on
+ * this codebase (project-wide infrastructure issue also affecting
+ * `ParentViewModelTest`, `DeviceAuthManagerColdStartTest`, etc. on
+ * master). Instead, the test uses Robolectric for a real
+ * `android.content.Context`, a real `DeviceAuthManager.getInstance(...)`
+ * seeded with a synthetic token via reflection (the only mutable seam
+ * in `DeviceAuthManager.getAccessToken()`'s backing field), and a real
+ * `SupabaseClientProvider` constructed with an injected
+ * `MockEngine`-backed `HttpClient`.
  */
+@RunWith(RobolectricTestRunner::class)
+@Config(sdk = [33])
 class ParentRepositoryRenameTest {
 
     private lateinit var captured: MutableList<HttpRequestData>
@@ -54,28 +70,28 @@ class ParentRepositoryRenameTest {
 
     @Before
     fun setUp() {
+        context = org.robolectric.RuntimeEnvironment.getApplication()
         captured = mutableListOf()
-
-        val mockEngine = MockEngine { request ->
+        mockClient = HttpClient(MockEngine { request ->
             captured.add(request)
             respond(
-                content = ByteReadChannel("""[{"id":"child-lucas","first_name":"Mateo"}]"""),
+                content = ByteReadChannel(EMPTY_CHILDREN_RESPONSE),
                 status = HttpStatusCode.OK,
                 headers = headersOf(HttpHeaders.ContentType, "application/json")
             )
-        }
-
-        mockClient = HttpClient(mockEngine) {
+        }) {
             install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
         }
-
-        authManager = mockk()
-        every { authManager.getAccessToken() } returns "test-jwt-token"
-
-        clientProvider = mockk()
-        every { clientProvider.httpClient } returns mockClient
-
-        context = mockk(relaxed = true)
+        // SupabaseClientProvider exposes an `internal` constructor that
+        // accepts an injected HttpClient — use it to swap in our mock
+        // engine client without going through `getInstance(context)`.
+        clientProvider = SupabaseClientProvider(context, injectedClient = mockClient)
+        // DeviceAuthManager.getInstance is a singleton factory; we ask
+        // for it with a Robolectric-baked context and inject a token
+        // via reflection. The `currentAccessToken` backing field is
+        // the source of truth that `getAccessToken()` reads.
+        authManager = DeviceAuthManager.getInstance(context)
+        injectAccessToken(authManager, "test-jwt-token")
 
         repository = ParentRepository(
             context = context,
@@ -86,6 +102,9 @@ class ParentRepositoryRenameTest {
 
     @After
     fun tearDown() {
+        // Drop the injected state so a test ordering inversion doesn't
+        // leak tokens into later tests.
+        injectAccessToken(authManager, null)
         mockClient.close()
     }
 
@@ -95,6 +114,23 @@ class ParentRepositoryRenameTest {
             EmptyContent -> ""
             else -> body.toString()
         }
+    }
+
+    /**
+     * Reflectively sets `DeviceAuthManager.currentAccessToken` so the
+     * test can drive `getAccessToken()` to return a synthetic JWT.
+     * The field is `private var currentAccessToken: String?` (final),
+     * declared at `DeviceAuthManager.kt:144`. We bypass Kotlin null
+     * safety via raw field access; this seam exists ONLY for tests
+     * that need a deterministic auth state without driving the full
+     * `authenticateOrCreate(Role.PARENT)` flow (which itself has
+     * project-wide MockK infrastructure issues).
+     */
+    private fun injectAccessToken(target: DeviceAuthManager, token: String?) {
+        val field: Field = DeviceAuthManager::class.java
+            .getDeclaredField("currentAccessToken")
+        field.isAccessible = true
+        field.set(target, token)
     }
 
     /**
@@ -144,20 +180,27 @@ class ParentRepositoryRenameTest {
 
     /**
      * Failure path: a non-2xx response (the 409 UNIQUE conflict
-     * scenario for an already-taken `(parent_id, first_name)` pair
-     * per Q2 chain's `005_children_table.sql`) must surface as
-     * `DeviceListError.Transient`, never as a silent success.
+     * scenario for an already-taken `(parent_id, first_name)` pair)
+     * must surface as `DeviceListError.Transient`, never as a silent
+     * success.
      */
     @Test
     fun renameChild_non_2xx_returns_Transient_failure() = runTest {
-        val failingEngine = MockEngine { _ ->
+        // Close the happy-path mockClient, then provide a failing one.
+        mockClient.close()
+        val failingClient = HttpClient(MockEngine { _ ->
             respondError(HttpStatusCode.Conflict)
-        }
-        val failingClient = HttpClient(failingEngine)
-        every { clientProvider.httpClient } returns failingClient
+        })
+        val failingProvider = SupabaseClientProvider(context, injectedClient = failingClient)
 
         try {
-            val result = repository.renameChild(
+            val failingRepo = ParentRepository(
+                context = context,
+                authManager = authManager,
+                clientProvider = failingProvider
+            )
+
+            val result = failingRepo.renameChild(
                 childId = "child-lucas",
                 newName = "Mateo"
             )
@@ -178,6 +221,7 @@ class ParentRepositoryRenameTest {
             )
         } finally {
             failingClient.close()
+            mockClient = failingClient // keep the field consistent for tearDown
         }
     }
 
@@ -188,7 +232,7 @@ class ParentRepositoryRenameTest {
      */
     @Test
     fun renameChild_without_token_returns_AuthMissing() = runTest {
-        every { authManager.getAccessToken() } returns null
+        injectAccessToken(authManager, null)
 
         val result = repository.renameChild(
             childId = "child-lucas",
@@ -208,5 +252,9 @@ class ParentRepositoryRenameTest {
             "renameChild must NOT issue an HTTP call when unauthenticated",
             captured.isEmpty()
         )
+    }
+
+    companion object {
+        private const val EMPTY_CHILDREN_RESPONSE = """[]"""
     }
 }

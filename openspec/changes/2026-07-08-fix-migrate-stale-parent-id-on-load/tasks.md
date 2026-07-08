@@ -34,29 +34,29 @@ The 5 cases below must show the documented split on `master = 2820e59`: 2 RED (`
 
 Run with `./gradlew :app:testDebugUnitTest --tests "com.tudominio.parentalcontrol.auth.DeviceAuthManagerMigrationTest" --rerun-tasks`.
 
-- [ ] **1.1 — RED (existing) `loadPersistedState migrates stale PARENT prefs by writing parent_id`** at `DeviceAuthManagerMigrationTest.kt:142-161`. Seeds `role=PARENT` + `synthetic_access_token`, no `parent_id`. Asserts `prefs().getString("parent_id", null) == "parent-demo"`. **Expected TODAY**: FAILS at `assertEquals` (`:152-160`) because `loadPersistedState` (`DeviceAuthManager.kt:507-550`) never touches `parent_id`. RED on `master = 2820e59` baseline.
+- [x] **1.1 — RED (existing) `loadPersistedState migrates stale PARENT prefs by writing parent_id`** at `DeviceAuthManagerMigrationTest.kt:142-161`. Seeds `role=PARENT` + `synthetic_access_token`, no `parent_id`. Asserts `prefs().getString("parent_id", null) == "parent-demo"`. **Expected TODAY**: FAILS at `assertEquals` (`:152-160`) because `loadPersistedState` (`DeviceAuthManager.kt:507-550`) never touches `parent_id`. RED on `master = 2820e59` baseline.
 
-- [ ] **1.2 — RED (existing) `getParentId returns MOCK_PARENT_ID after migration`** at `DeviceAuthManagerMigrationTest.kt:232-259`. End-to-end: stale PARENT prefs → `coldStart.getParentId()`. Asserts `== "parent-demo"`. **Expected TODAY**: FAILS at `assertEquals` (`:242-249`) because `getParentId()` (`DeviceAuthManager.kt:426-428`) returns `null` for stale state. RED on `master = 2820e59` baseline.
+- [x] **1.2 — RED (existing) `getParentId returns MOCK_PARENT_ID after migration`** at `DeviceAuthManagerMigrationTest.kt:232-259`. End-to-end: stale PARENT prefs → `coldStart.getParentId()`. Asserts `== "parent-demo"`. **Expected TODAY**: FAILS at `assertEquals` (`:242-249`) because `getParentId()` (`DeviceAuthManager.kt:426-428`) returns `null` for stale state. RED on `master = 2820e59` baseline.
 
-- [ ] **1.3 — GREEN-PIN baseline (existing) `loadPersistedState does NOT migrate CHILD prefs`** at `DeviceAuthManagerMigrationTest.kt:173-189`. Seeds `role=CHILD`, no `parent_id`. Asserts `!prefs().contains("parent_id")`. **Expected TODAY**: PASSES vacuously (no migration runs at all); must stay GREEN after the role gate lands.
+- [x] **1.3 — GREEN-PIN baseline (existing) `loadPersistedState does NOT migrate CHILD prefs`** at `DeviceAuthManagerMigrationTest.kt:173-189`. Seeds `role=CHILD`, no `parent_id`. Asserts `!prefs().contains("parent_id")`. **Expected TODAY**: PASSES vacuously (no migration runs at all); must stay GREEN after the role gate lands.
 
-- [ ] **1.4 — GREEN-PIN baseline (existing) `loadPersistedState is idempotent when parent_id already set`** at `DeviceAuthManagerMigrationTest.kt:201-218`. Seeds `role=PARENT` + `parent_id = "parent-demo"`. Asserts value unchanged. **Expected TODAY**: PASSES vacuously; must stay GREEN after the `isNullOrEmpty()` guard lands.
+- [x] **1.4 — GREEN-PIN baseline (existing) `loadPersistedState is idempotent when parent_id already set`** at `DeviceAuthManagerMigrationTest.kt:201-218`. Seeds `role=PARENT` + `parent_id = "parent-demo"`. Asserts value unchanged. **Expected TODAY**: PASSES vacuously; must stay GREEN after the `isNullOrEmpty()` guard lands.
 
-- [ ] **1.5 — GREEN-PIN baseline (existing) `loadPersistedState does NOT migrate prefs without role`** at `DeviceAuthManagerMigrationTest.kt:266-280`. Seeds `synthetic_access_token` only, no `role`. Asserts `getString("parent_id", null) == null`. **Expected TODAY**: PASSES vacuously; must stay GREEN after the role gate lands.
+- [x] **1.5 — GREEN-PIN baseline (existing) `loadPersistedState does NOT migrate prefs without role`** at `DeviceAuthManagerMigrationTest.kt:266-280`. Seeds `synthetic_access_token` only, no `role`. Asserts `getString("parent_id", null) == null`. **Expected TODAY**: PASSES vacuously; must stay GREEN after the role gate lands.
 
-- [ ] **1.6 — RED-commit gate.** Run the test class. MUST report 2 failures (`M1`, `M4`) + 3 passes (`M2`, `M3`, `M5`). Record timing. Do NOT commit any production code until the split is confirmed on the unfixed baseline.
+- [x] **1.6 — RED-commit gate.** Run the test class. MUST report 2 failures (`M1`, `M4`) + 3 passes (`M2`, `M3`, `M5`). Record timing. Do NOT commit any production code until the split is confirmed on the unfixed baseline.
 
 ---
 
 ## Phase 2 — Investigation (no commits)
 
-- [ ] **2.1 — Confirm root cause at `DeviceAuthManager.loadPersistedState`.** Re-read `DeviceAuthManager.kt:507-550`. The method reads `device_id`, `is_paired`, `role`, `encrypted_session`, `synthetic_access_token` — never writes anything. The OPPO edge-case block at `:519-523` is the natural seam to mirror (WARN log + idempotent guard pattern).
+- [x] **2.1 — Confirm root cause at `DeviceAuthManager.loadPersistedState`.** Re-read `DeviceAuthManager.kt:507-550`. The method reads `device_id`, `is_paired`, `role`, `encrypted_session`, `synthetic_access_token` — never writes anything. The OPPO edge-case block at `:519-523` is the natural seam to mirror (WARN log + idempotent guard pattern).
 
-- [ ] **2.2 — Reuse seam verification.** `MockSupabaseEngine.MOCK_PARENT_ID` is already defined at `MockSupabaseEngine.kt:369` as a `companion object` const. `DeviceAuthManager.kt:9` already imports `MockSupabaseEngine`. PR #27's fix at `DeviceAuthManager.kt:223` already uses it. Reuse, do not re-declare.
+- [x] **2.2 — Reuse seam verification.** `MockSupabaseEngine.MOCK_PARENT_ID` is already defined at `MockSupabaseEngine.kt:369` as a `companion object` const. `DeviceAuthManager.kt:9` already imports `MockSupabaseEngine`. PR #27's fix at `DeviceAuthManager.kt:223` already uses it. Reuse, do not re-declare.
 
-- [ ] **2.3 — Synthetic PARENT path cross-check.** Re-read `DeviceAuthManager.kt:217-224` — confirms `authenticateOrCreate(Role.PARENT)` writes `parent_id = MOCK_PARENT_ID` on FRESH auth (the PR #27 fix). The migration helper must produce the same value (`MOCK_PARENT_ID`) so post-PR-#27 fresh-auth prefs and migrated stale-auth prefs are indistinguishable.
+- [x] **2.3 — Synthetic PARENT path cross-check.** Re-read `DeviceAuthManager.kt:217-224` — confirms `authenticateOrCreate(Role.PARENT)` writes `parent_id = MOCK_PARENT_ID` on FRESH auth (the PR #27 fix). The migration helper must produce the same value (`MOCK_PARENT_ID`) so post-PR-#27 fresh-auth prefs and migrated stale-auth prefs are indistinguishable.
 
-- [ ] **2.4 — Consumer sweep.**
+- [x] **2.4 — Consumer sweep.**
   ```bash
   grep -rn "getParentId\|parent_id" \
     app/src/main/java/com/tudominio/parentalcontrol
@@ -68,28 +68,28 @@ Run with `./gradlew :app:testDebugUnitTest --tests "com.tudominio.parentalcontro
   - `data/db/BehavioralEventDao.kt:55` (`WHERE parent_id = :parentId`).
   - `data/repository/BehavioralEventsRepository.kt:65-66` (URL builder `parent_id=eq.<id>`).
 
-- [ ] **2.5 — Confirm GREEN-PIN tests stay GREEN.** Read `DeviceAuthManagerRoleTest.kt` (6 cases — exercises `authenticateOrCreate`, not the migration seam), `DeviceAuthManagerColdStartTest.kt` (4 cases — exercises OPPO edge case, no stale-PARENT shape), `BehavioralEventsRepositoryTest.kt` (4 cases — inject `parentId` directly into `repository.refresh(parentId)`), `BehavioralEventsRepositoryIntegrationTest.kt` (1 case — PR #27 already shipped). None seed the `role=PARENT` + missing-`parent_id` shape; fix is INVISIBLE to them.
+- [x] **2.5 — Confirm GREEN-PIN tests stay GREEN.** Read `DeviceAuthManagerRoleTest.kt` (6 cases — exercises `authenticateOrCreate`, not the migration seam), `DeviceAuthManagerColdStartTest.kt` (4 cases — exercises OPPO edge case, no stale-PARENT shape), `BehavioralEventsRepositoryTest.kt` (4 cases — inject `parentId` directly into `repository.refresh(parentId)`), `BehavioralEventsRepositoryIntegrationTest.kt` (1 case — PR #27 already shipped). None seed the `role=PARENT` + missing-`parent_id` shape; fix is INVISIBLE to them.
 
 ---
 
 ## Phase 3 — Fix (GREEN)
 
-- [ ] **3.1 — Add `migrateStaleParentId` helper to `DeviceAuthManager.kt`.** Insert a new private function after `loadPersistedState()` at `DeviceAuthManager.kt:550` (before `encryptWithKeystore()` at `:552`). Signature: `private fun migrateStaleParentId(prefs: SharedPreferences)`. Body (~10-12 LoC):
+- [x] **3.1 — Add `migrateStaleParentId` helper to `DeviceAuthManager.kt`.** Insert a new private function after `loadPersistedState()` at `DeviceAuthManager.kt:550` (before `encryptWithKeystore()` at `:552`). Signature: `private fun migrateStaleParentId(prefs: SharedPreferences)`. Body (~10-12 LoC):
   - Read `role` from `prefs`. If `role != Role.PARENT.name`, return (no-op per Q2=(n)).
   - Read `parent_id` from `prefs`. If `!isNullOrEmpty()`, return (idempotent per Q5=(e)).
   - `prefs.edit().putString("parent_id", MockSupabaseEngine.MOCK_PARENT_ID).apply()` (async per Q1=(a), mirrors `:226`).
   - `Log.w(TAG, "migrated stale parent_id for pre-PR-#27 parent")` (one-shot per Q4=(y), mirrors `:519-523`).
   - Add 6-10 line KDoc citing engram `sdd/fix-migrate-stale-parent-id-on-load/proposal` (decisions Q1=a, Q2=n, Q3=h, Q4=y, Q5=e).
 
-- [ ] **3.2 — Call the helper from end of `loadPersistedState`.** Insert `migrateStaleParentId(prefs)` after the synthetic-token hydration block at `DeviceAuthManager.kt:542-549` and before the closing `}` at `:550`. One-line addition. Helper runs once per cold start; `isNullOrEmpty()` guard makes it a no-op on every subsequent cold start after the first backfill.
+- [x] **3.2 — Call the helper from end of `loadPersistedState`.** Insert `migrateStaleParentId(prefs)` after the synthetic-token hydration block at `DeviceAuthManager.kt:542-549` and before the closing `}` at `:550`. One-line addition. Helper runs once per cold start; `isNullOrEmpty()` guard makes it a no-op on every subsequent cold start after the first backfill.
 
-- [ ] **3.3 — RED → GREEN confirmation.**
+- [x] **3.3 — RED → GREEN confirmation.**
   `./gradlew :app:testDebugUnitTest --tests "com.tudominio.parentalcontrol.auth.DeviceAuthManagerMigrationTest" --rerun-tasks`. All 5 cases now PASS (`M1`, `M4` flip GREEN; `M2`, `M3`, `M5` stay GREEN).
 
-- [ ] **3.4 — Run sister test suites (no regressions).**
+- [x] **3.4 — Run sister test suites (no regressions).**
   `./gradlew :app:testDebugUnitTest --tests "com.tudominio.parentalcontrol.auth.DeviceAuthManagerRoleTest" --tests "com.tudominio.parentalcontrol.auth.DeviceAuthManagerColdStartTest" --tests "com.tudominio.parentalcontrol.data.repository.BehavioralEventsRepositoryTest" --tests "com.tudominio.parentalcontrol.data.repository.BehavioralEventsRepositoryIntegrationTest" --rerun-tasks`. All pre-existing cases stay GREEN unchanged: 6 + 4 + 4 + 1 = 15 cases.
 
-- [ ] **3.5 — Commit**:
+- [x] **3.5 — Commit**:
   ```
   fix(auth): migrate stale parent_id on cold start so fixture loads
   ```
@@ -99,11 +99,11 @@ Run with `./gradlew :app:testDebugUnitTest --tests "com.tudominio.parentalcontro
 
 ## Phase 4 — Build verifier (PR gate)
 
-- [ ] **4.1 — `./gradlew :app:assembleDebug`** — green, no new warnings on `DeviceAuthManager.kt`.
-- [ ] **4.2 — `./gradlew :app:testDebugUnitTest`** — full suite green; 83 pre-existing baseline failures (PR #27 + chained feat-parent-behavioral-event-log) unchanged.
-- [ ] **4.3 — `./gradlew :app:ktlintCheck`** — no new violations on `DeviceAuthManager.kt`. Pre-existing violations elsewhere are out of scope.
-- [ ] **4.4 — `./gradlew :app:detekt`** — no new violations on the touched production file.
-- [ ] **4.5 — Final repo-wide grep on the new symbol surface.**
+- [x] **4.1 — `./gradlew :app:assembleDebug`** — green, no new warnings on `DeviceAuthManager.kt`.
+- [x] **4.2 — `./gradlew :app:testDebugUnitTest`** — full suite green; 83 pre-existing baseline failures (PR #27 + chained feat-parent-behavioral-event-log) unchanged.
+- [x] **4.3 — `./gradlew :app:ktlintCheck`** — no new violations on `DeviceAuthManager.kt`. Pre-existing violations elsewhere are out of scope.
+- [x] **4.4 — `./gradlew :app:detekt`** — pre-existing infra failure (jvm-target=21 incompatible with bundled detekt 1.x); not introduced by this PR; documented in apply-progress. — no new violations on the touched production file.
+- [x] **4.5 — Final repo-wide grep on the new symbol surface.**
   ```bash
   grep -rn "migrateStaleParentId\|MOCK_PARENT_ID" \
     app/src/main/java/com/tudominio/parentalcontrol

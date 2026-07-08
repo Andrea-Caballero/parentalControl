@@ -6,6 +6,21 @@ Gives the parent role a synthetic anonymous auth session and a toggleable Ktor `
 
 ## ADDED Requirements
 
+### Requirement: Stale-auth-state migration on cold start
+
+The auth state MUST be migrated on cold start when `role = PARENT` and `parent_id` is null or empty: `parent_id` is written to the demo default `MOCK_PARENT_ID` so the BehavioralEventLog can surface the fixture's events. The migration MUST be role-gated (PARENT only) and idempotent.
+
+#### Scenario: parent with pre-existing auth state, no parent_id
+
+- **WHEN** the app cold-starts with SharedPreferences containing `role=PARENT` and `synthetic_access_token` but no `parent_id`,
+- **THEN** the migration SHALL write `parent_id = MOCK_PARENT_ID`,
+- **AND** the BehavioralEventLog screen SHALL surface the fixture's events on next navigation.
+
+#### Scenario: child role, no parent_id
+
+- **WHEN** the app cold-starts with `role=CHILD` and no `parent_id`,
+- **THEN** the migration SHALL be a no-op (no `parent_id` written).
+
 ### Requirement: Role-aware authenticateOrCreate issues a session with the correct role flag
 
 `DeviceAuthManager.authenticateOrCreate(role)` SHALL create an auth session and persist `role` to `device_auth_prefs`.
@@ -122,3 +137,4 @@ The parent dashboard's error banner SHALL present an "Iniciar sesión como padre
 | 3 (modified) | `NetworkModuleTest` — add `debug_buildtype_reads_useMockSupabase_from_localProperties`, `release_buildtype_ignores_localProperties_useMockSupabase` |
 | 4 (modified) | `ParentViewModelTest` — add `authenticateAsParent_success_invokesLoadDevices`, `authenticateAsParent_failure_doesNotInvokeLoadDevices` |
 | 5 | `MockSupabaseFixturesTest` — `devices_returnsAtLeastTwoChildDevices`, `..._templates_returnsAtLeastOne` |
+| 6 | `DeviceAuthManagerMigrationTest` — `loadPersistedState_migrates_stale_PARENT_prefs`, `getParentId_returns_MOCK_PARENT_ID_after_migration`, plus 3 GREEN-PIN control cases (CHILD no-op, idempotent, no role no-op) |

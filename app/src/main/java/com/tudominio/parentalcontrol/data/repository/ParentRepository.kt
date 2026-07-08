@@ -16,6 +16,7 @@ import com.tudominio.parentalcontrol.viewmodel.PairingCodeResult
 import dagger.hilt.android.qualifiers.ApplicationContext
 import io.ktor.client.request.get
 import io.ktor.client.request.header
+import io.ktor.client.request.patch
 import io.ktor.client.request.post
 import io.ktor.client.request.setBody
 import io.ktor.client.statement.bodyAsText
@@ -710,6 +711,53 @@ class ParentRepository @Inject constructor(
      */
     private fun jsonStringOrNull(value: String?): String =
         if (value == null) "null" else "\"${value.replace("\\", "\\\\").replace("\"", "\\\"")}\""
+
+    /**
+     * Renames a child by PATCHing the `children` table at
+     * `${SUPABASE_URL}/rest/v1/children?id=eq.{childId}` with body
+     * `{"first_name":"<newName>"}`. RLS-guarded by `children_parent_update`
+     * (`parent_id = auth.uid()`), so an unknown id surfaces as a non-2xx
+     * response (404 from PostgREST) and the parent UI shows the inline
+     * error.
+     *
+     * Mirrors the existing `approveRequest` / `denyRequest` HTTP pattern:
+     * `withContext(Dispatchers.IO)`, parent bearer token + apikey
+     * header, `setBody(...)`. Returns [Result.success] on 2xx,
+     * [Result.failure] carrying a typed [DeviceListError] otherwise.
+     *
+     * Added by `fix-rename-child-dialog` (greenfield Material 3 modal
+     * per design §B.6 of the Q2 chain archive). The dialog passes the
+     * already-validated + trimmed name into this method; we send it
+     * verbatim. Per Q4=p (pessimistic rename) no optimistic update
+     * happens before the await.
+     */
+    suspend fun renameChild(childId: String, newName: String): Result<Unit> =
+        withContext(Dispatchers.IO) {
+            try {
+                val token = authManager.getAccessToken()
+                    ?: return@withContext Result.failure(DeviceListError.AuthMissing)
+
+                val httpResponse = clientProvider.httpClient.request(
+                    "${SupabaseClientProvider.SUPABASE_URL}/rest/v1/children?id=eq.$childId"
+                ) {
+                    method = HttpMethod.Patch
+                    header("Authorization", "Bearer $token")
+                    header("apikey", SupabaseClientProvider.SUPABASE_ANON_KEY)
+                    contentType(ContentType.Application.Json)
+                    setBody("""{"first_name":"${newName.replace("\\", "\\\\").replace("\"", "\\\"")}"}""")
+                }
+
+                if (!httpResponse.status.isSuccess()) {
+                    return@withContext Result.failure(
+                        DeviceListError.Transient("HTTP ${httpResponse.status}")
+                    )
+                }
+
+                Result.success(Unit)
+            } catch (e: Exception) {
+                Result.failure(DeviceListError.Transient(e.message ?: "Unknown error"))
+            }
+        }
 
     /**
      * Bloquea dispositivo inmediatamente.

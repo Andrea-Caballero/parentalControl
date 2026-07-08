@@ -16,6 +16,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Notifications
@@ -50,7 +51,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.launch
 import com.tudominio.parentalcontrol.data.repository.DeviceListError
@@ -63,9 +63,11 @@ import com.tudominio.parentalcontrol.ui.parent.components.RenameChildDialog
 import com.tudominio.parentalcontrol.ui.parent.components.RequestCard
 import com.tudominio.parentalcontrol.ui.screen.apps.AppsScreen
 import com.tudominio.parentalcontrol.ui.screen.apps.AppsViewModel
+import com.tudominio.parentalcontrol.viewmodel.BehaviorLogViewModel
 import com.tudominio.parentalcontrol.viewmodel.DeviceListUiState
 import com.tudominio.parentalcontrol.viewmodel.ParentViewModel
 import com.tudominio.parentalcontrol.viewmodel.RenameChildState
+import androidx.hilt.navigation.compose.hiltViewModel
 
 /**
  * Pantalla principal del padre.
@@ -135,6 +137,7 @@ fun DashboardScreen(
                 },
                 onNavigateToDevice = { id -> navTarget = NavTarget.DeviceDetail(id) },
                 onNavigateToRequests = onNavigateToRequests,
+                onNavigateToBehaviorLog = { navTarget = NavTarget.BehaviorLog },
                 onClearError = { viewModel.clearError() }
             )
         }
@@ -153,6 +156,13 @@ fun DashboardScreen(
                 onBack = { navTarget = NavTarget.DeviceDetail(target.deviceId) }
             )
         }
+        is NavTarget.BehaviorLog -> {
+            val behaviorLogVm: BehaviorLogViewModel = hiltViewModel()
+            BehaviorLogScreen(
+                viewModel = behaviorLogVm,
+                onNavigateBack = { navTarget = NavTarget.Dashboard }
+            )
+        }
     }
 }
 
@@ -165,6 +175,7 @@ private sealed class NavTarget {
     data object Dashboard : NavTarget()
     data class DeviceDetail(val deviceId: String) : NavTarget()
     data class Apps(val deviceId: String) : NavTarget()
+    data object BehaviorLog : NavTarget()
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -188,6 +199,7 @@ private fun DashboardScaffold(
     onLongPressChild: (com.tudominio.parentalcontrol.domain.model.Child) -> Unit,
     onNavigateToDevice: (String) -> Unit,
     onNavigateToRequests: () -> Unit,
+    onNavigateToBehaviorLog: () -> Unit,
     onClearError: () -> Unit
 ) {
     // Distinct children derived from the unfiltered `devices` so the chip
@@ -232,6 +244,12 @@ private fun DashboardScaffold(
                     }
                     IconButton(onClick = onShowPairingSheet) {
                         Icon(Icons.Default.Add, "Agregar dispositivo")
+                    }
+                    IconButton(
+                        onClick = onNavigateToBehaviorLog,
+                        modifier = Modifier.testTag("behavior_log_top_bar_entry")
+                    ) {
+                        Icon(Icons.Default.History, "Registro de eventos")
                     }
                 }
             )

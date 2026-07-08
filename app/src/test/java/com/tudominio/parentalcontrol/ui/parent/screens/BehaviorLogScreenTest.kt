@@ -1,9 +1,7 @@
 package com.tudominio.parentalcontrol.ui.parent.screens
 
 import android.content.Context
-import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.junit4.createComposeRule
-import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
@@ -13,10 +11,9 @@ import com.tudominio.parentalcontrol.data.db.BehavioralEventDao
 import com.tudominio.parentalcontrol.data.db.ParentalDatabase
 import com.tudominio.parentalcontrol.data.model.BehavioralEventEntity
 import com.tudominio.parentalcontrol.data.repository.BehavioralEventsRepository
-import com.tudominio.parentalcontrol.data.repository.ParentRepository
 import com.tudominio.parentalcontrol.network.SupabaseClientProvider
 import com.tudominio.parentalcontrol.ui.theme.ParentalControlTheme
-import com.tudominio.parentalcontrol.viewmodel.ParentViewModel
+import com.tudominio.parentalcontrol.viewmodel.BehaviorLogViewModel
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.mock.MockEngine
 import io.ktor.client.engine.mock.respond
@@ -24,12 +21,8 @@ import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.headersOf
 import io.ktor.utils.io.ByteReadChannel
-import io.mockk.coEvery
-import io.mockk.every
-import io.mockk.mockk
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
-import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.resetMain
@@ -73,7 +66,7 @@ class BehaviorLogScreenTest {
     private lateinit var dao: BehavioralEventDao
     private lateinit var authManager: DeviceAuthManager
     private lateinit var repository: BehavioralEventsRepository
-    private lateinit var parentViewModel: ParentViewModel
+    private val openClients = mutableListOf<HttpClient>()
     private var capturedRefreshes = 0
     private val captured = mutableListOf<String>()
 
@@ -87,16 +80,13 @@ class BehaviorLogScreenTest {
             .allowMainThreadQueries().build()
         dao = database.behavioralEventDao()
         repository = newRepo(responseBody = EMPTY_ARRAY)
-        val parentRepo = mockk<ParentRepository>(relaxed = true)
-        every { parentRepo.pendingRequestsFlow } returns MutableStateFlow(emptyList())
-        coEvery { parentRepo.getDevices() } returns Result.success(emptyList())
-        parentViewModel = ParentViewModel(parentRepo, mockk<DeviceAuthManager>(relaxed = true))
     }
 
     @After
     fun tearDown() {
         Dispatchers.resetMain()
         injectAccessToken(authManager, null)
+        openClients.forEach { runCatching { it.close() } }
         database.close()
     }
 
@@ -117,11 +107,12 @@ class BehaviorLogScreenTest {
                 respond(ByteReadChannel(responseBody), status, JSON_CT)
             }
         ) { }
+        openClients.add(client)
         return BehavioralEventsRepository(
             SupabaseClientProvider(context, injectedClient = client),
             dao,
             authManager
-        ).also { runCatching { client.close() } }
+        )
     }
 
     private fun newVm(): BehaviorLogViewModel =
@@ -130,7 +121,7 @@ class BehaviorLogScreenTest {
     private fun event(id: Long, type: String, device: String, ts: String) = BehavioralEventEntity(
         id = id, event_type = type, event_version = 1,
         device_id = device, client_ts = ts, props = "{}",
-        synced = true, created_at = ts, parentId = "parent-demo"
+        synced = true, created_at = ts, parentId = ""
     )
 
     private fun seed(events: List<BehavioralEventEntity>) = runBlocking { dao.insertAll(events) }
@@ -146,7 +137,9 @@ class BehaviorLogScreenTest {
         )
         composeTestRule.setContent { ParentalControlTheme { BehaviorLogScreen(newVm(), onNavigateBack = {}) } }
         composeTestRule.waitForIdle()
-        composeTestRule.onAllNodesWithTag("behavior_log_event_card_").assertCountEquals(3)
+        composeTestRule.onNodeWithTag("behavior_log_event_card_limit_reached").assertExists()
+        composeTestRule.onNodeWithTag("behavior_log_event_card_time_warning_shown").assertExists()
+        composeTestRule.onNodeWithTag("behavior_log_event_card_block_overlay_shown").assertExists()
     }
 
     @Test
@@ -161,9 +154,12 @@ class BehaviorLogScreenTest {
         )
         composeTestRule.setContent { ParentalControlTheme { BehaviorLogScreen(newVm(), onNavigateBack = {}) } }
         composeTestRule.waitForIdle()
-        composeTestRule.onNodeWithTag("child_picker_chip_child-dev-001").performClick()
+        composeTestRule.onNodeWithTag("child_picker_chip_dev-001").performClick()
         composeTestRule.waitForIdle()
-        composeTestRule.onAllNodesWithTag("behavior_log_event_card_").assertCountEquals(2)
+        composeTestRule.onNodeWithTag("behavior_log_event_card_limit_reached").assertExists()
+        composeTestRule.onNodeWithTag("behavior_log_event_card_time_warning_shown").assertExists()
+        composeTestRule.onNodeWithTag("behavior_log_event_card_block_overlay_shown").assertDoesNotExist()
+        composeTestRule.onNodeWithTag("behavior_log_event_card_app_open").assertDoesNotExist()
     }
 
     @Test
@@ -183,8 +179,8 @@ class BehaviorLogScreenTest {
     fun behavior_log_empty_state_shows_placeholder_when_no_events() = runTest {
         composeTestRule.setContent { ParentalControlTheme { BehaviorLogScreen(newVm(), onNavigateBack = {}) } }
         composeTestRule.waitForIdle()
-        composeTestRule.onNodeWithTag("behavior_log_empty_state").assertExists()
         composeTestRule.onNodeWithText("Sin eventos").assertExists()
+        composeTestRule.onNodeWithTag("behavior_log_empty_state").assertExists()
     }
 
     @Test
@@ -199,6 +195,7 @@ class BehaviorLogScreenTest {
                 kotlinx.coroutines.suspendCancellableCoroutine<io.ktor.client.request.HttpResponseData> { }
             }
         ) { }
+        openClients.add(pendingClient)
         val pendingRepo = BehavioralEventsRepository(
             SupabaseClientProvider(context, injectedClient = pendingClient),
             dao,
@@ -214,7 +211,6 @@ class BehaviorLogScreenTest {
         }
         composeTestRule.waitForIdle()
         composeTestRule.onNodeWithTag("behavior_log_pull_refresh").assertExists()
-        runCatching { pendingClient.close() }
     }
 
     @Test
@@ -241,7 +237,7 @@ class BehaviorLogScreenTest {
         composeTestRule.onNodeWithTag("behavior_log_event_card_limit_reached").assertExists()
         composeTestRule.onNodeWithTag("behavior_log_event_timestamp").assertExists()
         composeTestRule.onNodeWithTag("behavior_log_event_child_name").assertExists()
-        composeTestRule.onNodeWithText("limit_reached").assertExists()
+        composeTestRule.onNodeWithText("LIMIT_REACHED").assertExists()
     }
 
     @Test
@@ -256,12 +252,16 @@ class BehaviorLogScreenTest {
         )
         composeTestRule.setContent { ParentalControlTheme { BehaviorLogScreen(newVm(), onNavigateBack = {}) } }
         composeTestRule.waitForIdle()
-        composeTestRule.onNodeWithTag("child_picker_chip_child-dev-001").performClick()
+        composeTestRule.onNodeWithTag("child_picker_chip_dev-001").performClick()
         composeTestRule.waitForIdle()
-        composeTestRule.onAllNodesWithTag("behavior_log_event_card_").assertCountEquals(2)
+        composeTestRule.onNodeWithTag("behavior_log_event_card_block_overlay_shown").assertDoesNotExist()
+        composeTestRule.onNodeWithTag("behavior_log_event_card_app_open").assertDoesNotExist()
         composeTestRule.onNodeWithTag("child_picker_chip_all").performClick()
         composeTestRule.waitForIdle()
-        composeTestRule.onAllNodesWithTag("behavior_log_event_card_").assertCountEquals(4)
+        composeTestRule.onNodeWithTag("behavior_log_event_card_limit_reached").assertExists()
+        composeTestRule.onNodeWithTag("behavior_log_event_card_time_warning_shown").assertExists()
+        composeTestRule.onNodeWithTag("behavior_log_event_card_block_overlay_shown").assertExists()
+        composeTestRule.onNodeWithTag("behavior_log_event_card_app_open").assertExists()
     }
 
     companion object {

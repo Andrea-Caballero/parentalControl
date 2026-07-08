@@ -1236,6 +1236,16 @@
 		<error line="27" column="1" source="indent" />
 		<error line="28" column="1" source="indent" />
 	</file>
+	<file name="src/main/java/com/tudominio/parentalcontrol/ui/parent/screens/DashboardScreen.kt">
+		<error line="310" column="1" source="indent" />
+		<error line="311" column="1" source="indent" />
+		<error line="312" column="1" source="indent" />
+		<error line="313" column="1" source="indent" />
+		<error line="314" column="1" source="indent" />
+		<error line="315" column="1" source="indent" />
+		<error line="317" column="1" source="indent" />
+		<error line="318" column="1" source="indent" />
+	</file>
 	<file name="src/main/java/com/tudominio/parentalcontrol/ui/screen/dashboard/DashboardViewModel.kt">
 		<error line="1" column="1" source="final-newline" />
 		<error line="3" column="26" source="no-empty-class-body" />

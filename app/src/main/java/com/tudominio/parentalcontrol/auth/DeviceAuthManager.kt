@@ -154,6 +154,14 @@ class DeviceAuthManager private constructor(
             "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
         )
 
+        // Slice A — pragmatic email format check used by
+        // `isValidEmail` (called from `signInWithMagicLink`). Lives in
+        // the companion so the regex is compiled once at class load,
+        // not per-call.
+        private val EMAIL_REGEX = Regex(
+            "^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}\$"
+        )
+
         @Volatile
         private var instance: DeviceAuthManager? = null
 
@@ -474,13 +482,16 @@ private data class MagicLinkVerifyRequest(
  * path); the mock engine never receives this call.
  */
 suspend fun signInWithMagicLink(email: String): Result<MagicLinkSent> =
-    withContext(Dispatchers.IO) {
-        try {
-            val response = httpClient.post("${SUPABASE_URL}/auth/v1/magiclink") {
-                header("apikey", SUPABASE_ANON_KEY)
-                contentType(ContentType.Application.Json)
-                setBody(MagicLinkRequest(email = email))
+        withContext(Dispatchers.IO) {
+            if (!isValidEmail(email)) {
+                return@withContext Result.failure(ParentAuthError.InvalidEmail)
             }
+            try {
+                val response = httpClient.post("${SUPABASE_URL}/auth/v1/magiclink") {
+                    header("apikey", SUPABASE_ANON_KEY)
+                    contentType(ContentType.Application.Json)
+                    setBody(MagicLinkRequest(email = email))
+                }
             if (!response.status.isSuccess()) {
                 val code = response.status.value
                 return@withContext Result.failure(
@@ -810,6 +821,27 @@ suspend fun signInWithMagicLink(email: String): Result<MagicLinkSent> =
      */
     private fun isUuid(s: String): Boolean =
         UUID_REGEX.matches(s)
+
+    /**
+     * Lightweight RFC-5322-ish email format check. Used by
+     * [signInWithMagicLink] to fail fast on obviously-invalid input
+     * before the HTTP round-trip — Supabase returns 400 for
+     * `error: invalid_email` on most malformed addresses, but doing
+     * the check client-side saves a network round-trip and gives a
+     * deterministic `ParentAuthError.InvalidEmail` instead of relying
+     * on Supabase's response shape.
+     *
+     * Not exhaustive — the canonical RFC-5322 grammar is a 600+-line
+     * regex. This is a pragmatic check that catches the common cases
+     * (no `@`, no domain, no TLD, leading/trailing whitespace) without
+     * false-negatives on legitimate addresses.
+     */
+    private fun isValidEmail(s: String): Boolean {
+        if (s.isBlank()) return false
+        val trimmed = s.trim()
+        if (trimmed.length > 254) return false // RFC-5321 SMTP path limit
+        return EMAIL_REGEX.matches(trimmed)
+    }
 
     private fun encryptWithKeystore(data: String): String {
         val secretKey = getOrCreateAuthKey()

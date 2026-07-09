@@ -99,6 +99,22 @@ export async function handleRequest(req: Request): Promise<Response> {
       );
     }
 
+    // Slice A — 1h auto-DENY contract (per
+    // `time-request-approval/spec.md` ADDED Requirement + tasks.md A.2.7).
+    // Before the main APPROVE/DENY logic runs, sweep any PENDING
+    // time_request on the SAME device that has been waiting for a
+    // parent response for more than 1 hour. Auto-deny it so the parent
+    // UI does not show stale requests that they have likely forgotten
+    // about. The sweep is idempotent (WHERE status='PENDING' is the
+    // gate), so a second call within the same window is a no-op.
+    //
+    // Scope: device_id matches the request's device_id. Other devices
+    // are not affected (we only clean up THIS parent's stale requests).
+    await autoDenyStaleRequests(
+      supabaseAdmin,
+      timeRequest.device_id,
+    );
+
     // 2. Branch DENY
     if (effectiveAction === "DENY") {
       // Idempotencia: si ya está DENIED, devolver éxito sin re-procesar.
@@ -287,6 +303,59 @@ async function sendFcmToDevice(
     });
   } catch (e) {
     console.error("FCM send error:", e);
+  }
+}
+
+/**
+ * Slice A — 1h auto-DENY sweep (per `time-request-approval/spec.md`
+ * ADDED Requirement + tasks.md A.2.7).
+ *
+ * Updates every PENDING `time_requests` row on [deviceId] whose
+ * `created_at` is older than 1 hour to:
+ *   status       = "DENIED"
+ *   denied_at    = NOW()
+ *   response_text = "Auto-denied: no parent response within 1h"
+ *
+ * The PATCH is scoped by device_id (the parent on the device) and
+ * idempotent (the WHERE status='PENDING' predicate makes a second
+ * call within the same window a no-op). Best-effort: if the update
+ * fails (network blip, RLS misconfig), the main APPROVE/DENY logic
+ * still runs — the sweep failure is logged but does not block the
+ * parent's decision.
+ *
+ * The PostgREST filter shape is
+ *   /rest/v1/time_requests?status=eq.PENDING&device_id=eq.{deviceId}&created_at=lt.{iso}
+ * which the production Supabase client translates into the SQL
+ *   UPDATE time_requests SET ...
+ *   WHERE status = 'PENDING'
+ *     AND device_id = '{deviceId}'
+ *     AND created_at < '{iso}';
+ *
+ * @param supabase  The service-role Supabase client (bypasses RLS).
+ * @param deviceId  The device_id of the current approve-request call;
+ *                  the sweep only touches PENDING rows on THIS device.
+ */
+async function autoDenyStaleRequests(
+  supabase: SupabaseClient,
+  deviceId: string,
+): Promise<void> {
+  const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+  try {
+    const { error } = await supabase
+      .from("time_requests")
+      .update({
+        status: "DENIED",
+        denied_at: new Date().toISOString(),
+        response_text: "Auto-denied: no parent response within 1h",
+      })
+      .eq("status", "PENDING")
+      .eq("device_id", deviceId)
+      .lt("created_at", oneHourAgo);
+    if (error) {
+      console.error("autoDenyStaleRequests failed:", error.message);
+    }
+  } catch (e) {
+    console.error("autoDenyStaleRequests threw:", e);
   }
 }
 

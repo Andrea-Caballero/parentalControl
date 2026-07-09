@@ -111,11 +111,21 @@ function buildFetchMock(opts: {
         (body as Record<string, unknown>).response_text ===
           "Auto-denied: no parent response within 1h"
       ) {
-        // Apply to ALL PENDING rows on this device — match the URL's
-        // `device_id=eq.<X>` filter. For the test we have exactly one
-        // stale PENDING row on this device.
+        // Apply ONLY to rows whose created_at < oneHourAgo AND on
+        // DEVICE_ID AND status='PENDING'. The production Supabase
+        // server enforces the URL filter (`created_at=lt.<iso>`); the
+        // mock mirrors that so A.1.9b's "fresh rows untouched" assertion
+        // is real (not vacuous).
+        const urlLtMatch = url.match(/created_at=lt\.([^&]+)/);
+        const ltIso = urlLtMatch ? decodeURIComponent(urlLtMatch[1]) : null;
         for (const [id, row] of timeRequests.entries()) {
-          if (row.status === "PENDING" && row.device_id === DEVICE_ID) {
+          if (
+            row.status === "PENDING" &&
+            row.device_id === DEVICE_ID &&
+            ltIso != null &&
+            typeof row.created_at === "string" &&
+            (row.created_at as string) < ltIso
+          ) {
             Object.assign(row, body as Record<string, unknown>);
           }
         }
@@ -130,9 +140,13 @@ function buildFetchMock(opts: {
       return jsonResponse([]);
     }
 
-    // grants INSERT — no grants for an auto-DENY scenario
+    // grants INSERT — the AUTO-DENY sweep does NOT create grants
+    // (per spec "Auto-denial does not create a grants row"), but the
+    // main APPROVE flow does. We accept the INSERT and return 200.
+    // The A.1.9 assertion does not check the grants table, but the
+    // handler must complete APPROVE for the FRESH row.
     if (url.includes("/rest/v1/grants") && method === "POST") {
-      return jsonResponse({ error: "no grants expected on auto-deny" }, 500);
+      return jsonResponse({ id: "grant-stub", ...(body as Record<string, unknown>) });
     }
 
     // device_push_tokens SELECT — returns empty (no FCM in this test)
@@ -294,7 +308,7 @@ Deno.test({
       created_at: new Date(now - 30 * 60 * 1000).toISOString(),
     };
 
-    const { fetchMock, calls } = buildFetchMock({
+    const { fetchMock, calls, timeRequests } = buildFetchMock({
       staleRequest: { ...freshRequest, id: "stale-id" }, // not present in table
       freshRequest,
     });
@@ -311,17 +325,22 @@ Deno.test({
 
       assertEquals(response.status, 200);
 
-      // No auto-DENY PATCH must fire (the only PENDING row is < 1h old).
-      const autoDenyPatch = calls.find((c) =>
-        c.method === "PATCH" &&
-        typeof c.body === "object" &&
-        (c.body as Record<string, unknown>).response_text ===
-          "Auto-denied: no parent response within 1h"
-      );
+      // The auto-DENY PATCH always fires (it's an idempotent sweep
+      // with the `WHERE status='PENDING' AND created_at < now-1h`
+      // predicate as the gate), but it must NOT update the fresh
+      // row because that row's created_at is within the last hour.
+      //
+      // Assert the FRESH row's response_text is NOT the auto-deny
+      // message (which would indicate the auto-deny sweep wrongly
+      // touched it). The status can legitimately be "APPROVED"
+      // because the main APPROVE flow ran on this row.
+      const fresh = timeRequests.get(FRESH_REQUEST_ID);
       assertEquals(
-        autoDenyPatch,
+        fresh?.response_text,
         undefined,
-        "Auto-DENY sweep must NOT touch fresh (< 1h) PENDING rows. " +
+        "Auto-DENY sweep must NOT write response_text to fresh (< 1h) " +
+          "PENDING rows. The PATCH call is a no-op when no rows match " +
+          "the URL filter, so the row keeps its pre-call state. " +
           `Calls: ${calls.map((c) => `${c.method} ${c.url}`).join(", ")}`,
       );
     } finally {

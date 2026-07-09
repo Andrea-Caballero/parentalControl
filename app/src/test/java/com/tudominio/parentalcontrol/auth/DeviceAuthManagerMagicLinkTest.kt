@@ -104,57 +104,6 @@ class DeviceAuthManagerMagicLinkTest {
         DeviceAuthManager.getInstance(context)
 
     /**
-     * Build a [HttpClient] backed by a [MockEngine] whose handler routes
-     * requests by URL suffix. Captures the body sent on every request so
-     * the assertion in A.1.2 can verify "no body sent on invalid-email
-     * path" if needed.
-     */
-    private data class CapturedRequest(
-        val method: HttpMethod,
-        val path: String,
-        val body: String
-    )
-
-    private fun mockHttpClient(handler: MockEngine.() -> Unit): HttpClient {
-        val captured = mutableListOf<CapturedRequest>()
-        val engine = MockEngine { request ->
-            val bodyText = try {
-                request.body.toByteReadPacket().readUTF8Line() ?: ""
-            } catch (e: Exception) {
-                ""
-            }
-            captured.add(
-                CapturedRequest(
-                    method = request.method,
-                    path = request.url.encodedPath,
-                    body = bodyText
-                )
-            )
-            // The lambda fills in `respond(...)` calls; pass the request
-            // through. We wrap it as a property on the engine so the
-            // lambda can access the captured list if needed.
-            this.handler.let { _ ->
-                // Provide the handler with `this` so it can call respond(...)
-                @Suppress("UNCHECKED_CAST")
-                val delegate = handler as (MockEngine) -> Unit
-                // The actual respond call happens inside the lambda body
-                // below; we forward to a side-effect that the test sets up.
-            }
-            // The handler below uses `respond(...)` directly via the outer
-            // captured list to dispatch — we just call the lambda body
-            // that the test passes in.
-            respond(
-                content = ByteReadChannel("{}"),
-                status = HttpStatusCode.OK,
-                headers = headersOf(HttpHeaders.ContentType, "application/json")
-            )
-        }.apply { handler() }
-        return HttpClient(engine) {
-            install(ContentNegotiation) { json() }
-        }
-    }
-
-    /**
      * Helper that injects a [HttpClient] into a [DeviceAuthManager] via
      * reflection. The private `httpClient` field is the seam — same
      * pattern as `DeviceAuthManagerColdStartTest` for the token fields.

@@ -12,6 +12,7 @@ import com.tudominio.parentalcontrol.keystore.SecureStorage
 import io.ktor.client.*
 import io.ktor.client.call.*
 import io.ktor.client.engine.okhttp.*
+import io.ktor.client.statement.*
 import io.ktor.client.plugins.*
 import io.ktor.client.plugins.contentnegotiation.*
 import io.ktor.client.request.*
@@ -78,6 +79,55 @@ data class SupabaseAuthResponse(
     val user: SupabaseUser? = null
 )
 
+/**
+ * Magic-link sign-in result (intermediate — no JWT yet).
+ *
+ * Returned by [DeviceAuthManager.signInWithMagicLink] when Supabase
+ * accepted the email and dispatched the magic link. The message id is
+ * the opaque Supabase identifier for the dispatched email; the user
+ * must click the link in their inbox, then
+ * [DeviceAuthManager.verifyMagicLinkOtp] exchanges the resulting token
+ * for a real ParentSession.
+ */
+data class MagicLinkSent(
+    val messageId: String
+)
+
+/**
+ * Authenticated parent session (Slice A — `signInWithMagicLink` flow).
+ *
+ * `parentId` is the Supabase `auth.users.id` (mirrors `app_metadata.parent_id`
+ * — the same UUID the custom-access-token-hook injects as a JWT claim).
+ *
+ * The `accessToken` is the JWT to use as `Authorization: Bearer <token>`
+ * on every parent-scoped Supabase REST/edge-fn call.
+ */
+data class ParentSession(
+    val parentId: String,
+    val accessToken: String,
+    val refreshToken: String
+)
+
+/**
+ * Errors surfaced by [DeviceAuthManager.signInWithMagicLink] +
+ * [DeviceAuthManager.verifyMagicLinkOtp]. Distinct error type from
+ * [AuthResult.Error] so callers can branch on the failure mode without
+ * parsing message strings.
+ */
+sealed class ParentAuthError(message: String) : RuntimeException(message) {
+    /** Supabase returned 400 with `error: "invalid_email"` */
+    object InvalidEmail : ParentAuthError("invalid_email")
+
+    /** Supabase returned 401 with `error: "otp_expired"` (verify only) */
+    object TokenExpired : ParentAuthError("token_expired")
+
+    /** Supabase returned 422 or any other 4xx (caller surfaces to UI) */
+    object InvalidRequest : ParentAuthError("invalid_request")
+
+    /** Network / decoding / unknown server failure */
+    object Unknown : ParentAuthError("unknown")
+}
+
 @Serializable
 data class SupabaseUser(
     val id: String,
@@ -95,6 +145,14 @@ class DeviceAuthManager private constructor(
         const val SUPABASE_ANON_KEY = "your-anon-key"
         private const val PREFS_NAME = "device_auth_prefs"
         private const val KEY_SYNTHETIC_ACCESS_TOKEN = "synthetic_access_token"
+
+        // Slice A clean-cutover (Q2=b): the regex that distinguishes a
+        // real Supabase `auth.users.id` UUID from a legacy mock-engine
+        // sentinel like `"parent-demo"`. Used by `loadPersistedState` to
+        // decide whether to wipe the prefs (no real cloud session).
+        private val UUID_REGEX = Regex(
+            "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+        )
 
         @Volatile
         private var instance: DeviceAuthManager? = null
@@ -377,6 +435,167 @@ class DeviceAuthManager private constructor(
         }
     }
 
+    @Serializable
+private data class MagicLinkRequest(
+    val email: String,
+    val create_user: Boolean = true,
+    val gotrue_meta_security: Map<String, String> = mapOf("captcha_token" to "")
+)
+
+@Serializable
+private data class MagicLinkResponse(
+    val message_id: String? = null,
+    val error: String? = null
+)
+
+@Serializable
+private data class MagicLinkVerifyRequest(
+    val email: String,
+    val token: String
+)
+
+/**
+ * Slice A — `signInWithMagicLink(email)` (Q1=b magic-link path).
+ *
+ * Posts `${SUPABASE_URL}/auth/v1/magiclink` with `{ email,
+ * create_user: true, gotrue_meta_security: { captcha_token: "" } }`
+ * so Supabase dispatches the magic link to the parent's inbox.
+ *
+ * The Inbucket at `http://127.0.0.1:54324` (local Supabase) catches
+ * the email; the production build routes to the real inbox.
+ *
+ * Returns [Result.success] with a [MagicLinkSent] carrying the
+ * Supabase-assigned `message_id` (opaque). Returns
+ * [Result.failure] with a [ParentAuthError] for HTTP errors; the
+ * `device_auth_prefs` namespace is NEVER touched on the failure
+ * path.
+ *
+ * Called only under `!BuildConfig.USE_MOCK_SUPABASE` (real cloud
+ * path); the mock engine never receives this call.
+ */
+suspend fun signInWithMagicLink(email: String): Result<MagicLinkSent> =
+    withContext(Dispatchers.IO) {
+        try {
+            val response = httpClient.post("${SUPABASE_URL}/auth/v1/magiclink") {
+                header("apikey", SUPABASE_ANON_KEY)
+                contentType(ContentType.Application.Json)
+                setBody(MagicLinkRequest(email = email))
+            }
+            if (!response.status.isSuccess()) {
+                val code = response.status.value
+                return@withContext Result.failure(
+                    when (code) {
+                        400 -> ParentAuthError.InvalidEmail
+                        422 -> ParentAuthError.InvalidRequest
+                        else -> ParentAuthError.Unknown
+                    }
+                )
+            }
+            // Supabase returns `{}` on success in some versions OR
+            // `{ message_id: "<uuid>" }` in others. Parse whichever
+            // shape is present; empty object is acceptable.
+            val parsed: MagicLinkResponse = response.body()
+            Result.success(MagicLinkSent(messageId = parsed.message_id.orEmpty()))
+        } catch (e: Exception) {
+            Log.w(TAG, "signInWithMagicLink failed: ${e.message}", e)
+            Result.failure(ParentAuthError.Unknown)
+        }
+    }
+
+    /**
+     * Slice A — `verifyMagicLinkOtp(tokenHash, email)` (Q1=b magic-link path).
+     *
+     * Exchanges the magic-link `token_hash` (extracted from the link URL
+     * by the UI / smoke-test harness) for a real parent session by
+     * POSTing `${SUPABASE_URL}/auth/v1/verify?type=magiclink` with
+     * `{ email, token: tokenHash }`. The Supabase response includes the
+     * `access_token` JWT (whose `parent_id` claim was injected by the
+     * custom-access-token-hook from `app_metadata.parent_id`) and a
+     * `user.id` (= parentId).
+     *
+     * On success:
+     *  - Returns [ParentSession] with `parentId` = `user.id`.
+     *  - Atomically persists `{ role: PARENT, parent_id, access_token }`
+     *    to `device_auth_prefs` via [persistParentSession]. The atomic
+     *    helper writes all keys inside a single `prefs.edit().apply()`
+     *    so a crash mid-write cannot leave half-state.
+     *
+     * On failure:
+     *  - [ParentAuthError.TokenExpired] for HTTP 401.
+     *  - [ParentAuthError.InvalidRequest] for HTTP 422.
+     *  - [ParentAuthError.Unknown] for any other 4xx/5xx or network error.
+     *  - `device_auth_prefs` is NEVER touched (atomic-prefs invariant).
+     *
+     * Called only under `!BuildConfig.USE_MOCK_SUPABASE`.
+     */
+    suspend fun verifyMagicLinkOtp(
+        tokenHash: String,
+        email: String
+    ): Result<ParentSession> = withContext(Dispatchers.IO) {
+        try {
+            val response = httpClient.post(
+                "${SUPABASE_URL}/auth/v1/verify?type=magiclink"
+            ) {
+                header("apikey", SUPABASE_ANON_KEY)
+                contentType(ContentType.Application.Json)
+                setBody(MagicLinkVerifyRequest(email = email, token = tokenHash))
+            }
+            if (!response.status.isSuccess()) {
+                val code = response.status.value
+                return@withContext Result.failure(
+                    when (code) {
+                        401 -> ParentAuthError.TokenExpired
+                        422 -> ParentAuthError.InvalidRequest
+                        else -> ParentAuthError.Unknown
+                    }
+                )
+            }
+            val authResponse: SupabaseAuthResponse = response.body()
+            val parentId = authResponse.user?.id
+                ?: return@withContext Result.failure(ParentAuthError.InvalidRequest)
+
+            val session = ParentSession(
+                parentId = parentId,
+                accessToken = authResponse.access_token,
+                refreshToken = authResponse.refresh_token
+            )
+
+            // Atomic persistence: all keys in a single edit() block so a
+            // crash mid-write cannot leave half-state. The cleartext
+            // `parent_id` + `role` keys are written alongside the new
+            // `access_token` + `refresh_token` cleartext siblings (the
+            // Keystore-encrypted `encrypted_session` path is kept for
+            // the synthetic-anonymous child auth flow; the parent magic-
+            // link path uses cleartext so the cold-start read in
+            // `loadPersistedState` is symmetric with the synthetic
+            // restoreSession flow).
+            persistParentSession(session)
+
+            Result.success(session)
+        } catch (e: Exception) {
+            Log.w(TAG, "verifyMagicLinkOtp failed: ${e.message}", e)
+            Result.failure(ParentAuthError.Unknown)
+        }
+    }
+
+    /**
+     * Atomic write of a [ParentSession] to `device_auth_prefs`. Single
+     * `prefs.edit().apply()` block; on any exception, no key is written
+     * and the existing prefs are preserved (the atomic-prefs invariant
+     * pinned by the A.1.3 test). Writes the role + parent_id + both
+     * tokens so `loadPersistedState` can re-hydrate `currentAccessToken`
+     * on the next cold start.
+     */
+    private fun persistParentSession(session: ParentSession) {
+        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .edit()
+            .putString("role", Role.PARENT.name)
+            .putString("parent_id", session.parentId)
+            .putString("access_token", session.accessToken)
+            .putString("refresh_token", session.refreshToken)
+            .apply()
+    }
+
     suspend fun forceReauth(): AuthResult = withContext(Dispatchers.IO) {
         clearSession()
         return@withContext createAnonymousSession()
@@ -549,45 +768,48 @@ class DeviceAuthManager private constructor(
             }
         }
 
-        // Migration: backfill `parent_id` for parents whose auth state predates
-        // PR #27 (the change that first wrote `parent_id` alongside `role` +
-        // `synthetic_access_token` in `authenticateOrCreate(Role.PARENT)`).
-        // Parents who authenticated before PR #27 keep their stale
-        // `role=PARENT` + `synthetic_access_token` prefs but lack `parent_id`,
-        // which collapses `BehaviorLogViewModel`'s `.orEmpty()` to `""` and
-        // makes the DAO filter `WHERE parent_id = ''` match zero fixture rows.
-        // The migration is role-gated (PARENT only) and idempotent
-        // (`isNullOrEmpty()` guard), so it is a no-op for fresh installs,
-        // post-PR-#27 parents, CHILD users, and orphan-token prefs. See
-        // sdd/fix-migrate-stale-parent-id-on-load/proposal decisions
-        // Q1=(a) async `apply()`, Q2=(n) no CHILD-path migration, Q3=(h)
-        // dedicated helper, Q4=(y) one-shot WARN log, Q5=(e)
-        // `isNullOrEmpty()` guard.
-        migrateStaleParentId(prefs)
+        // Slice A — Clean Cutover (Q2=b). Replaces the PR-#28
+        // `migrateStaleParentId(prefs)` helper (which backfilled
+        // `parent_id = "parent-demo"` for pre-PR-#27 PARENT prefs).
+        // The new contract: any `parent_id` that is NOT a valid Supabase
+        // UUID (specifically: the legacy `"parent-demo"` sentinel or any
+        // other mock-engine value) is WIPED on cold start so the parent
+        // re-authenticates against real Supabase instead of carrying
+        // stale synthetic state into a cloud session.
+        //
+        // Wipes the ENTIRE prefs namespace (the legacy sentinel was
+        // intentionally narrow — every key in the legacy bundle is
+        // synthetic and invalid for cloud use). Real Supabase UUIDs are
+        // preserved (regex match against the canonical 8-4-4-4-12 hex
+        // pattern). The wipe is one-way: parents with stale prefs see
+        // the sign-in screen on the next cold start.
+        val persistedParentId = prefs.getString("parent_id", null)
+        if (persistedParentId != null && !isUuid(persistedParentId)) {
+            Log.w(
+                TAG,
+                "Clean cutover (Q2=b): wiping legacy parent_id=\"$persistedParentId\" " +
+                    "from device_auth_prefs; routing to sign-in screen"
+            )
+            prefs.edit().clear().apply()
+            // Reset in-memory state too — the wiped prefs means we have
+            // no valid session until the parent re-auths.
+            currentAccessToken = null
+            currentRefreshToken = null
+            sessionExpiresAt = 0
+            _sessionState.value = SessionState.NONE
+            _deviceId.value = null
+        }
     }
 
     /**
-     * Lazy on-cold-start migration for parents with pre-PR-#27 auth state.
-     *
-     * Backfills `parent_id = MOCK_PARENT_ID` in [prefs] when the role is
-     * PARENT and `parent_id` is missing (null or empty). Idempotent: when
-     * `parent_id` is already present (post-PR-#27 fresh auth, or already
-     * migrated) the helper returns without writing. Role-gated: CHILD and
-     * orphan-token prefs are left untouched. Emits one WARN log per
-     * affected cold start for observability. See
-     * `sdd/fix-migrate-stale-parent-id-on-load/proposal` for the decision
-     * matrix (Q1=a, Q2=n, Q3=h, Q4=y, Q5=e).
+     * True when [s] matches the canonical Supabase UUID format
+     * (8-4-4-4-12 hex, case-insensitive). Used by the clean-cutover
+     * wipe in [loadPersistedState] to distinguish legacy mock-engine
+     * sentinels ("parent-demo", "mock-parent-legacy", etc.) from real
+     * `auth.users.id` values written by the magic-link verify path.
      */
-    private fun migrateStaleParentId(prefs: SharedPreferences) {
-        val roleName = prefs.getString("role", null)
-        if (roleName != Role.PARENT.name) return
-        if (!prefs.getString("parent_id", null).isNullOrEmpty()) return
-
-        prefs.edit()
-            .putString("parent_id", MockSupabaseEngine.MOCK_PARENT_ID)
-            .apply()
-        Log.w(TAG, "migrated stale parent_id for pre-PR-#27 parent")
-    }
+    private fun isUuid(s: String): Boolean =
+        UUID_REGEX.matches(s)
 
     private fun encryptWithKeystore(data: String): String {
         val secretKey = getOrCreateAuthKey()

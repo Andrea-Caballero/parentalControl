@@ -1,7 +1,6 @@
 package com.tudominio.parentalcontrol.auth
 
 import android.content.Context
-import android.content.SharedPreferences
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import android.util.Base64
@@ -9,15 +8,21 @@ import android.util.Log
 import com.tudominio.parentalcontrol.BuildConfig
 import com.tudominio.parentalcontrol.data.remote.MockSupabaseEngine
 import com.tudominio.parentalcontrol.keystore.SecureStorage
-import io.ktor.client.*
-import io.ktor.client.call.*
-import io.ktor.client.engine.okhttp.*
-import io.ktor.client.statement.*
-import io.ktor.client.plugins.*
-import io.ktor.client.plugins.contentnegotiation.*
-import io.ktor.client.request.*
-import io.ktor.http.*
-import io.ktor.serialization.kotlinx.json.*
+import io.ktor.client.HttpClient
+import io.ktor.client.call.body
+import io.ktor.client.engine.okhttp.OkHttp
+import io.ktor.client.plugins.HttpTimeout
+import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
+import io.ktor.client.request.header
+import io.ktor.client.request.post
+import io.ktor.client.request.request
+import io.ktor.client.request.setBody
+import io.ktor.client.statement.HttpResponse
+import io.ktor.http.ContentType
+import io.ktor.http.HttpMethod
+import io.ktor.http.contentType
+import io.ktor.http.isSuccess
+import io.ktor.serialization.kotlinx.json.json
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -134,6 +139,25 @@ data class SupabaseUser(
     val email: String? = null,
     val app_metadata: Map<String, String>? = null,
     val user_metadata: Map<String, String>? = null
+)
+
+@Serializable
+data class MagicLinkRequest(
+    val email: String,
+    val create_user: Boolean = true,
+    val gotrue_meta_security: Map<String, String> = mapOf("captcha_token" to "")
+)
+
+@Serializable
+data class MagicLinkResponse(
+    val message_id: String? = null,
+    val error: String? = null
+)
+
+@Serializable
+data class MagicLinkVerifyRequest(
+    val email: String,
+    val token: String
 )
 
 class DeviceAuthManager private constructor(
@@ -436,82 +460,62 @@ class DeviceAuthManager private constructor(
 
             val authResponse: SupabaseAuthResponse = response.body()
             return@withContext handleAuthSuccess(authResponse)
-
         } catch (e: Exception) {
             _sessionState.value = SessionState.INVALID
             AuthResult.NeedsPairing("Error refreshing: ${e.message}")
         }
     }
 
-    @Serializable
-private data class MagicLinkRequest(
-    val email: String,
-    val create_user: Boolean = true,
-    val gotrue_meta_security: Map<String, String> = mapOf("captcha_token" to "")
-)
-
-@Serializable
-private data class MagicLinkResponse(
-    val message_id: String? = null,
-    val error: String? = null
-)
-
-@Serializable
-private data class MagicLinkVerifyRequest(
-    val email: String,
-    val token: String
-)
-
-/**
- * Slice A — `signInWithMagicLink(email)` (Q1=b magic-link path).
- *
- * Posts `${SUPABASE_URL}/auth/v1/magiclink` with `{ email,
- * create_user: true, gotrue_meta_security: { captcha_token: "" } }`
- * so Supabase dispatches the magic link to the parent's inbox.
- *
- * The Inbucket at `http://127.0.0.1:54324` (local Supabase) catches
- * the email; the production build routes to the real inbox.
- *
- * Returns [Result.success] with a [MagicLinkSent] carrying the
- * Supabase-assigned `message_id` (opaque). Returns
- * [Result.failure] with a [ParentAuthError] for HTTP errors; the
- * `device_auth_prefs` namespace is NEVER touched on the failure
- * path.
- *
- * Called only under `!BuildConfig.USE_MOCK_SUPABASE` (real cloud
- * path); the mock engine never receives this call.
- */
-suspend fun signInWithMagicLink(email: String): Result<MagicLinkSent> =
+    /**
+     * Slice A — `signInWithMagicLink(email)` (Q1=b magic-link path).
+     *
+     * Posts `${SUPABASE_URL}/auth/v1/magiclink` with `{ email,
+     * create_user: true, gotrue_meta_security: { captcha_token: "" } }`
+     * so Supabase dispatches the magic link to the parent's inbox.
+     *
+     * The Inbucket at `http://127.0.0.1:54324` (local Supabase) catches
+     * the email; the production build routes to the real inbox.
+     *
+     * Returns [Result.success] with a [MagicLinkSent] carrying the
+     * Supabase-assigned `message_id` (opaque). Returns
+     * [Result.failure] with a [ParentAuthError] for HTTP errors; the
+     * `device_auth_prefs` namespace is NEVER touched on the failure
+     * path.
+     *
+     * Called only under `!BuildConfig.USE_MOCK_SUPABASE` (real cloud
+     * path); the mock engine never receives this call.
+     */
+    suspend fun signInWithMagicLink(email: String): Result<MagicLinkSent> =
         withContext(Dispatchers.IO) {
             if (!isValidEmail(email)) {
                 return@withContext Result.failure(ParentAuthError.InvalidEmail)
             }
             try {
-                val response = httpClient.post("${SUPABASE_URL}/auth/v1/magiclink") {
+                val response = httpClient.post("$SUPABASE_URL/auth/v1/magiclink") {
                     header("apikey", SUPABASE_ANON_KEY)
                     contentType(ContentType.Application.Json)
                     setBody(MagicLinkRequest(email = email))
                 }
-            if (!response.status.isSuccess()) {
-                val code = response.status.value
-                return@withContext Result.failure(
-                    when (code) {
-                        400 -> ParentAuthError.InvalidEmail
-                        422 -> ParentAuthError.InvalidRequest
-                        else -> ParentAuthError.Unknown
-                    }
-                )
+                if (!response.status.isSuccess()) {
+                    val code = response.status.value
+                    return@withContext Result.failure(
+                        when (code) {
+                            400 -> ParentAuthError.InvalidEmail
+                            422 -> ParentAuthError.InvalidRequest
+                            else -> ParentAuthError.Unknown
+                        }
+                    )
+                }
+                // Supabase returns `{}` on success in some versions OR
+                // `{ message_id: "<uuid>" }` in others. Parse whichever
+                // shape is present; empty object is acceptable.
+                val parsed: MagicLinkResponse = response.body()
+                Result.success(MagicLinkSent(messageId = parsed.message_id.orEmpty()))
+            } catch (e: Exception) {
+                Log.w(TAG, "signInWithMagicLink failed: ${e.message}", e)
+                Result.failure(ParentAuthError.Unknown)
             }
-            // Supabase returns `{}` on success in some versions OR
-            // `{ message_id: "<uuid>" }` in others. Parse whichever
-            // shape is present; empty object is acceptable.
-            val parsed: MagicLinkResponse = response.body()
-            Result.success(MagicLinkSent(messageId = parsed.message_id.orEmpty()))
-        } catch (e: Exception) {
-            Log.w(TAG, "signInWithMagicLink failed: ${e.message}", e)
-            Result.failure(ParentAuthError.Unknown)
         }
-    }
 
     /**
      * Slice A — `verifyMagicLinkOtp(tokenHash, email)` (Q1=b magic-link path).
@@ -544,9 +548,7 @@ suspend fun signInWithMagicLink(email: String): Result<MagicLinkSent> =
         email: String
     ): Result<ParentSession> = withContext(Dispatchers.IO) {
         try {
-            val response = httpClient.post(
-                "${SUPABASE_URL}/auth/v1/verify?type=magiclink"
-            ) {
+            val response = httpClient.post("$SUPABASE_URL/auth/v1/verify?type=magiclink") {
                 header("apikey", SUPABASE_ANON_KEY)
                 contentType(ContentType.Application.Json)
                 setBody(MagicLinkVerifyRequest(email = email, token = tokenHash))

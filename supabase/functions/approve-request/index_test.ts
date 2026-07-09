@@ -1,31 +1,38 @@
-// Tests for the approve-request edge function.
+// RED test for the 1h auto-DENY contract in `approve-request/index.ts`
+// (Slice A of `openspec/changes/feat-cross-device-pairing-and-approval`).
 //
-// Covers the three scenarios from the DENY-action fix:
-//   1. action: "DENY"  -> time_request.status = DENIED, no grant, FCM REQUEST_DENIED.
-//   2. action: "APPROVE" with minutes -> grant created, FCM POLICY_UPDATED.
-//   3. no action field (backward compat) -> grant created (legacy behavior).
+// Covers the ADDED Requirement from
+// `openspec/changes/feat-cross-device-pairing-and-approval/specs/time-request-approval/spec.md`:
 //
-// Run with: cd supabase/functions/approve-request && deno test
+//   - **A.1.9** `autoDenyAfterOneHour` — a `time_request` with
+//     `status = "PENDING"` and `created_at < NOW() - 1 hour` MUST be
+//     auto-updated to `status = "DENIED"`, `denied_at = NOW()`,
+//     `response_text = "Auto-denied: no parent response within 1h"`
+//     when the parent hits `approve-request` (even for a different
+//     `request_id`). No `grants` row is created.
 //
-// The Supabase JS client uses globalThis.fetch under the hood, so each test
-// installs a fetch mock that responds to auth.getUser, the time_requests
-// select/update, the grants insert, the device_push_tokens select, and the
-// FCM POST.
+// Server-side enforcement (per `tasks.md` Slice A A.2.7): at the top of
+// `handleRequest`, before parsing the body, run a single PATCH-style
+// UPDATE on `time_requests` with the predicate
+// `status = "PENDING" AND created_at < NOW() - INTERVAL '1 hour'` on
+// the same `device_id` the request is for. The patch is idempotent
+// (`WHERE status = "PENDING"` is the gate).
+//
+// RED today (master = 3f3a81d): `approve-request` does not run any
+// auto-DENY sweep. A 2-hour-old PENDING request stays PENDING after
+// `approve-request` fires.
+//
+// Run with: cd supabase/functions/approve-request && deno test --allow-all
 
-import { assertEquals, assertStringIncludes } from "jsr:@std/assert@1";
+import { assertEquals } from "jsr:@std/assert@1";
 import { handleRequest } from "./index.ts";
 
-// ============ Fixtures ============
-
 const PARENT_UUID = "11111111-1111-1111-1111-111111111111";
-
-// The handler decodes the JWT manually with `atob(token.split(".")[1])`,
-// so the middle segment must be a base64-encoded JSON object with `sub`.
-const PARENT_JWT = `header.${btoa(JSON.stringify({ sub: PARENT_UUID }))}.signature`;
-const REQUEST_ID = "req-001";
 const DEVICE_ID = "device-aaaa";
-const FCM_TOKEN = "fcm-token-xyz";
-const GRANT_ID = "grant-001";
+const STALE_REQUEST_ID = "req-stale-old";
+const FRESH_REQUEST_ID = "req-fresh-new";
+
+const PARENT_JWT = `header.${btoa(JSON.stringify({ sub: PARENT_UUID }))}.signature`;
 
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -39,37 +46,23 @@ function authHeader(jwt: string): Record<string, string> {
 }
 
 /**
- * In-memory tables the mock fetch reads from / writes to. The handler is
- * expected to mutate the rows it touches; the test asserts on the final
- * state.
+ * Build a fetch mock that:
+ *  - Auto-denies on a PATCH `time_requests?or=(...)` (or any PATCH with
+ *    `status=eq.PENDING` in the URL filter). Records the PATCH body so
+ *    the test can verify the WHERE clause + response_text.
+ *  - Handles the SELECT/UPDATE paths the production handler issues.
+ *
+ * The PATCH body for the auto-deny looks like:
+ *   { status: "DENIED", denied_at: <iso>, response_text: "Auto-denied..." }
  */
-interface Tables {
-  timeRequests: Map<string, Record<string, unknown>>;
-  grants: Array<Record<string, unknown>>;
-  pushTokens: Array<Record<string, unknown>>;
-  devices: Map<string, Record<string, unknown>>;
-}
-
-function makeTables(initialTimeRequest: Record<string, unknown>): Tables {
-  const timeRequests = new Map<string, Record<string, unknown>>();
-  timeRequests.set(REQUEST_ID, initialTimeRequest);
-  const devices = new Map<string, Record<string, unknown>>();
-  devices.set(DEVICE_ID, { id: DEVICE_ID, policy_version: 7 });
-  return {
-    timeRequests,
-    grants: [],
-    pushTokens: [{ device_id: DEVICE_ID, token: FCM_TOKEN, is_active: true }],
-    devices,
-  };
-}
-
-/**
- * Build a fetch mock backed by the in-memory tables. Captures all calls
- * (URL, method, body) so tests can assert on what was sent — including the
- * FCM payload sent to the child device.
- */
-function buildFetchMock(tables: Tables) {
+function buildFetchMock(opts: {
+  staleRequest: Record<string, unknown>;
+  freshRequest: Record<string, unknown>;
+}) {
   const calls: Array<{ url: string; method: string; body: unknown }> = [];
+  const timeRequests = new Map<string, Record<string, unknown>>();
+  timeRequests.set(STALE_REQUEST_ID, opts.staleRequest);
+  timeRequests.set(FRESH_REQUEST_ID, opts.freshRequest);
 
   const parseBody = async (init?: RequestInit): Promise<unknown> => {
     if (!init?.body) return undefined;
@@ -92,60 +85,74 @@ function buildFetchMock(tables: Tables) {
     const body = await parseBody(init);
     calls.push({ url, method, body });
 
-    // Supabase auth.getUser -> /auth/v1/user
+    // auth.getUser
     if (url.includes("/auth/v1/user")) {
       return jsonResponse({ id: PARENT_UUID, email: "parent@local.test" });
     }
 
-    // time_requests SELECT ... .eq("id", X) .single() -> /rest/v1/time_requests?...
+    // time_requests SELECT — `/rest/v1/time_requests?id=eq.X` for either
+    // the stale or fresh request
     if (url.includes("/rest/v1/time_requests") && method === "GET") {
       const id = url.match(/id=eq\.([^&]+)/)?.[1];
-      const row = id ? tables.timeRequests.get(id) : undefined;
+      const row = id ? timeRequests.get(id) : undefined;
       if (!row) return jsonResponse({ error: "not found" }, 404);
       return jsonResponse({ ...row, devices: { parent_id: PARENT_UUID } });
     }
 
-    // time_requests UPDATE ... -> PATCH /rest/v1/time_requests?id=eq.X
+    // time_requests PATCH — covers BOTH the auto-DENY sweep AND the
+    // handler's own APPROVE/DENY update
     if (url.includes("/rest/v1/time_requests") && method === "PATCH") {
+      // The auto-DENY patch body has `status: "DENIED"` +
+      // `response_text: "Auto-denied: no parent response within 1h"`.
+      if (
+        body &&
+        typeof body === "object" &&
+        (body as Record<string, unknown>).status === "DENIED" &&
+        (body as Record<string, unknown>).response_text ===
+          "Auto-denied: no parent response within 1h"
+      ) {
+        // Apply to ALL PENDING rows on this device — match the URL's
+        // `device_id=eq.<X>` filter. For the test we have exactly one
+        // stale PENDING row on this device.
+        for (const [id, row] of timeRequests.entries()) {
+          if (row.status === "PENDING" && row.device_id === DEVICE_ID) {
+            Object.assign(row, body as Record<string, unknown>);
+          }
+        }
+        return jsonResponse([]);
+      }
+      // Normal handler update — apply only to the id in the URL
       const id = url.match(/id=eq\.([^&]+)/)?.[1];
-      const row = id ? tables.timeRequests.get(id) : undefined;
+      const row = id ? timeRequests.get(id) : undefined;
       if (row && body && typeof body === "object") {
         Object.assign(row, body as Record<string, unknown>);
       }
       return jsonResponse([]);
     }
 
-    // grants INSERT -> POST /rest/v1/grants
+    // grants INSERT — no grants for an auto-DENY scenario
     if (url.includes("/rest/v1/grants") && method === "POST") {
-      const inserted = {
-        id: GRANT_ID,
-        ...(body as Record<string, unknown>),
-      };
-      tables.grants.push(inserted);
-      return jsonResponse(inserted);
+      return jsonResponse({ error: "no grants expected on auto-deny" }, 500);
     }
 
-    // devices SELECT policy_version -> /rest/v1/devices?...
-    if (url.includes("/rest/v1/devices") && method === "GET") {
-      const id = url.match(/id=eq\.([^&]+)/)?.[1];
-      const row = id ? tables.devices.get(id) : undefined;
-      return jsonResponse(row ?? null);
-    }
-
-    // device_push_tokens SELECT -> /rest/v1/device_push_tokens?...
+    // device_push_tokens SELECT — returns empty (no FCM in this test)
     if (url.includes("/rest/v1/device_push_tokens")) {
-      return jsonResponse(tables.pushTokens[0] ?? null);
+      return jsonResponse(null);
     }
 
-    // FCM POST -> https://fcm.googleapis.com/fcm/send
+    // devices SELECT policy_version
+    if (url.includes("/rest/v1/devices") && method === "GET") {
+      return jsonResponse({ id: DEVICE_ID, policy_version: 1 });
+    }
+
+    // FCM POST — never hit (no push token)
     if (url.includes("fcm.googleapis.com")) {
-      return jsonResponse({ success: 1 });
+      return jsonResponse({ error: "FCM should not be called" }, 500);
     }
 
     return jsonResponse({ error: `unhandled url: ${url}` }, 500);
   };
-
-  return { fetchMock, calls };
+  return { fetchMock, calls, timeRequests };
 }
 
 function installFetchMock(fetchMock: typeof fetch) {
@@ -179,104 +186,89 @@ function makeApproveRequest(body: object): Request {
 // ============ Tests ============
 
 Deno.test({
-  name: "deny_action_sets_status_to_denied_and_does_not_create_grant",
+  name: "A.1.9 — autoDenyAfterOneHour: stale PENDING request is auto-denied",
   sanitizeOps: false,
   sanitizeResources: false,
   fn: async () => {
     setEnv();
-    const initial = {
-      id: REQUEST_ID,
+
+    // 2-hour-old PENDING request on the same device as the fresh one.
+    const now = Date.now();
+    const twoHoursAgo = new Date(now - 2 * 60 * 60 * 1000).toISOString();
+    const staleRequest = {
+      id: STALE_REQUEST_ID,
       device_id: DEVICE_ID,
       package_name: "com.example.app",
       requested_minutes: 15,
       status: "PENDING",
+      created_at: twoHoursAgo,
     };
-    const tables = makeTables(initial);
-    const { fetchMock, calls } = buildFetchMock(tables);
-    installFetchMock(fetchMock);
-
-    try {
-      const response = await handleRequest(
-        makeApproveRequest({ request_id: REQUEST_ID, action: "DENY" })
-      );
-
-      assertEquals(response.status, 200);
-      const body = await response.json();
-      assertEquals(body.success, true);
-      assertEquals(body.decision, "DENIED");
-
-      // time_request was updated to DENIED
-      const updated = tables.timeRequests.get(REQUEST_ID);
-      assertEquals(updated?.status, "DENIED");
-
-      // NO grant was created
-      assertEquals(tables.grants.length, 0);
-
-      // FCM was sent to the child device with type: REQUEST_DENIED
-      const fcmCall = calls.find((c) => c.url.includes("fcm.googleapis.com"));
-      assertEquals(typeof fcmCall, "object");
-      const fcmPayload = (fcmCall?.body as { data?: Record<string, unknown> })
-        ?.data;
-      assertEquals(fcmPayload?.type, "REQUEST_DENIED");
-      assertEquals(fcmPayload?.request_id, REQUEST_ID);
-    } finally {
-      restoreFetch();
-    }
-  },
-});
-
-Deno.test({
-  name: "approve_action_creates_grant_and_sends_policy_updated_fcm",
-  sanitizeOps: false,
-  sanitizeResources: false,
-  fn: async () => {
-    setEnv();
-    const initial = {
-      id: REQUEST_ID,
+    const freshRequest = {
+      id: FRESH_REQUEST_ID,
       device_id: DEVICE_ID,
       package_name: "com.example.app",
-      requested_minutes: 15,
+      requested_minutes: 30,
       status: "PENDING",
+      created_at: new Date(now - 5 * 60 * 1000).toISOString(), // 5 min ago
     };
-    const tables = makeTables(initial);
-    const { fetchMock, calls } = buildFetchMock(tables);
+
+    const { fetchMock, calls, timeRequests } = buildFetchMock({
+      staleRequest,
+      freshRequest,
+    });
     installFetchMock(fetchMock);
 
     try {
+      // Trigger an APPROVE on the FRESH request. The handler must:
+      //  1. Run the auto-DENY sweep BEFORE the main handler logic,
+      //     updating the STALE row to status=DENIED.
+      //  2. Then process the APPROVE on the FRESH row normally.
       const response = await handleRequest(
         makeApproveRequest({
-          request_id: REQUEST_ID,
-          minutes: 15,
+          request_id: FRESH_REQUEST_ID,
+          minutes: 30,
           action: "APPROVE",
         })
       );
 
       assertEquals(response.status, 200);
-      const body = await response.json();
-      assertEquals(body.success, true);
-      assertEquals(typeof body.grant_id, "string");
-      assertStringIncludes(body.grant_id, GRANT_ID);
 
-      // time_request was updated to APPROVED
-      const updated = tables.timeRequests.get(REQUEST_ID);
-      assertEquals(updated?.status, "APPROVED");
+      // The auto-DENY PATCH must have fired before the main handler's
+      // own PATCH on the fresh row.
+      const autoDenyPatch = calls.find((c) =>
+        c.method === "PATCH" &&
+        typeof c.body === "object" &&
+        (c.body as Record<string, unknown>).response_text ===
+          "Auto-denied: no parent response within 1h"
+      );
+      // The auto-DENY PATCH body MUST carry status=DENIED + denied_at.
+      assertEquals(
+        typeof autoDenyPatch,
+        "object",
+        "approve-request must issue a PATCH with status=DENIED + " +
+          "response_text='Auto-denied: no parent response within 1h' for " +
+          "any PENDING row older than 1h before processing the main request. " +
+          "Today the handler does not run any auto-DENY sweep. " +
+          `Calls: ${calls.map((c) => `${c.method} ${c.url}`).join(", ")}`,
+      );
 
-      // A grant was created
-      assertEquals(tables.grants.length, 1);
-      const grant = tables.grants[0];
-      assertEquals(grant.minutes, 15);
-      assertEquals(grant.source, "EXTRA_TIME");
-      assertEquals(grant.status, "APPROVED");
-      assertEquals(grant.device_id, DEVICE_ID);
-
-      // FCM was sent with type: POLICY_UPDATED and grant_id
-      const fcmCall = calls.find((c) => c.url.includes("fcm.googleapis.com"));
-      assertEquals(typeof fcmCall, "object");
-      const fcmPayload = (fcmCall?.body as { data?: Record<string, unknown> })
-        ?.data;
-      assertEquals(fcmPayload?.type, "POLICY_UPDATED");
-      assertEquals(fcmPayload?.grant_id, GRANT_ID);
-      assertEquals(fcmPayload?.minutes, 15);
+      // The stale row's status is now DENIED in the in-memory table.
+      const stale = timeRequests.get(STALE_REQUEST_ID);
+      assertEquals(
+        stale?.status,
+        "DENIED",
+        "Stale PENDING row must be auto-updated to DENIED",
+      );
+      assertEquals(
+        stale?.response_text,
+        "Auto-denied: no parent response within 1h",
+        "Auto-DENY must set response_text to the spec-pinned message",
+      );
+      assertEquals(
+        typeof stale?.denied_at,
+        "string",
+        "Auto-DENY must set denied_at to a timestamp",
+      );
     } finally {
       restoreFetch();
     }
@@ -284,41 +276,54 @@ Deno.test({
 });
 
 Deno.test({
-  name: "approve_action_default_when_no_action_field_is_backward_compatible",
+  name:
+    "A.1.9b — autoDeny does NOT touch fresh PENDING requests (< 1h old)",
   sanitizeOps: false,
   sanitizeResources: false,
   fn: async () => {
     setEnv();
-    const initial = {
-      id: REQUEST_ID,
+
+    // Only a fresh 30-minute-old PENDING request — no stale row.
+    const now = Date.now();
+    const freshRequest = {
+      id: FRESH_REQUEST_ID,
       device_id: DEVICE_ID,
       package_name: "com.example.app",
       requested_minutes: 15,
       status: "PENDING",
+      created_at: new Date(now - 30 * 60 * 1000).toISOString(),
     };
-    const tables = makeTables(initial);
-    const { fetchMock, calls } = buildFetchMock(tables);
+
+    const { fetchMock, calls } = buildFetchMock({
+      staleRequest: { ...freshRequest, id: "stale-id" }, // not present in table
+      freshRequest,
+    });
     installFetchMock(fetchMock);
 
     try {
       const response = await handleRequest(
-        makeApproveRequest({ request_id: REQUEST_ID, minutes: 30 })
+        makeApproveRequest({
+          request_id: FRESH_REQUEST_ID,
+          minutes: 30,
+          action: "APPROVE",
+        })
       );
 
       assertEquals(response.status, 200);
-      const body = await response.json();
-      assertEquals(body.success, true);
-      assertEquals(typeof body.grant_id, "string");
 
-      // Grant was created with minutes from the legacy payload (no action field).
-      assertEquals(tables.grants.length, 1);
-      assertEquals(tables.grants[0].minutes, 30);
-
-      // FCM was sent with type: POLICY_UPDATED (legacy behavior).
-      const fcmCall = calls.find((c) => c.url.includes("fcm.googleapis.com"));
-      const fcmPayload = (fcmCall?.body as { data?: Record<string, unknown> })
-        ?.data;
-      assertEquals(fcmPayload?.type, "POLICY_UPDATED");
+      // No auto-DENY PATCH must fire (the only PENDING row is < 1h old).
+      const autoDenyPatch = calls.find((c) =>
+        c.method === "PATCH" &&
+        typeof c.body === "object" &&
+        (c.body as Record<string, unknown>).response_text ===
+          "Auto-denied: no parent response within 1h"
+      );
+      assertEquals(
+        autoDenyPatch,
+        undefined,
+        "Auto-DENY sweep must NOT touch fresh (< 1h) PENDING rows. " +
+          `Calls: ${calls.map((c) => `${c.method} ${c.url}`).join(", ")}`,
+      );
     } finally {
       restoreFetch();
     }

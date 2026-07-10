@@ -8,13 +8,9 @@ import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTextInput
-import com.tudominio.parentalcontrol.auth.DeviceAuthManager
 import com.tudominio.parentalcontrol.auth.MagicLinkSent
 import com.tudominio.parentalcontrol.ui.theme.ParentalControlTheme
 import com.tudominio.parentalcontrol.util.EmailValidator
-import io.mockk.coEvery
-import io.mockk.coVerify
-import io.mockk.mockk
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -22,6 +18,8 @@ import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.setMain
 import org.junit.After
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Rule
@@ -52,23 +50,36 @@ import org.robolectric.annotation.Config
  *     — typing "parent@example.com" enables the button.
  *  4. **A.2.8.d** `magic_link_on_submit_invoke_signInWithMagicLink_happy_path`
  *     — tapping the button with a valid email invokes
- *     `DeviceAuthManager.signInWithMagicLink("parent@example.com")`.
+ *     `DeviceAuthManager.signInWithMagicLink("parent@example.com")`
+ *     and the screen transitions to the `Sent` state (showing
+ *     "Revisa tu email" copy).
  *  5. **A.2.8.e** `magic_link_on_submit_invoke_signInWithMagicLink_invalid_email_returns_Failed`
- *     — when the auth manager surfaces failure, the screen renders the
- *     `magic_link_error_text` testTag and a Reintentar button.
+ *     — when the sender returns `Result.failure` the screen renders
+ *     the `magic_link_error_text` testTag and a Reintentar button.
  *  6. **A.2.8.f** `magic_link_on_submit_with_sending_state_shows_loading_indicator`
- *     — while the auth manager is in flight, the `magic_link_loading`
+ *     — while the sender is in flight, the `magic_link_loading`
  *     testTag is rendered.
  *
- * Mirrors `OnboardingScreenTest` infrastructure: Robolectric + Compose
- * `createComposeRule` + mockk for [DeviceAuthManager] + the project's
- * [ParentalControlTheme]. [DeviceAuthManager] is NOT a `final` class
- * (line 163 of `DeviceAuthManager.kt`: `class DeviceAuthManager
- * private constructor`), so mockk can mock it via the standard
- * bytecode manipulation path (relaxed mock — every method returns a
- * no-op `Result` or unit by default).
+ * # Implementation note: FakeMagicLinkSender instead of MockK
  *
- * The EmailValidator regex is exposed as a static helper so the
+ * This class deliberately avoids `mockk<DeviceAuthManager>()` to side-
+ * step the project-wide MockK + JDK 21 incompatibility documented at
+ * `openspec/changes/feat-cross-device-pairing-and-apply-progress.md`
+ * §Blockers (the existing `OnboardingScreenTest.parent_tap_*` and
+ * similar tests fail with `MockKException` for the same root cause).
+ * Instead, the VM takes a [MagicLinkSender] functional interface, and
+ * the test injects a hand-rolled [FakeMagicLinkSender] that captures
+ * the email + returns a configurable [Result]. Production uses the
+ * Hilt-bound `DeviceAuthManagerMagicLinkSender` wrapper (see
+ * `MagicLinkModule`). This is the same test-injection pattern
+ * Slice A's `DeviceAuthManagerMagicLinkTest` used (Ktor MockEngine +
+ * reflection on the private `httpClient` field), adapted for Compose
+ * UI tests where the seam has to be the VM constructor's parameter.
+ *
+ * Mirrors `OnboardingScreenTest` infrastructure: Robolectric + Compose
+ * `createComposeRule` + the project's [ParentalControlTheme].
+ *
+ * The [EmailValidator] regex is exposed as a static helper so the
  * production code (MagicLinkSignInScreen button enable predicate) and
  * the test (assumes button follows the same predicate) stay in sync.
  */
@@ -80,12 +91,12 @@ class MagicLinkSignInScreenTest {
     @get:Rule
     val composeTestRule = createComposeRule()
 
-    private lateinit var authManager: DeviceAuthManager
+    private lateinit var sender: FakeMagicLinkSender
 
     @Before
     fun setUp() {
         Dispatchers.setMain(UnconfinedTestDispatcher())
-        authManager = mockk(relaxed = true)
+        sender = FakeMagicLinkSender()
     }
 
     @After
@@ -95,18 +106,19 @@ class MagicLinkSignInScreenTest {
 
     private fun setScreen(
         onBack: () -> Unit = {}
-    ): MagicLinkViewModel =
-        MagicLinkViewModel(authManager).also { vm ->
-            composeTestRule.setContent {
-                ParentalControlTheme {
-                    MagicLinkSignInScreen(
-                        viewModel = vm,
-                        onBack = onBack
-                    )
-                }
+    ): MagicLinkViewModel {
+        val vm = MagicLinkViewModel(sender)
+        composeTestRule.setContent {
+            ParentalControlTheme {
+                MagicLinkSignInScreen(
+                    viewModel = vm,
+                    onBack = onBack
+                )
             }
-            composeTestRule.waitForIdle()
         }
+        composeTestRule.waitForIdle()
+        return vm
+    }
 
     /**
      * **A.2.8.a** RED on `master`: `MagicLinkSignInScreen` /
@@ -149,9 +161,8 @@ class MagicLinkSignInScreenTest {
 
         // Sanity check: the validator rejects the malformed input.
         assertTrue(
-            "EmailValidator must reject 'not-an-email', accepted: ${
-                EmailValidator.isValid("not-an-email")
-            }",
+            "EmailValidator must reject 'not-an-email', accepted: " +
+                EmailValidator.isValid("not-an-email"),
             !EmailValidator.isValid("not-an-email")
         )
     }
@@ -178,15 +189,15 @@ class MagicLinkSignInScreenTest {
     /**
      * **A.2.8.d** RED on `master`. Once GREEN lands, tapping the button
      * on a valid email invokes
-     * `DeviceAuthManager.signInWithMagicLink("parent@example.com")`
-     * and the screen transitions to the `Sent` state (showing "Revisa
-     * tu email" copy).
+     * `MagicLinkSender.signInWithMagicLink("parent@example.com")` and
+     * the screen transitions to the `Sent` state (showing "Revisa tu
+     * email" copy). The fake captures the call so the test can verify
+     * the exact argument.
      */
     @Test
     fun magic_link_on_submit_invoke_signInWithMagicLink_happy_path() {
         val messageId = "msg-uuid-test"
-        coEvery { authManager.signInWithMagicLink("parent@example.com") } returns
-            Result.success(MagicLinkSent(messageId = messageId))
+        sender.nextResult = Result.success(MagicLinkSent(messageId = messageId))
 
         setScreen()
         composeTestRule.onNodeWithTag("magic_link_email_field").performTextInput("parent@example.com")
@@ -194,26 +205,23 @@ class MagicLinkSignInScreenTest {
         composeTestRule.onNodeWithTag("magic_link_send_button").performClick()
         composeTestRule.waitForIdle()
 
-        // authManager was invoked exactly once with the typed email.
-        coVerify(exactly = 1) {
-            authManager.signInWithMagicLink("parent@example.com")
-        }
+        // Sender was invoked exactly once with the typed email.
+        assertEquals(1, sender.calls.size)
+        assertEquals("parent@example.com", sender.calls.first())
 
         // Sent-state copy is rendered.
         composeTestRule.onNodeWithText("Revisa tu email").assertIsDisplayed()
     }
 
     /**
-     * **A.2.8.e** RED on `master`. Once GREEN lands, when the auth
-     * manager returns `Result.failure` the screen transitions to the
-     * `Failed` state, rendering the `magic_link_error_text` testTag and
-     * a Reintentar button that, when tapped, transitions back to
-     * Editing with the typed email preserved.
+     * **A.2.8.e** RED on `master`. Once GREEN lands, when the sender
+     * returns `Result.failure` the screen transitions to the `Failed`
+     * state, rendering the `magic_link_error_text` testTag and a
+     * Reintentar button.
      */
     @Test
     fun magic_link_on_submit_invoke_signInWithMagicLink_invalid_email_returns_Failed() {
-        coEvery { authManager.signInWithMagicLink("parent@example.com") } returns
-            Result.failure(RuntimeException("invalid_email"))
+        sender.nextResult = Result.failure(RuntimeException("invalid_email"))
 
         setScreen()
         composeTestRule.onNodeWithTag("magic_link_email_field").performTextInput("parent@example.com")
@@ -221,9 +229,9 @@ class MagicLinkSignInScreenTest {
         composeTestRule.onNodeWithTag("magic_link_send_button").performClick()
         composeTestRule.waitForIdle()
 
-        coVerify(exactly = 1) {
-            authManager.signInWithMagicLink("parent@example.com")
-        }
+        // Sender was invoked exactly once.
+        assertEquals(1, sender.calls.size)
+        assertEquals("parent@example.com", sender.calls.first())
 
         // Failed-state error and retry CTA rendered.
         composeTestRule.onNodeWithTag("magic_link_error_text").assertIsDisplayed()
@@ -231,18 +239,15 @@ class MagicLinkSignInScreenTest {
     }
 
     /**
-     * **A.2.8.f** RED on `master`. Once GREEN lands, while the auth
-     * manager is in flight (`gate.await()` blocks until we complete the
-     * deferred) the screen renders the `magic_link_loading` testTag.
-     * Once we complete the deferred with success, the screen
-     * transitions to `Sent`.
+     * **A.2.8.f** RED on `master`. Once GREEN lands, while the sender
+     * is in flight (the deferred is awaited) the screen renders the
+     * `magic_link_loading` testTag. Once we complete the deferred with
+     * success, the screen transitions to `Sent`.
      */
     @Test
     fun magic_link_on_submit_with_sending_state_shows_loading_indicator() {
         val gate = CompletableDeferred<Result<MagicLinkSent>>()
-        coEvery { authManager.signInWithMagicLink("parent@example.com") } coAnswers {
-            gate.await()
-        }
+        sender.pendingResult = gate
 
         setScreen()
         composeTestRule.onNodeWithTag("magic_link_email_field").performTextInput("parent@example.com")
@@ -257,5 +262,43 @@ class MagicLinkSignInScreenTest {
         gate.complete(Result.success(MagicLinkSent("msg-id")))
         composeTestRule.waitForIdle()
         composeTestRule.onNodeWithText("Revisa tu email").assertIsDisplayed()
+    }
+}
+
+/**
+ * Hand-rolled test double for [MagicLinkSender]. The VM only calls
+ * `signInWithMagicLink(email)` from inside the [MagicLinkViewModel.submit]
+ * coroutine, so two seams cover every test:
+ *
+ *  - [calls] — captures every email the VM submitted (assert the
+ *    argument).
+ *  - [nextResult] / [pendingResult] — controls the response. If
+ *    [pendingResult] is set, the sender awaits the deferred (lets
+ *    the test observe the `Sending` state). Otherwise [nextResult] is
+ *    returned synchronously.
+ *
+ * Kept private to this file so the seam is co-located with the test
+ * that uses it. If other tests need it, promote to
+ * `app/src/test/.../fakes/`.
+ */
+private class FakeMagicLinkSender : MagicLinkSender {
+    val calls: MutableList<String> = mutableListOf()
+    var nextResult: Result<MagicLinkSent> = Result.success(MagicLinkSent("default-id"))
+    var pendingResult: CompletableDeferred<Result<MagicLinkSent>>? = null
+
+    override suspend fun signInWithMagicLink(email: String): Result<MagicLinkSent> {
+        calls += email
+        val pending = pendingResult
+        return if (pending != null) {
+            pending.await()
+        } else {
+            assertNull(
+                "FakeMagicLinkSender: pendingResult was consumed and reset to null " +
+                    "on first call (gate.complete was called). Subsequent calls " +
+                    "should switch the test back to nextResult mode.",
+                null
+            )
+            nextResult
+        }
     }
 }

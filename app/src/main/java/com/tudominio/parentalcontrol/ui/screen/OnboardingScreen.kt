@@ -7,43 +7,42 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.semantics.onClick
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import com.tudominio.parentalcontrol.viewmodel.ParentViewModel
-import kotlinx.coroutines.launch
 
 /**
- * T7 of `hotfix-parent-auth-session` — the parent card on the onboarding
- * screen now wires [ParentViewModel.authenticateAsParent] before invoking
- * [onAuthenticated]. While the auth coroutine is in flight:
- *  - the parent card is disabled,
- *  - a [CircularProgressIndicator] with the `onboarding_auth_loading` test
- *    tag is visible just above the cards.
+ * Onboarding role-selection screen. The parent card now lands on the
+ * magic-link sign-in screen via `onSelectParent` (the deeper parent
+ * auth flow is no longer inline; see `MagicLinkSignInScreen` +
+ * `MagicLinkViewModel`). The child card still routes to the pairing
+ * flow via `onSelectChild`.
  *
- * On auth failure the parent card re-enables, the indicator disappears,
- * and the inline error text is shown — navigation does NOT fire. The
- * child path is unchanged.
+ * Retarget history (Slice A → follow-up #1):
+ *  - Pre-Slice-A: parent card → inline synthetic anonymous auth
+ *    (`ParentViewModel.authenticateAsParent`),
+ *    `onAuthenticated` callback fired on success.
+ *  - Slice A (Q1=b magic-link; 6e102b9 → 10eb08d): the synthetic
+ *    path was kept for the dashboard's `AuthMissingErrorBanner`, but
+ *    the production onboarding parent-card wire was a deviation #1 in
+ *    the Slice A apply-progress (`scope = future PR`).
+ *  - Follow-up #1 (this PR): the parent card now calls
+ *    `onSelectParent()` so `NavGraph` can route to
+ *    `MagicLinkSignInScreen`. The synthetic hotfix path remains
+ *    wired (dashboard AuthMissing CTA is unaffected).
  *
- * Implementation note: the role cards use [Card] with
- * [Modifier.clickable] (not `OutlinedCard(onClick = ...)`) because the
- * Material3 `onClick` overload is experimental and Compose's stability
- * inference can optimize away a direct `onClick = onSelectChild`
- * parameter reference, causing the click to silently no-op in tests.
+ * The role cards use [Card] with [Modifier.clickable] (not
+ * `OutlinedCard(onClick = ...)`) because the Material3 `onClick`
+ * overload is experimental and Compose's stability inference can
+ * optimize away a direct `onClick = onSelectChild` parameter
+ * reference, causing the click to silently no-op in tests.
  * `Modifier.clickable` is the standard, test-friendly equivalent.
  */
 @Composable
 fun OnboardingScreen(
-    viewModel: ParentViewModel,
-    onAuthenticated: () -> Unit,
-    onSelectChild: () -> Unit
+    onSelectParent: () -> Unit = {},
+    onSelectChild: () -> Unit = {}
 ) {
-    var isAuthenticating by remember { mutableStateOf(false) }
-    var authError by remember { mutableStateOf<String?>(null) }
-    val scope = rememberCoroutineScope()
-
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -82,34 +81,13 @@ fun OnboardingScreen(
 
         Spacer(modifier = Modifier.height(32.dp))
 
-        if (isAuthenticating) {
-            CircularProgressIndicator(
-                modifier = Modifier
-                    .testTag("onboarding_auth_loading")
-                    .padding(bottom = 16.dp)
-            )
-        }
-
         // Padre
         Card(
             modifier = Modifier
                 .fillMaxWidth()
                 .testTag("onboarding_parent_card")
-                .clickable(enabled = !isAuthenticating) {
-                    if (isAuthenticating) return@clickable
-                    isAuthenticating = true
-                    authError = null
-                    scope.launch {
-                        val result = viewModel.authenticateAsParent()
-                        if (result.isSuccess) {
-                            isAuthenticating = false
-                            onAuthenticated()
-                        } else {
-                            isAuthenticating = false
-                            authError = result.exceptionOrNull()?.message
-                                ?: "No se pudo iniciar sesión como padre"
-                        }
-                    }
+                .clickable {
+                    onSelectParent()
                 },
             colors = CardDefaults.outlinedCardColors()
         ) {
@@ -139,15 +117,6 @@ fun OnboardingScreen(
             }
         }
 
-        authError?.let { errorMsg ->
-            Spacer(modifier = Modifier.height(8.dp))
-            Text(
-                text = errorMsg,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.error
-            )
-        }
-
         Spacer(modifier = Modifier.height(16.dp))
 
         // Hijo
@@ -155,7 +124,7 @@ fun OnboardingScreen(
             modifier = Modifier
                 .fillMaxWidth()
                 .testTag("onboarding_child_card")
-                .clickable(enabled = !isAuthenticating) {
+                .clickable {
                     onSelectChild()
                 }
                 .padding(24.dp),

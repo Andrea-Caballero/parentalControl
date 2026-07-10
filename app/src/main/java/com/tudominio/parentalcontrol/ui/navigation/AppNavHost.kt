@@ -6,6 +6,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.platform.LocalContext
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.tudominio.parentalcontrol.auth.DeviceAuthManager
+import com.tudominio.parentalcontrol.auth.DeviceAuthManagerMagicLinkVerifier
 import com.tudominio.parentalcontrol.copy.CopyManager
 import com.tudominio.parentalcontrol.data.repository.TimeExtraRepositoryEntryPoint
 import com.tudominio.parentalcontrol.pairing.PairingViewModel
@@ -47,8 +48,10 @@ import dagger.hilt.android.EntryPointAccessors
 fun AppNavHost(
     prefilledPairingCode: String?,
     pendingExtraTimePackage: String?,
+    pendingMagicLinkUrl: String? = null,
     onPairingComplete: () -> Unit,
-    onExtraTimeConsumed: () -> Unit
+    onExtraTimeConsumed: () -> Unit,
+    onMagicLinkConsumed: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val authManager = remember { DeviceAuthManager.getInstance(context) }
@@ -59,6 +62,11 @@ fun AppNavHost(
             TimeExtraRepositoryEntryPoint::class.java
         ).timeExtraRepository()
     }
+    // Continuation #2: the magic-link deep-link handler is a pure class;
+    // wrap the `DeviceAuthManager` singleton in the verifier adapter so
+    // the handler stays Context-free and NavGraph can run it off the
+    // pending URL without a Hilt dependency.
+    val magicLinkVerifier = remember { DeviceAuthManagerMagicLinkVerifier(authManager) }
     val prefs = remember {
         context.getSharedPreferences(DEVICE_AUTH_PREFS, Context.MODE_PRIVATE)
     }
@@ -71,6 +79,7 @@ fun AppNavHost(
         isChildDevice = isChildDevice,
         prefilledPairingCode = prefilledPairingCode,
         pendingExtraTimePackage = pendingExtraTimePackage,
+        pendingMagicLinkUrl = pendingMagicLinkUrl,
         parentViewModel = hiltViewModel<ParentViewModel>(),
         appsViewModel = hiltViewModel<AppsViewModel>(),
         pairingViewModel = hiltViewModel<PairingViewModel>(),
@@ -78,8 +87,10 @@ fun AppNavHost(
         copyManager = copyManager,
         timeExtraRepository = timeExtraRepository,
         deviceId = deviceId,
+        magicLinkVerifier = magicLinkVerifier,
         onPairingComplete = onPairingComplete,
-        onExtraTimeConsumed = onExtraTimeConsumed
+        onExtraTimeConsumed = onExtraTimeConsumed,
+        onMagicLinkConsumed = onMagicLinkConsumed
     )
 }
 

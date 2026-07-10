@@ -70,6 +70,23 @@
             android:host="request-extra-time" />
       </intent-filter>
 
+      <!-- Continuation #2: deeplink for the parent magic-link round-trip —
+           `parentalcontrol://magic-link?token=<hash>&email=<addr>`.
+           Supabase dispatches the magic-link email; tapping it fires this
+           VIEW intent, MainActivity extracts the query params and the
+           NavGraph runs MagicLinkDeepLinkHandler → verifyMagicLinkOtp →
+           Dashboard. Mirrors the `pair` / `request-extra-time` filters. -->
+      <intent-filter>
+        <action android:name="android.intent.action.VIEW" />
+
+        <category android:name="android.intent.category.DEFAULT" />
+        <category android:name="android.intent.category.BROWSABLE" />
+
+        <data
+            android:scheme="parentalcontrol"
+            android:host="magic-link" />
+      </intent-filter>
+
     </activity>
 
       <service

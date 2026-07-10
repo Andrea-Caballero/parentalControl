@@ -37,6 +37,7 @@ class MainActivity : ComponentActivity() {
 
     private val prefilledPairingCode = mutableStateOf<String?>(null)
     private val pendingExtraTimePackage = mutableStateOf<String?>(null)
+    private val pendingMagicLinkUrl = mutableStateOf<String?>(null)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -71,8 +72,13 @@ class MainActivity : ComponentActivity() {
         if (data.scheme != "parentalcontrol") return
         when (data.host) {
             "pair" -> prefilledPairingCode.value = data.getQueryParameter("code")
-            "request-extra-time" -> pendingExtraTimePackage.value =
-                data.getQueryParameter("pkg") ?: ""
+            "request-extra-time" ->
+                pendingExtraTimePackage.value = data.getQueryParameter("pkg") ?: ""
+            // Continuation #2: forward the full magic-link URL to the
+            // NavGraph, which runs MagicLinkDeepLinkHandler off it. We pass
+            // the whole URI string (not the parsed params) so the pure,
+            // Context-free handler owns all parsing/validation in one place.
+            "magic-link" -> pendingMagicLinkUrl.value = data.toString()
         }
     }
 
@@ -97,8 +103,10 @@ class MainActivity : ComponentActivity() {
         AppNavHost(
             prefilledPairingCode = prefilledPairingCode.value,
             pendingExtraTimePackage = pendingExtraTimePackage.value,
+            pendingMagicLinkUrl = pendingMagicLinkUrl.value,
             onPairingComplete = ::restartActivity,
-            onExtraTimeConsumed = { pendingExtraTimePackage.value = null }
+            onExtraTimeConsumed = { pendingExtraTimePackage.value = null },
+            onMagicLinkConsumed = { pendingMagicLinkUrl.value = null }
         )
     }
 }

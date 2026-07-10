@@ -1,11 +1,14 @@
 package com.tudominio.parentalcontrol.ui.navigation
 
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.hilt.navigation.compose.hiltViewModel
+import com.tudominio.parentalcontrol.auth.MagicLinkDeepLinkHandler
+import com.tudominio.parentalcontrol.auth.MagicLinkVerifier
 import com.tudominio.parentalcontrol.copy.CopyManager
 import com.tudominio.parentalcontrol.data.repository.TimeExtraRepository
 import com.tudominio.parentalcontrol.pairing.PairingViewModel
@@ -85,7 +88,10 @@ fun NavGraph(
     timeExtraRepository: TimeExtraRepository,
     deviceId: String,
     onPairingComplete: () -> Unit,
-    onExtraTimeConsumed: () -> Unit
+    onExtraTimeConsumed: () -> Unit,
+    pendingMagicLinkUrl: String? = null,
+    magicLinkVerifier: MagicLinkVerifier? = null,
+    onMagicLinkConsumed: () -> Unit = {}
 ) {
     // `remember(key)` resets the route when the pending deeplink arrives.
     // Without the key, the `var route by remember { ... }` would only
@@ -101,6 +107,27 @@ fun NavGraph(
         mutableStateOf(
             resolveInitialRoute(isPaired, isChildDevice, pendingExtraTimePackage)
         )
+    }
+
+    // Continuation #2: close the magic-link round-trip. When the parent
+    // taps `parentalcontrol://magic-link?token=…&email=…`, MainActivity
+    // forwards the URL here; the pure MagicLinkDeepLinkHandler verifies the
+    // OTP (which persists the ParentSession via DeviceAuthManager) and, on
+    // success, we route to the Dashboard. On any failure the parent is sent
+    // to the sign-in screen to retry. `onMagicLinkConsumed` clears the
+    // pending URL so a recomposition/recreate does not replay the verify.
+    // Keyed on the URL so a fresh deep-link re-triggers the effect.
+    LaunchedEffect(pendingMagicLinkUrl) {
+        val url = pendingMagicLinkUrl
+        if (url != null && magicLinkVerifier != null) {
+            val result = MagicLinkDeepLinkHandler(magicLinkVerifier).handle(url)
+            route = if (result != null && result.isSuccess) {
+                NavRoute.Dashboard
+            } else {
+                NavRoute.MagicLinkSignIn
+            }
+            onMagicLinkConsumed()
+        }
     }
 
     when (route) {

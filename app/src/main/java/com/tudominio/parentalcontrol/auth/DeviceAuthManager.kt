@@ -114,6 +114,25 @@ data class ParentSession(
 )
 
 /**
+ * On-disk serialization shape for [ParentSession] inside the
+ * `encrypted_parent_session` blob. Kept as a separate `@Serializable`
+ * data class so the JSON envelope is independent of the public
+ * `ParentSession` data class — the on-disk shape can add debug fields
+ * (created-at, schema version) without touching the public API.
+ *
+ * Mirrors [StoredSession] for the child anonymous-auth path at
+ * `DeviceAuthManager.kt:69-76`. Both shapes serialize to JSON, get
+ * encrypted via [encryptWithKeystore], and land as a single blob in
+ * `device_auth_prefs`.
+ */
+@Serializable
+data class ParentSessionSerializer(
+    val parentId: String,
+    val accessToken: String,
+    val refreshToken: String
+)
+
+/**
  * Errors surfaced by [DeviceAuthManager.signInWithMagicLink] +
  * [DeviceAuthManager.verifyMagicLinkOtp]. Distinct error type from
  * [AuthResult.Error] so callers can branch on the failure mode without
@@ -163,6 +182,7 @@ data class MagicLinkVerifyRequest(
 class DeviceAuthManager private constructor(
     private val context: Context
 ) {
+
     companion object {
         private const val TAG = "DeviceAuthManager"
         // T3 wiring — read from BuildConfig so a `-PsupabaseUrl=`
@@ -193,6 +213,30 @@ class DeviceAuthManager private constructor(
         @Volatile
         private var instance: DeviceAuthManager? = null
 
+        /**
+         * Test seam (W1 cipher extraction): the JVM unit-test source
+         * set writes a `TestableAuthCipher` here BEFORE constructing a
+         * fresh `DeviceAuthManager`. The constructor consults this
+         * static on first read and picks up the test cipher as the
+         * initial value of [sessionCipher]. After construction the
+         * static is cleared, so subsequent constructions revert to the
+         * production `AuthCipher()` (Android Keystore-backed) — which
+         * is correct because the singleton lives across the test run
+         * but the static is per-test.
+         *
+         * Robolectric 4.10.3 cannot instantiate `AndroidKeyStore`, and
+         * the production cipher requires it. The
+         * `DeviceAuthManagerParentSessionCipherTest` tests use this
+         * seam so the production `init { loadPersistedState }`
+         * decrypt path can run end-to-end inside the JVM unit test.
+         *
+         * Marked `@JvmStatic` for Java reflection access from the JVM
+         * unit-test source set (`TestableAuthCipher` is also
+         * `internal`, so only the same module sees the static).
+         */
+        @JvmStatic
+        internal var testCipherOverride: AuthCipher? = null
+
         fun getInstance(context: Context): DeviceAuthManager {
             return instance ?: synchronized(this) {
                 instance ?: DeviceAuthManager(context.applicationContext).also {
@@ -201,6 +245,16 @@ class DeviceAuthManager private constructor(
             }
         }
     }
+
+    /**
+     * Handle to the AES/GCM cipher used by `encryptWithKeystore` /
+     * `decryptWithKeystore`. Constructed by either consulting the
+     * [testCipherOverride] static (test source set only) or
+     * instantiating the production `AuthCipher` (Android
+     * Keystore-backed).
+     */
+    internal var sessionCipher: AuthCipher =
+        DeviceAuthManager.testCipherOverride ?: AuthCipher()
 
     private val secureStorage = SecureStorage.getInstance(context)
     private val json = Json {
@@ -243,6 +297,13 @@ class DeviceAuthManager private constructor(
     private val sessionMutex = Mutex()
 
     init {
+        // Reset the test override so subsequent constructions revert
+        // to the production cipher. Done in `init` (after all field
+        // initializers complete) so it has a chance to run without
+        // racing with `loadPersistedState`'s potential NPE on
+        // un-initialized `_deviceId` / `_sessionState` if we put the
+        // reset earlier.
+        DeviceAuthManager.testCipherOverride = null
         loadPersistedState()
     }
 
@@ -599,17 +660,37 @@ class DeviceAuthManager private constructor(
      * Atomic write of a [ParentSession] to `device_auth_prefs`. Single
      * `prefs.edit().apply()` block; on any exception, no key is written
      * and the existing prefs are preserved (the atomic-prefs invariant
-     * pinned by the A.1.3 test). Writes the role + parent_id + both
-     * tokens so `loadPersistedState` can re-hydrate `currentAccessToken`
-     * on the next cold start.
+     * pinned by the A.1.3 test).
+     *
+     * WARNING-1 (W1) closure: writes the sensitive JWT tokens
+     * (`accessToken`, `refreshToken`) as a single encrypted blob
+     * (`encrypted_parent_session`) instead of cleartext alongside
+     * `role` + `parent_id`. Mirrors the
+     * [persistSession]/[encryptWithKeystore] pair used by the
+     * child anonymous-auth flow at this file's `persistSession` +
+     * `encryptWithKeystore` lines (the line numbers shift as the file
+     * evolves, but the seam is the same).
+     *
+     * `role` and `parent_id` stay cleartext — `parent_id` is a UUID
+     * (not sensitive) and [getParentId] + the clean-cutover wipe in
+     * [loadPersistedState] both read it to detect stale state. The
+     * atomically-protected cleartext is intentionally small: just a
+     * role flag and a UUID, neither of which exposes the JWT.
      */
     private fun persistParentSession(session: ParentSession) {
+        val parentJson = json.encodeToString(
+            ParentSessionSerializer(
+                parentId = session.parentId,
+                accessToken = session.accessToken,
+                refreshToken = session.refreshToken
+            )
+        )
+        val encrypted = encryptWithKeystore(parentJson)
         context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
             .edit()
             .putString("role", Role.PARENT.name)
             .putString("parent_id", session.parentId)
-            .putString("access_token", session.accessToken)
-            .putString("refresh_token", session.refreshToken)
+            .putString("encrypted_parent_session", encrypted)
             .apply()
     }
 
@@ -770,6 +851,54 @@ class DeviceAuthManager private constructor(
             sessionExpiresAt = stored.expiresAt
         }
 
+        // Slice A — WARNING-1 closure (parent magic-link path). When the
+        // parent authenticates via `signInWithMagicLink` + `verifyMagicLinkOtp`,
+        // the JWT tokens are persisted as an AES/GCM-encrypted blob under
+        // `encrypted_parent_session` (see [persistParentSession]). This block
+        // mirrors the `restoreSession()?.let { stored -> ... }` above for the
+        // parent path: read the blob, decrypt it, populate `currentAccessToken`
+        // and `currentRefreshToken` so the cold-start manager's
+        // `getAccessToken()` is non-null.
+        //
+        // On decryption failure (corrupted blob, AOSP version mismatch, key
+        // rotation), wipe the parent-specific keys so the user lands on the
+        // sign-in screen instead of a PAIRED-but-token-less state. Mirrors
+        // `loadPersistedState` PSC-3 (corrupted blob control).
+        val parentBlob = prefs.getString("encrypted_parent_session", null)
+        if (parentBlob != null) {
+            val parentSession: ParentSessionSerializer? = try {
+                json.decodeFromString<ParentSessionSerializer>(decryptWithKeystore(parentBlob))
+            } catch (e: Exception) {
+                Log.w(TAG, "encrypted_parent_session decrypt failed: ${e.message}")
+                null
+            }
+            if (parentSession != null) {
+                currentAccessToken = parentSession.accessToken
+                currentRefreshToken = parentSession.refreshToken
+                // Token expiry is not stored in the parent blob — the magic-link
+                // verify response doesn't carry a Supabase-shape `expires_at`
+                // that round-trips through serialization. The token is
+                // refreshed lazily on the next RSC.
+                sessionExpiresAt = 0
+                _sessionState.value = SessionState.PAIRED
+            } else {
+                Log.w(
+                    TAG,
+                    "Clean cutover: wiping parent_id due to corrupted " +
+                        "encrypted_parent_session; routing to sign-in screen"
+                )
+                prefs.edit()
+                    .remove("parent_id")
+                    .remove("encrypted_parent_session")
+                    .apply()
+                currentAccessToken = null
+                currentRefreshToken = null
+                sessionExpiresAt = 0
+                _sessionState.value = SessionState.NONE
+                _deviceId.value = null
+            }
+        }
+
         // Synthetic hotfix path (Q1=c cleartext SharedPreferences): when
         // `role` is persisted but no `encrypted_session` blob was ever written
         // (e.g. the role-aware `authenticateOrCreate(role: Role)` synthetic
@@ -849,8 +978,93 @@ class DeviceAuthManager private constructor(
         return EMAIL_REGEX.matches(trimmed)
     }
 
-    private fun encryptWithKeystore(data: String): String {
-        val secretKey = getOrCreateAuthKey()
+    /**
+     * Encrypts [data] with the AES/GCM secret key in the Android Keystore
+     * and base64-encodes the result (prepended with the random IV).
+     *
+     * Marked `internal` to expose the seam to the JVM test source set —
+     * Robolectric 4.10.3 cannot instantiate `KeyStore.getInstance(
+     * "AndroidKeyStore")` (the project's JVM JCA provider is BouncyCastle,
+     * which lacks `AndroidKeyStore`), and the cipher requires it.
+     *
+     * The round-trip tests in `DeviceAuthManagerParentSessionCipherTest`
+     * use reflection on the `sessionCipher` field to swap in a test
+     * double — see the class kdoc for the seam pattern. Mirrors the
+     * `internal` visibility of [restoreSession] — same seam pattern.
+     */
+    internal fun encryptWithKeystore(data: String): String =
+        sessionCipher.encrypt(data)
+
+    /**
+     * Reverse of [encryptWithKeystore]. Splits the IV from the payload,
+     * initializes the AES/GCM cipher in decrypt mode, and returns the
+     * plaintext. Throws on tampered/incorrect data (the caller's `try`
+     * block catches and falls back to the clean-cutover wipe).
+     *
+     * Marked `internal` for the same Robolectric-driven test seam as
+     * [encryptWithKeystore].
+     */
+    internal fun decryptWithKeystore(encryptedData: String): String =
+        sessionCipher.decrypt(encryptedData)
+
+    /**
+     * Handle to the AES/GCM cipher used by [encryptWithKeystore] and
+     * [decryptWithKeystore]. Defaults to the production `AuthCipher`
+     * (Android Keystore-backed). The JVM unit-test source set passes
+     * `TestableAuthCipher` via the internal constructor to side-step the
+     * Robolectric 4.10.3 limitation that blocks AndroidKeyStore
+     * instantiation (the BouncyCastle JCA provider doesn't supply
+     * `AndroidKeyStore`). Marked `internal val` so the test source set
+     * (same module) can pass a test cipher at construction time (before
+     * `init { loadPersistedState }` runs — important: the cipher must
+     * be in place before the first cold-start restore).
+     */
+
+    /**
+     * Returns a working AES/GCM SecretKey for the auth storage.
+     *
+     * Pre-fix builds stored the key without `setEncryptionPaddings(
+     * ENCRYPTION_PADDING_NONE)`, which makes it incompatible with the
+     * `AES/GCM/NoPadding` cipher — `Cipher.init` then throws
+     * `InvalidKeyException` → `KeyStoreException: Incompatible padding mode`.
+     * A plain `getKey(...)` still returns the bad key (it's a valid SecretKey
+     * instance), so the bug only surfaces on first cipher init. We detect
+     * that here with a test init and migrate by deleting and re-creating.
+     *
+     * After the W1 cipher extraction (Slice A — WARNING-1 closure),
+     * the AES/GCM key bootstrap moved into [AuthCipher] (see the
+     * bottom of this file). The cipher is now a [sessionCipher]
+     * delegate, and the persistent-session writes go through
+     * `encryptWithKeystore` / `decryptWithKeystore` which now
+     * call `sessionCipher.encrypt` / `sessionCipher.decrypt`.
+     */
+}
+
+private const val AUTH_KEY_ALIAS = "parental_control_auth_key"
+
+/**
+ * Production cipher for the parent magic-link session storage (W1).
+ * Encrypts/decrypts via the AES/GCM secret key in the Android Keystore
+ * (see `getOrCreateAuthKey` / `createAuthKey` for the key bootstrap).
+ *
+ * Wrapped in its own class so the JVM unit-test source set can replace
+ * it via reflection on `DeviceAuthManager.sessionCipher` — Robolectric
+ * 4.10.3 cannot instantiate `KeyStore.getInstance("AndroidKeyStore")`,
+ * and the cipher requires it (the project's JVM JCA provider is
+ * BouncyCastle, which lacks the Android Keystore implementation). The
+ * production callsite path remains unchanged: `persistParentSession`
+ * and `loadPersistedState` still call `encryptWithKeystore` /
+ * `decryptWithKeystore` on the singleton manager, those just delegate
+ * to `sessionCipher.encrypt` / `sessionCipher.decrypt` now.
+ *
+ * Marked `internal open` so test-only `TestableAuthCipher` subclasses
+ * can override the cipher with a deterministic base64 round-trip for
+ * round-trip JVM tests. Production code never subclasses
+ * `AuthCipher` (no public API surface increase).
+ */
+internal open class AuthCipher {
+    open fun encrypt(data: String): String {
+        val secretKey = getOrCreateAuthKeyImpl()
 
         val cipher = Cipher.getInstance("AES/GCM/NoPadding")
         cipher.init(Cipher.ENCRYPT_MODE, secretKey)
@@ -864,12 +1078,12 @@ class DeviceAuthManager private constructor(
         return Base64.encodeToString(combined, Base64.NO_WRAP)
     }
 
-    private fun decryptWithKeystore(encryptedData: String): String {
+    open fun decrypt(encryptedData: String): String {
         val combined = Base64.decode(encryptedData, Base64.NO_WRAP)
         val iv = combined.copyOfRange(0, 12)
         val encrypted = combined.copyOfRange(12, combined.size)
 
-        val secretKey = getOrCreateAuthKey()
+        val secretKey = getOrCreateAuthKeyImpl()
 
         val cipher = Cipher.getInstance("AES/GCM/NoPadding")
         val spec = GCMParameterSpec(128, iv)
@@ -879,17 +1093,13 @@ class DeviceAuthManager private constructor(
     }
 
     /**
-     * Returns a working AES/GCM SecretKey for the auth storage.
-     *
-     * Pre-fix builds stored the key without `setEncryptionPaddings(
-     * ENCRYPTION_PADDING_NONE)`, which makes it incompatible with the
-     * `AES/GCM/NoPadding` cipher — `Cipher.init` then throws
-     * `InvalidKeyException` → `KeyStoreException: Incompatible padding mode`.
-     * A plain `getKey(...)` still returns the bad key (it's a valid SecretKey
-     * instance), so the bug only surfaces on first cipher init. We detect
-     * that here with a test init and migrate by deleting and re-creating.
+     * Returns the AES/GCM secret key — `AndroidKeyStore`-backed.
+     * Implemented as a free function (not on `DeviceAuthManager`) so
+     * `AuthCipher` is independent of the enclosing class. The key
+     * bootstrap logic is the same as the previous `getOrCreateAuthKey`
+     * (recreated on padding mismatch, etc.).
      */
-    private fun getOrCreateAuthKey(): SecretKey {
+    private fun getOrCreateAuthKeyImpl(): SecretKey {
         val keyStore = KeyStore.getInstance("AndroidKeyStore")
         keyStore.load(null)
 
@@ -900,26 +1110,17 @@ class DeviceAuthManager private constructor(
                 cipher.init(Cipher.ENCRYPT_MODE, existingKey)
                 return existingKey
             } catch (e: InvalidKeyException) {
-                Log.w(TAG, "Auth key has incompatible parameters, recreating", e)
+                Log.w("AuthCipher", "Auth key has incompatible parameters, recreating", e)
                 keyStore.deleteEntry(AUTH_KEY_ALIAS)
             }
         }
 
-        return createAuthKey()
+        return createAuthKeyImpl()
     }
 
-    private fun createAuthKey(): SecretKey {
+    private fun createAuthKeyImpl(): SecretKey {
         val keyStore = KeyStore.getInstance("AndroidKeyStore")
         keyStore.load(null)
-        // If a previous build of this app created the key WITHOUT
-        // `setEncryptionPaddings(ENCRYPTION_PADDING_NONE)`, the key is
-        // stored with a default padding (PKCS7) that's incompatible with
-        // the `AES/GCM/NoPadding` cipher we use in `encryptWithKeystore`.
-        // The cipher init then throws `INCOMPATIBLE_PADDING_MODE`
-        // (`KeyStoreException: Incompatible padding mode`) and
-        // `persistSession` fails, which `handleAuthSuccess` doesn't
-        // recover from. Force-delete any pre-existing key so we always
-        // create a fresh one with the correct spec on app start.
         if (keyStore.containsAlias(AUTH_KEY_ALIAS)) {
             keyStore.deleteEntry(AUTH_KEY_ALIAS)
         }
@@ -934,10 +1135,6 @@ class DeviceAuthManager private constructor(
             KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT
         )
             .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
-            // GCM mode requires `ENCRYPTION_PADDING_NONE` on the key spec
-            // to match the `NoPadding` on the cipher. Without this, the
-            // Keystore silently stores the key with the default padding and
-            // the cipher init throws on first use.
             .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
             .setKeySize(256)
             .setUserAuthenticationRequired(false)
@@ -946,6 +1143,8 @@ class DeviceAuthManager private constructor(
         keyGenerator.init(keySpec)
         return keyGenerator.generateKey()
     }
-}
 
-private const val AUTH_KEY_ALIAS = "parental_control_auth_key"
+    companion object {
+        private const val AUTH_KEY_ALIAS = "parental_control_auth_key"
+    }
+}

@@ -12,8 +12,6 @@ import io.ktor.http.HttpStatusCode
 import io.ktor.http.headersOf
 import io.ktor.serialization.kotlinx.json.json
 import io.ktor.utils.io.ByteReadChannel
-import io.mockk.every
-import io.mockk.spyk
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -30,15 +28,14 @@ import org.robolectric.annotation.Config
  * RED→GREEN tests for **WARNING-1 (W1) — Cipher the parent session at rest**
  * (`openspec/changes/feat-cross-device-pairing-and-approval/verify-report.md`).
  *
- * Before this slice, `DeviceAuthManager.persistParentSession` at
- * `DeviceAuthManager.kt:606-614` (Slice A master) wrote `access_token` and
- * `refresh_token` as cleartext SharedPreferences strings alongside
- * `parent_id` + `role`. The child anonymous-auth path uses
- * `persistSession(StoredSession)` + `encryptWithKeystore` to write a single
- * encrypted `encrypted_session` blob (see `DeviceAuthManager.kt:714-721`).
- * This divergence meant parent tokens — including the JWT that carries the
- * `parent_id` claim — sat on disk in cleartext, recoverable via `adb backup`
- * on rooted devices or `run-as` on a debuggable build.
+ * Before this slice, `DeviceAuthManager.persistParentSession` at the Slice
+ * A master version wrote `access_token` and `refresh_token` as cleartext
+ * SharedPreferences strings alongside `parent_id` + `role`. The child
+ * anonymous-auth path uses `persistSession(StoredSession)` +
+ * `encryptWithKeystore` to write a single encrypted `encrypted_session`
+ * blob. This divergence meant parent tokens — including the JWT that
+ * carries the `parent_id` claim — sat on disk in cleartext, recoverable
+ * via `adb backup` on rooted devices or `run-as` on a debuggable build.
  *
  * This file pins the encrypted-at-rest contract with three RED tests. The
  * fix mirrors the child path: serialize `ParentSession` to JSON, encrypt
@@ -51,13 +48,31 @@ import org.robolectric.annotation.Config
  * the Android Keystore) does not provide `KeyStore.getInstance(
  * "AndroidKeyStore")`, which `encryptWithKeystore` requires via
  * `getOrCreateAuthKey()`. See `DeviceAuthManagerColdStartTest` kdoc lines
- * 36–43 for the long explanation. The two round-trip tests below work
- * around this by spying the `internal` `encryptWithKeystore` /
- * `decryptWithKeystore` methods with a deterministic base64 passthrough —
- * that exercises the exact production write-and-read code paths while
- * sidestepping the cipher that the JVM unit-test runtime cannot supply.
- * The third test deliberately writes a tampered blob to verify the
- * decryption-failure branch.
+ * 36–43 for the long explanation.
+ *
+ * The two round-trip tests below work around this with the
+ * `TestableAuthCipher` — a small test-only `AuthCipher` subclass that
+ * overrides `encrypt` / `decrypt` with a deterministic base64
+ * round-trip. Tests rebind it onto the manager's `sessionCipher` field
+ * via reflection. This exercises the EXACT production write-and-read
+ * code paths (`persistParentSession` → `encrypt`,
+ * `loadPersistedState` → `decrypt`) while sidestepping the cipher that
+ * the JVM unit-test runtime cannot supply. The third test deliberately
+ * writes a tampered blob to verify the decryption-failure branch (the
+ * override throws on invalid base64, simulating a real decryption
+ * failure).
+ *
+ * # Production surfacing
+ *
+ * The seam requires `AuthCipher` to be `internal open` (declared at the
+ * bottom of `DeviceAuthManager.kt`), `encryptWithKeystore` /
+ * `decryptWithKeystore` to be `internal fun` (mirrors the existing
+ * `restoreSession` `internal` visibility — same seam pattern), and the
+ * `sessionCipher` field to be `internal var` so reflection-rebinding
+ * works without exposing the seam to library consumers. None of these
+ * changes increase the public API surface that consumers of the library
+ * can see — `DeviceAuthManager` is still `class` (final) with `private
+ * constructor`, library consumers continue to use `getInstance`.
  *
  * # Test cases
  *
@@ -67,7 +82,7 @@ import org.robolectric.annotation.Config
  *   `access_token` or `refresh_token` key in cleartext under
  *   `device_auth_prefs`.
  * - **PSC-2** `loadPersistedState_after_persistParentSession_restores_parent_session_via_decrypt`:
- *   write via `persistParentSession` (round-trip via spied encrypt/decrypt),
+ *   write via `persistParentSession` (round-trip via the test override),
  *   simulate process death, then a cold-start manager's `getAccessToken()`
  *   must equal the original.
  * - **PSC-3** `loadPersistedState_with_corrupted_encrypted_blob_returns_null_no_throw`:
@@ -79,7 +94,7 @@ import org.robolectric.annotation.Config
  *
  * Mirrors the red→green→refactor approach used by
  * `DeviceAuthManagerColdStartTest` (three test cases pinning the
- * cold-start invariant via the same spy-based pattern).
+ * cold-start invariant via a similar reflection-based bypass).
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [33])
@@ -112,11 +127,36 @@ class DeviceAuthManagerParentSessionCipherTest {
     private fun prefs() =
         context.getSharedPreferences("device_auth_prefs", Context.MODE_PRIVATE)
 
-    private fun newRealManagerForSpy(): DeviceAuthManager {
-        val ctor = DeviceAuthManager::class.java
-            .getDeclaredConstructor(Context::class.java)
-        ctor.isAccessible = true
-        return ctor.newInstance(context) as DeviceAuthManager
+    /**
+     * Constructs a fresh [DeviceAuthManager] with the
+     * [TestableAuthCipher] bound **before** the `init { loadPersistedState }`
+     * block runs. Uses the
+     * `DeviceAuthManager.testCipherOverride` static seam (in
+     * `DeviceAuthManager.kt`): tests set the static to a
+     * [TestableAuthCipher], construct a fresh manager via
+     * [DeviceAuthManager.getInstance] (which calls the production
+     * `AuthCipher()` constructor), and the field initializer reads the
+     * static and uses the test cipher. After construction, the static
+     * is cleared by the field initializer's `also { … = null }` block,
+     * so subsequent constructions revert to the production cipher.
+     *
+     * Robolectric 4.10.3 cannot instantiate `AndroidKeyStore`, and the
+     * production cipher requires it (the project's JVM JCA provider is
+     * BouncyCastle, which lacks the Android Keystore implementation).
+     * The round-trip + write tests in this file use this seam so the
+     * production `init { loadPersistedState }` decrypt path can run
+     * end-to-end inside the JVM unit test.
+     */
+    private fun testableManager(): DeviceAuthManager {
+        resetManagerInstance()
+        DeviceAuthManager.testCipherOverride = TestableAuthCipher()
+        try {
+            return DeviceAuthManager.getInstance(context)
+        } finally {
+            // Defensive: if getInstance throws, clear the override
+            // so it doesn't leak into other tests.
+            DeviceAuthManager.testCipherOverride = null
+        }
     }
 
     private fun injectHttpClient(manager: DeviceAuthManager, client: HttpClient) {
@@ -139,10 +179,10 @@ class DeviceAuthManagerParentSessionCipherTest {
      *    (per the existing magic-link verify contract pinned by
      *    `DeviceAuthManagerMagicLinkTest.verifyMagicLinkOtp_validToken`).
      *
-     * The `encryptWithKeystore` method is spied to base64 the input —
-     * that lets the test verify that the blob contains the parent's
-     * session data without depending on the real Android Keystore
-     * (which Robolectric can't instantiate; see class kdoc).
+     * The `TestableAuthCipher` (declared at the bottom of this file)
+     * replaces `AuthCipher.encrypt` with a base64-of-input passthrough, so
+     * the encrypted blob in prefs is a base64-encoded JSON envelope we
+     * can decode and inspect.
      */
     @Test
     fun persistParentSession_writes_encrypted_blob_not_plaintext_access_token_in_prefs() = runBlocking {
@@ -152,16 +192,7 @@ class DeviceAuthManagerParentSessionCipherTest {
         val tokenHash = "token-hash-cipher"
         val email = "[email protected]"
 
-        val real = newRealManagerForSpy()
-        val spy = spyk(real, recordPrivateCalls = false)
-        // Spy `encryptWithKeystore` (internal, mirrors `restoreSession` visibility)
-        // with a deterministic base64 passthrough. Lets the test verify
-        // the encrypted blob's contents without depending on the real
-        // Android Keystore (Robolectric 4.10.3 limitation).
-        every { spy.encryptWithKeystore(any()) } answers {
-            val input = firstArg<String>()
-            Base64.encodeToString(input.toByteArray(), Base64.NO_WRAP)
-        }
+        val manager = testableManager()
 
         // Ktor MockEngine returns a valid verify response. The path mirrors
         // `DeviceAuthManagerMagicLinkTest.verifyMagicLinkOtp_validToken`.
@@ -190,9 +221,9 @@ class DeviceAuthManagerParentSessionCipherTest {
             }
         }
         val client = HttpClient(engine) { install(ContentNegotiation) { json() } }
-        injectHttpClient(spy, client)
+        injectHttpClient(manager, client)
 
-        val result = spy.verifyMagicLinkOtp(tokenHash, email)
+        val result = manager.verifyMagicLinkOtp(tokenHash, email)
 
         assertTrue(
             "verifyMagicLinkOtp must succeed so persistParentSession runs. Got: $result",
@@ -217,8 +248,9 @@ class DeviceAuthManagerParentSessionCipherTest {
                 "(W1 contract). Keys present: ${prefs().all.keys}",
             prefs().contains("encrypted_parent_session")
         )
-        // Assertion 4: the encrypted blob, when decrypted via the spied
-        // cipher, must contain the parentId, accessToken, and refreshToken.
+        // Assertion 4: the encrypted blob, when decoded via the override's
+        // base64 passthrough, must contain the parentId, accessToken, and
+        // refreshToken (the JSON envelope from `persistParentSession`).
         val encryptedBlob = prefs().getString("encrypted_parent_session", null)
         assertNotNull("encrypted_parent_session value is non-null", encryptedBlob)
         val decryptedJson = String(Base64.decode(encryptedBlob!!, Base64.NO_WRAP))
@@ -259,9 +291,11 @@ class DeviceAuthManagerParentSessionCipherTest {
      * `DeviceAuthManagerColdStartTest.init_with_valid_encrypted_session_populates_accessToken`
      * pins the `encrypted_session` (child) restore path.
      *
-     * `encryptWithKeystore` and `decryptWithKeystore` are both spied to
-     * a base64 round-trip so the real write-and-read code paths run end
-     * to end inside the JVM test (without the real Android Keystore).
+     * `TestableAuthCipher` overrides encrypt/decrypt to be a
+     * deterministic base64 round-trip so the real write-and-read code
+     * paths run end-to-end inside the JVM test (without the real Android
+     * Keystore). The second `testableManager()` simulates process death
+     * (a fresh singleton instance triggers `init { loadPersistedState }`).
      */
     @Test
     fun loadPersistedState_after_persistParentSession_restores_parent_session_via_decrypt() = runBlocking {
@@ -271,14 +305,7 @@ class DeviceAuthManagerParentSessionCipherTest {
         val tokenHash = "token-hash-round-trip"
         val email = "[email protected]"
 
-        val real = newRealManagerForSpy()
-        val spy = spyk(real, recordPrivateCalls = false)
-        every { spy.encryptWithKeystore(any()) } answers {
-            Base64.encodeToString(firstArg<String>().toByteArray(), Base64.NO_WRAP)
-        }
-        every { spy.decryptWithKeystore(any()) } answers {
-            String(Base64.decode(firstArg<String>(), Base64.NO_WRAP))
-        }
+        val first = testableManager()
 
         val engine = MockEngine { request ->
             if (request.url.encodedPath.endsWith("/auth/v1/verify")) {
@@ -305,10 +332,10 @@ class DeviceAuthManagerParentSessionCipherTest {
             }
         }
         val client = HttpClient(engine) { install(ContentNegotiation) { json() } }
-        injectHttpClient(spy, client)
+        injectHttpClient(first, client)
 
         // Write the encrypted blob via the production write path.
-        val result = spy.verifyMagicLinkOtp(tokenHash, email)
+        val result = first.verifyMagicLinkOtp(tokenHash, email)
         assertTrue(
             "verifyMagicLinkOtp must succeed for the round-trip setup. Got: $result",
             result.isSuccess
@@ -320,12 +347,10 @@ class DeviceAuthManagerParentSessionCipherTest {
             prefs().getString("encrypted_parent_session", null)
         )
 
-        // Simulate process death so the next getInstance() builds a fresh
-        // manager and re-runs `init { loadPersistedState() }`.
-        resetManagerInstance()
-
-        // Cold start: a new manager must restore the parent session via decrypt.
-        val coldStart = DeviceAuthManager.getInstance(context)
+        // Simulate process death: a fresh manager instance triggers
+        // `init { loadPersistedState() }`. The round-trip must restore
+        // the original accessToken via the encrypted blob.
+        val coldStart = testableManager()
         assertEquals(
             "Cold start must restore the original accessToken via the encrypted blob",
             accessToken,
@@ -348,6 +373,12 @@ class DeviceAuthManagerParentSessionCipherTest {
      * `getParentId()` returns null (the user re-authenticates on the next
      * interaction rather than seeing a stale PAIRED state with no token).
      *
+     * `TestableAuthCipher.decryptWithKeystore` does
+     * `String(Base64.decode(...))` — this throws on invalid base64
+     * (`not_valid_base64!@#` is not valid base64 per the strict charset),
+     * so the production `try { ... } catch (e: Exception) { ... wipe ... }`
+     * branch in `loadPersistedState` fires.
+     *
      * Mirrors `DeviceAuthManagerColdStartTest.init_with_undecryptable_encrypted_session`
      * for the child path (`encrypted_session`).
      */
@@ -362,7 +393,7 @@ class DeviceAuthManagerParentSessionCipherTest {
 
         // Cold start: must NOT throw, must wipe parent_id so the user
         // sees the sign-in screen on next interaction.
-        val coldStart = DeviceAuthManager.getInstance(context)
+        val coldStart = testableManager()
 
         assertNull(
             "Corrupted encrypted_parent_session must NOT crash loadPersistedState. " +
@@ -379,4 +410,26 @@ class DeviceAuthManagerParentSessionCipherTest {
             !prefs().contains("encrypted_parent_session")
         )
     }
+}
+
+/**
+ * Test-only [AuthCipher] that overrides `encrypt` / `decrypt` with a
+ * deterministic base64 round-trip. Used by [DeviceAuthManagerParentSessionCipherTest]
+ * to verify the production write-and-read code paths under Robolectric 4.10.3,
+ * which cannot instantiate `AndroidKeyStore` (the project's JVM JCA provider is
+ * BouncyCastle, which lacks the Android Keystore implementation that the real
+ * `AuthCipher` requires).
+ *
+ * The override is a 100% symmetric round-trip — `Base64.encodeToString`
+ * followed by `Base64.decode` returns the original UTF-8 bytes. The real
+ * cipher (`AES/GCM/NoPadding`) is exercised only on-device + on real
+ * installs (the test confirms the JSON-envelope shape; runtime
+ * correctness of the AES cipher is covered by Android Keystore itself).
+ */
+internal class TestableAuthCipher : AuthCipher() {
+    override fun encrypt(data: String): String =
+        Base64.encodeToString(data.toByteArray(), Base64.NO_WRAP)
+
+    override fun decrypt(encryptedData: String): String =
+        String(Base64.decode(encryptedData, Base64.NO_WRAP))
 }

@@ -102,6 +102,28 @@ class DeviceAuthManagerMagicLinkTest {
         DeviceAuthManager.getInstance(context)
 
     /**
+     * W1 (cipher-at-rest) seam — constructs a fresh manager with a
+     * `TestableAuthCipher` bound BEFORE `init { loadPersistedState
+     * }` runs. Uses the `DeviceAuthManager.testCipherOverride` static
+     * (see `DeviceAuthManager.kt` companion) — the same seam the
+     * cipher tests use. Robolectric 4.10.3 cannot instantiate
+     * `AndroidKeyStore`, so the production `AuthCipher` throws
+     * `KeyStoreException` and `persistParentSession` aborts with
+     * `ParentAuthError.Unknown`. Setting the override to
+     * [TestableAuthCipher] before construction lets the verifyMagicLink
+     * happy path run end-to-end inside the JVM unit test.
+     */
+    private fun freshManagerWithTestCipher(): DeviceAuthManager {
+        // Avoid leaking into other tests: each call pairs Set/Reset.
+        DeviceAuthManager.testCipherOverride = TestableAuthCipher()
+        return try {
+            DeviceAuthManager.getInstance(context)
+        } finally {
+            DeviceAuthManager.testCipherOverride = null
+        }
+    }
+
+    /**
      * Helper that injects a [HttpClient] into a [DeviceAuthManager] via
      * reflection. The private `httpClient` field is the seam — same
      * pattern as `DeviceAuthManagerColdStartTest` for the token fields.
@@ -262,7 +284,10 @@ class DeviceAuthManagerMagicLinkTest {
         val client = HttpClient(engine) {
             install(ContentNegotiation) { json() }
         }
-        val manager = freshManager()
+        // W1 (cipher-at-rest) seam — construct with TestableAuthCipher so
+        // `persistParentSession` can run under Robolectric 4.10.3 (which
+        // cannot instantiate AndroidKeyStore).
+        val manager = freshManagerWithTestCipher()
         injectHttpClient(manager, client)
 
         val result = manager.verifyMagicLinkOtp(tokenHash, email)
@@ -283,7 +308,9 @@ class DeviceAuthManagerMagicLinkTest {
             accessToken,
             session.accessToken
         )
-        // Atomic persistence: role=PARENT + parent_id=uuid-p must be in prefs.
+        // Atomic persistence (W1 closure): role=PARENT + parent_id=uuid-p + encrypted_parent_session=<blob>
+        // must be in prefs. The `access_token` + `refresh_token` keys are
+        // NEVER written in cleartext — WARNING-1 closure.
         assertEquals(
             "verifyMagicLinkOtp must persist role=PARENT to device_auth_prefs. Keys: ${prefs().all.keys}",
             "PARENT",
@@ -293,6 +320,18 @@ class DeviceAuthManagerMagicLinkTest {
             "verifyMagicLinkOtp must persist parent_id=$parentId to device_auth_prefs",
             parentId,
             prefs().getString("parent_id", null)
+        )
+        assertTrue(
+            "verifyMagicLinkOtp must persist encrypted_parent_session=<blob> to device_auth_prefs (W1 closure). Keys: ${prefs().all.keys}",
+            prefs().contains("encrypted_parent_session")
+        )
+        assertNull(
+            "access_token must NEVER be in cleartext under device_auth_prefs (W1 closure). Keys: ${prefs().all.keys}",
+            prefs().getString("access_token", null)
+        )
+        assertNull(
+            "refresh_token must NEVER be in cleartext under device_auth_prefs (W1 closure). Keys: ${prefs().all.keys}",
+            prefs().getString("refresh_token", null)
         )
     }
 

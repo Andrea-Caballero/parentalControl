@@ -165,8 +165,12 @@ class DeviceAuthManager private constructor(
 ) {
     companion object {
         private const val TAG = "DeviceAuthManager"
-        const val SUPABASE_URL = "https://your-project.supabase.co"
-        const val SUPABASE_ANON_KEY = "your-anon-key"
+        // T3 wiring — read from BuildConfig so a `-PsupabaseUrl=`
+        // / `-PsupabaseAnonKey=` build actually reaches real Supabase.
+        // Was hardcoded placeholders that masked every real-cloud
+        // request as `NETWORK_ERROR`.
+        val SUPABASE_URL: String = BuildConfig.SUPABASE_URL
+        val SUPABASE_ANON_KEY: String = BuildConfig.SUPABASE_ANON_KEY
         private const val PREFS_NAME = "device_auth_prefs"
         private const val KEY_SYNTHETIC_ACCESS_TOKEN = "synthetic_access_token"
 

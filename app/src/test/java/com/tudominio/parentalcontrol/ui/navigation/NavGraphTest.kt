@@ -12,6 +12,7 @@ import com.tudominio.parentalcontrol.ui.screen.apps.AppsViewModel
 import com.tudominio.parentalcontrol.ui.theme.ParentalControlTheme
 import com.tudominio.parentalcontrol.viewmodel.DeviceListUiState
 import com.tudominio.parentalcontrol.viewmodel.ParentViewModel
+import com.tudominio.parentalcontrol.viewmodel.RenameChildState
 import io.mockk.every
 import io.mockk.mockk
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -79,6 +80,12 @@ class NavGraphTest {
         every { parentViewModel.error } returns MutableStateFlow<String?>(null)
         every { parentViewModel.filteredDevices } returns MutableStateFlow<List<ChildDevice>>(emptyList())
         every { parentViewModel.selectedChildId } returns MutableStateFlow<String?>(null)
+        // DashboardScreen reads renameChildState via collectAsState() and
+        // performs an unchecked cast to MutableStateFlow<RenameChildState>.
+        // Without this stub the relaxed-mockk returns Any (null), and the
+        // cast blows up with ClassCastException when the parent device
+        // path composes the Dashboard (see navGraph_pairedParentDevice_composesDashboardScreen).
+        every { parentViewModel.renameChildState } returns MutableStateFlow(RenameChildState.Hidden)
 
         every { childStatusViewModel.uiState } returns MutableStateFlow(
             com.tudominio.parentalcontrol.ui.child.status.ChildStatusUiState.Content(

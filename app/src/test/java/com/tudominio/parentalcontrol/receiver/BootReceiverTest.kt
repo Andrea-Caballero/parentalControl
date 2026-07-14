@@ -8,6 +8,7 @@ import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.testing.WorkManagerTestInitHelper
+import com.tudominio.parentalcontrol.auth.AuthResult
 import com.tudominio.parentalcontrol.auth.DeviceAuthManager
 import com.tudominio.parentalcontrol.auth.StoredSession
 import com.tudominio.parentalcontrol.workers.HeartbeatWorker
@@ -16,6 +17,7 @@ import com.tudominio.parentalcontrol.workers.ReconciliationWorker
 import com.tudominio.parentalcontrol.workers.SyncWorker
 import com.tudominio.parentalcontrol.workers.WorkScheduler
 import com.tudominio.parentalcontrol.workers.WorkerInitializer
+import io.mockk.coEvery
 import io.mockk.every
 import io.mockk.mockk
 import io.mockk.mockkObject
@@ -91,6 +93,20 @@ class BootReceiverTest {
         mockkObject(DeviceAuthManager.Companion)
         every { DeviceAuthManager.getInstance(any()) } returns mockAuthManager
         every { mockAuthManager.restoreSession() } returns storedSession
+        // PR verification 2026-07-14: stub `authenticateOrCreate()` so the
+        // boot coroutine can complete. `BootReceiver.onBootCompleted` calls
+        // it after `restoreSession` returns non-null (see BootReceiver.kt:81)
+        // to rehydrate the access token. Without this stub the unstubbed
+        // suspend call throws inside `GlobalScope.launch`, killing the
+        // coroutine before `WorkerInitializer.initialize` and the
+        // `sync_work_after_boot` chain get enqueued — which is exactly
+        // the RED signal these tests pin.
+        coEvery { mockAuthManager.authenticateOrCreate() } returns AuthResult.Success(
+            deviceId = storedSession.deviceId ?: "test-device",
+            accessToken = storedSession.accessToken,
+            refreshToken = storedSession.refreshToken,
+            expiresAt = storedSession.expiresAt
+        )
 
         val bootIntent = android.content.Intent(BootReceiver.ACTION_BOOT_COMPLETED)
         receiver.onReceive(context, bootIntent)
@@ -221,6 +237,14 @@ class BootReceiverTest {
         mockkObject(DeviceAuthManager.Companion)
         every { DeviceAuthManager.getInstance(any()) } returns mockAuthManager
         every { mockAuthManager.restoreSession() } returns storedSession
+        // Same token-rehydrate stub as the sibling test above: see the
+        // BootReceiver.kt:81 comment in `onBootCompleted_with_restored_session_enqueues_sync_after_boot`.
+        coEvery { mockAuthManager.authenticateOrCreate() } returns AuthResult.Success(
+            deviceId = storedSession.deviceId ?: "test-device",
+            accessToken = storedSession.accessToken,
+            refreshToken = storedSession.refreshToken,
+            expiresAt = storedSession.expiresAt
+        )
 
         // Mock WorkScheduler and WorkerInitializer so the test asserts the
         // exact call surface from BootReceiver, not the WorkManager database

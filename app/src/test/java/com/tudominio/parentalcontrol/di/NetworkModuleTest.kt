@@ -1,12 +1,10 @@
 package com.tudominio.parentalcontrol.di
 
 import com.tudominio.parentalcontrol.BuildConfig
-import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
-import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
@@ -14,29 +12,43 @@ import org.robolectric.annotation.Config
 import java.io.File
 
 /**
- * Build-wiring tests for the `parent-auth-session` requirement that
- * `BuildConfig.USE_MOCK_SUPABASE` MUST be sourced from `local.properties`
- * under the `debug` build type and MUST be hardcoded to `false` for
- * `release` (per design Decision 2 of
- * `openspec/changes/hotfix-parent-auth-cta-reload/design.md`).
+ * Build-wiring tests for the `parent-auth-session` /
+ * `hotfix-parent-auth-cta-reload` requirement that
+ * `BuildConfig.USE_MOCK_SUPABASE` defaults to `true` for the `debug`
+ * build type (with an opt-out via the `-PuseRealSupabase=true` Gradle
+ * property) and MUST be hardcoded to `false` for `release`.
+ *
+ * The `debug`-defaults-to-true contract was introduced by commit
+ * `02c54bd` ("fix(build): default USE_MOCK_SUPABASE=true in debug,
+ * override via -PuseRealSupabase"), which superseded the earlier
+ * "debug reads `local.properties`" design (see
+ * `openspec/changes/hotfix-parent-auth-cta-reload/design.md`,
+ * Decision 2). The current resolution lives at
+ * `app/build.gradle.kts:32-33`:
+ *
+ * ```kotlin
+ * val debugUseMockSupabase: String =
+ *     if (project.findProperty("useRealSupabase") == "true") "false" else "true"
+ * ```
  *
  * **Why source-text assertions, not a runtime `BuildConfig` switch**: the
  * debug / release variants compile into separate `BuildConfig.java` files
  * before the test JVM starts. We cannot flip variants from inside a test,
- * so the only honest way to validate "the `release` build type ignores
- * `local.properties`" is to read `app/build.gradle.kts` and assert the
- * wiring is correct. We additionally read `BuildConfig.USE_MOCK_SUPABASE`
- * at runtime as a sanity check that the wired value reaches the debug
- * `BuildConfig` (i.e. the constant actually exists and reflects the
- * `gradle.properties` value).
+ * so the only honest way to validate "the release build type hardcodes
+ * `USE_MOCK_SUPABASE=false`" is to read `app/build.gradle.kts` and
+ * assert the wiring is correct. We additionally read
+ * `BuildConfig.USE_MOCK_SUPABASE` at runtime as a sanity check that the
+ * wired value reaches the debug `BuildConfig` (i.e. the constant exists
+ * and reflects the default-true contract under the default debug
+ * variant — no `-PuseRealSupabase=true` override is applied here).
  *
- * The test also writes a temp `local.properties` containing
- * `USE_MOCK_SUPABASE=true` to exercise the same parser the build script
- * uses, so any regression in the parser (e.g. wrong key name, missing
- * `takeIf { it.exists() }` guard) is caught.
+ * Note: this class no longer writes a temporary `local.properties.test`.
+ * The superseded "debug reads `local.properties`" parser path is gone,
+ * so the `setUp` / `tearDown` file dance was removed in #30.
  *
- * Per `parent-auth-session/spec.md` verification hooks table:
- *  - `debug_buildtype_reads_useMockSupabase_from_localProperties`
+ * Per the `parent-auth-session` / `hotfix-parent-auth-cta-reload`
+ * verification hooks:
+ *  - `debug_buildtype_defaults_useMockSupabase_true_unless_useRealSupabase_override`
  *  - `release_buildtype_ignores_localProperties_useMockSupabase`
  */
 @RunWith(RobolectricTestRunner::class)
@@ -46,54 +58,31 @@ class NetworkModuleTest {
     // Gradle's test worker sets the working directory to `app/`, so the
     // module-level build script is at the same path.
     private val buildScript = File("build.gradle.kts")
-    private val tempLocalProperties = File("local.properties.test")
-
-    @Before
-    fun setUp() {
-        // Write a temp local.properties containing USE_MOCK_SUPABASE=true to
-        // exercise the same parsing path the build script uses. The test
-        // never asserts this file's content directly — it asserts the
-        // build script KNOWS how to read it.
-        tempLocalProperties.writeText(
-            """
-            # Temporary local.properties for NetworkModuleTest.
-            # Written by the test to document the "debug reads local.properties"
-            # scenario. Build script must parse this file's USE_MOCK_SUPABASE
-            # under buildTypes.debug.
-            sdk.dir=/home/andrea/Android/Sdk
-            USE_MOCK_SUPABASE=true
-            """.trimIndent()
-        )
-    }
-
-    @After
-    fun tearDown() {
-        if (tempLocalProperties.exists()) {
-            tempLocalProperties.delete()
-        }
-    }
 
     @Test
-    fun debug_buildtype_reads_useMockSupabase_from_localProperties() {
+    fun debug_buildtype_defaults_useMockSupabase_true_unless_useRealSupabase_override() {
         val source = buildScript.readText()
 
-        // 1. The build script must parse `local.properties` explicitly.
-        //    `project.findProperty` reads gradle.properties / CLI / env,
-        //    NOT `local.properties` — which is the regression we're fixing.
-        val parsesLocalProperties = Regex(
-            """rootProject\.file\(\s*"local\.properties"\s*\)"""
+        // 1. The build script must gate `debugUseMockSupabase` on the
+        //    `-PuseRealSupabase` Gradle property (the contract introduced
+        //    by commit 02c54bd that superseded the `local.properties`
+        //    parser). We match the gating expression loosely to allow
+        //    whitespace reflows without false negatives.
+        val gatesOnUseRealSupabase = Regex(
+            """project\.findProperty\(\s*"useRealSupabase"\s*\)\s*==\s*"true"\s*"""
         ).containsMatchIn(source)
         assertTrue(
-            "app/build.gradle.kts must explicitly parse local.properties " +
-                "(the regression is that `project.findProperty` doesn't read " +
-                "from local.properties). Source:\n$source",
-            parsesLocalProperties
+            "app/build.gradle.kts must gate debugUseMockSupabase on " +
+                "project.findProperty(\"useRealSupabase\") == \"true\". " +
+                "Source:\n$source",
+            gatesOnUseRealSupabase
         )
 
-        // 2. There must be a debug-scoped buildConfigField for USE_MOCK_SUPABASE.
-        //    We accept either an explicit `debug { ... }` block or one nested
-        //    inside a buildTypes container — what matters is that the wiring
-        //    is gated to debug, NOT under defaultConfig.
+        // 2. There must be a debug-scoped buildConfigField for
+        //    USE_MOCK_SUPABASE. We accept either an explicit `debug { ... }`
+        //    block or one nested inside a buildTypes container — what
+        //    matters is that the wiring is gated to debug, NOT under
+        //    defaultConfig.
         val debugBlock = extractDebugBlock(source)
         assertNotNull(
             "app/build.gradle.kts must define a buildTypes.debug block. " +
@@ -107,13 +96,14 @@ class NetworkModuleTest {
                 debugBlock.contains("USE_MOCK_SUPABASE")
         )
 
-        // 3. Sanity check: after the fix, gradle.properties ships
-        //    USE_MOCK_SUPABASE=true, so debug BuildConfig.USE_MOCK_SUPABASE
-        //    must be true. If this is false the wiring isn't reaching the
-        //    debug variant (or gradle.properties wasn't updated).
+        // 3. Sanity check: under the default debug variant (no
+        //    `-PuseRealSupabase` override), the wired `debugUseMockSupabase`
+        //    resolves to "true", so BuildConfig.USE_MOCK_SUPABASE must be
+        //    true. If this is false the wiring isn't reaching the debug
+        //    variant (or the gating expression changed).
         assertEquals(
-            "BuildConfig.USE_MOCK_SUPABASE must be true for debug variant " +
-                "(gradle.properties carries USE_MOCK_SUPABASE=true).",
+            "BuildConfig.USE_MOCK_SUPABASE must be true for the default " +
+                "debug variant (no -PuseRealSupabase override).",
             true, BuildConfig.USE_MOCK_SUPABASE
         )
     }

@@ -2,9 +2,9 @@ package com.tudominio.parentalcontrol.auth
 
 import android.content.Context
 import androidx.test.core.app.ApplicationProvider
-import io.mockk.every
-import io.mockk.spyk
 import kotlinx.coroutines.test.runTest
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.Json
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Before
@@ -68,6 +68,13 @@ class DeviceAuthManagerColdStartTest {
 
     private lateinit var context: Context
 
+    // Mirrors `DeviceAuthManager.json` configuration so test-time
+    // JSON encoding/decoding matches the production serializer.
+    private val json = Json {
+        ignoreUnknownKeys = true
+        isLenient = true
+    }
+
     @Before
     fun setUp() {
         context = ApplicationProvider.getApplicationContext()
@@ -95,6 +102,13 @@ class DeviceAuthManagerColdStartTest {
     }
 
     private fun newRealManagerForSpy(): DeviceAuthManager {
+        // Reverted to the (Context) primary ctor — W1 cipher extraction
+        // introduced `DeviceAuthManager.testCipherOverride` instead,
+        // which the field initializer of `sessionCipher` consumes at
+        // construction time. Tests that need to bypass the production
+        // Keystore set the static before construction; this test uses
+        // `spyk` to intercept `restoreSession()` instead, so the cipher
+        // is never invoked from the test code path.
         val ctor = DeviceAuthManager::class.java
             .getDeclaredConstructor(Context::class.java)
         ctor.isAccessible = true
@@ -124,11 +138,18 @@ class DeviceAuthManagerColdStartTest {
      * token fields when [DeviceAuthManager.restoreSession] returns a valid
      * [StoredSession].
      *
-     * Verified via `spyk` + reflection (see class kdoc for why the standard
-     * "round-trip via real keystore" approach is unavailable in Robolectric
-     * 4.10.3). The test exercises the EXACT fix code path
-     * (`restoreSession()?.let { stored -> currentAccessToken = ...; ... }`),
-     * with a controlled [StoredSession] injected through the spy stub.
+     * Verified via reflection + the [TestableAuthCipher] seam (mirrors
+     * `DeviceAuthManagerParentSessionCipherTest.testableManager()`).
+     * Earlier versions of this test used `spyk` (MockK) to stub
+     * `restoreSession()`, but W1 (cipher extraction) added an `internal
+     * var sessionCipher` field whose field initializer is consulted by
+     * the [DeviceAuthManager] constructor — MockK's `spyk(real)` proxy
+     * interferes with the field initializer (the autoHint invocation
+     * during `every {}` setup observes the incomplete state). The
+     * reflection-based seam is cleaner: pre-populate prefs with an
+     * `encrypted_session` blob that decrypts cleanly via the test
+     * cipher, then invoke the production `loadPersistedState` via
+     * reflection and verify the in-memory fields are populated.
      */
     @Test
     fun `init with valid encrypted session populates accessToken`() {
@@ -139,32 +160,44 @@ class DeviceAuthManagerColdStartTest {
             deviceId = "device-anonymous-restored",
             userId = "user-restored"
         )
-        val real = newRealManagerForSpy()
-        val spy = spyk(real, recordPrivateCalls = false)
-        every { spy.restoreSession() } returns expected
+        // The production cipher requires AndroidKeyStore which Robolectric
+        // can't supply. Persist an `encrypted_session` blob the test cipher
+        // can decrypt cleanly so `loadPersistedState` populates the
+        // fields symmetrically with the production write path.
+        val expectedJson = json.encodeToString(expected)
+        val encryptedBlob = TestableAuthCipher().encrypt(expectedJson)
+        context.getSharedPreferences("device_auth_prefs", Context.MODE_PRIVATE)
+            .edit()
+            .putString("encrypted_session", encryptedBlob)
+            .commit()
 
-        invokeLoadPersistedState(spy)
+        // Bind the test cipher BEFORE construction so `loadPersistedState`
+        // (which runs in `init {}`) decrypts with the test cipher instead
+        // of the production `AuthCipher`.
+        DeviceAuthManager.testCipherOverride = TestableAuthCipher()
 
-        // The fix's `restoreSession()?.let { stored -> ... }` block must
-        // populate the same 3 fields that the canonical populate at lines
-        // 156-160 of `authenticateOrCreate()` populates. Before the fix,
-        // `loadPersistedState` did not touch these at all and they stayed
-        // at their default (`null` / `0`), making the assertions below
-        // RED on master.
+        val real = try {
+            newRealManagerForSpy()
+        } finally {
+            DeviceAuthManager.testCipherOverride = null
+        }
+
+        // Assert the `init { loadPersistedState }` populated the fields from
+        // the decrypted `StoredSession`.
         assertEquals(
             "loadPersistedState must populate currentAccessToken from restored session",
             expected.accessToken,
-            readStringField(spy, "currentAccessToken")
+            readStringField(real, "currentAccessToken")
         )
         assertEquals(
             "loadPersistedState must populate currentRefreshToken from restored session",
             expected.refreshToken,
-            readStringField(spy, "currentRefreshToken")
+            readStringField(real, "currentRefreshToken")
         )
         assertEquals(
             "loadPersistedState must populate sessionExpiresAt from restored session",
             expected.expiresAt,
-            readLongField(spy, "sessionExpiresAt")
+            readLongField(real, "sessionExpiresAt")
         )
     }
 

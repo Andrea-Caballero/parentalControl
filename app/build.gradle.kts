@@ -50,6 +50,19 @@ val debugUseSharedMock: String =
 val debugSharedMockUrl: String =
     (project.findProperty("sharedMockUrl") as String?) ?: "http://10.0.2.2:8787"
 
+// T3 wiring (do NOT scope-creep this into Slice A — this is the
+// pre-merge infra patch that lets a real-cloud build actually reach
+// Supabase). Reads `SUPABASE_URL` + `SUPABASE_ANON_KEY` from
+// `local.properties` (documented at `local.properties.template`).
+// Defaults preserve the historical `https://your-project.supabase.co`
+// placeholder so a stale build keeps failing loud, not silent.
+val debugSupabaseUrl: String =
+    (project.findProperty("supabaseUrl") as String?)
+        ?: "https://your-project.supabase.co"
+val debugSupabaseAnonKey: String =
+    (project.findProperty("supabaseAnonKey") as String?)
+        ?: "your-anon-key"
+
 android {
     namespace = "com.tudominio.parentalcontrol"
     compileSdk = 36
@@ -92,6 +105,13 @@ android {
             // design Decision 2 and spec scenario "Release build does not
             // honor local.properties USE_MOCK_SUPABASE".
             buildConfigField("boolean", "USE_MOCK_SUPABASE", "false")
+            // T3 wiring: release reads the same `SUPABASE_URL` /
+            // `SUPABASE_ANON_KEY` from Gradle `-PsupabaseUrl=` /
+            // `-PsupabaseAnonKey=` properties (see debug config for
+            // rationale). Production overrides should come from the
+            // CI/Play Console secrets, not this file.
+            buildConfigField("String", "SUPABASE_URL", "\"$debugSupabaseUrl\"")
+            buildConfigField("String", "SUPABASE_ANON_KEY", "\"$debugSupabaseAnonKey\"")
         }
         debug {
             isMinifyEnabled = false
@@ -106,6 +126,15 @@ android {
             // See the long-form note above `debugUseSharedMock` for usage.
             buildConfigField("boolean", "USE_SHARED_MOCK", debugUseSharedMock)
             buildConfigField("String", "SHARED_MOCK_URL", "\"$debugSharedMockUrl\"")
+            // T3 wiring: real Supabase URL + anon key for cross-device
+            // validation. Set via `-PsupabaseUrl=https://...` /
+            // `-PsupabaseAnonKey=eyJ...` or via `local.properties`. The
+            // defaults match the historical `your-project.supabase.co`
+            // placeholder so a build without overrides stays loud-failing
+            // (NETWORK_ERROR) instead of silently hitting a project that
+            // doesn't exist.
+            buildConfigField("String", "SUPABASE_URL", "\"$debugSupabaseUrl\"")
+            buildConfigField("String", "SUPABASE_ANON_KEY", "\"$debugSupabaseAnonKey\"")
         }
     }
 

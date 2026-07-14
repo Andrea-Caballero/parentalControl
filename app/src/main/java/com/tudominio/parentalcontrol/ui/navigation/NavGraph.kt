@@ -1,14 +1,20 @@
 package com.tudominio.parentalcontrol.ui.navigation
 
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.hilt.navigation.compose.hiltViewModel
+import com.tudominio.parentalcontrol.auth.MagicLinkDeepLinkHandler
+import com.tudominio.parentalcontrol.auth.MagicLinkVerifier
 import com.tudominio.parentalcontrol.copy.CopyManager
 import com.tudominio.parentalcontrol.data.repository.TimeExtraRepository
 import com.tudominio.parentalcontrol.pairing.PairingViewModel
 import com.tudominio.parentalcontrol.pairing.ui.PairingScreen
+import com.tudominio.parentalcontrol.ui.auth.MagicLinkSignInScreen
+import com.tudominio.parentalcontrol.ui.auth.MagicLinkViewModel
 import com.tudominio.parentalcontrol.ui.child.extra.ExtraTimeScreen
 import com.tudominio.parentalcontrol.ui.child.status.ChildStatusScreen
 import com.tudominio.parentalcontrol.ui.child.status.ChildStatusViewModel
@@ -29,22 +35,36 @@ import com.tudominio.parentalcontrol.viewmodel.ParentViewModel
  * composable manages its own sub-navigation between the screens that
  * share a top-level entry point:
  *
- *  - [NavRoute.Onboarding]   → unpaired device; advances to Dashboard or
- *                              PairingFlow when the user picks a role.
- *  - [NavRoute.PairingFlow]  → child device during pairing; cancels back
- *                              to Onboarding.
- *  - [NavRoute.Dashboard]    → paired parent (initial), or unpaired user
- *                              who picked "parent" on Onboarding.
- *  - [NavRoute.ChildStatus]  → paired child (initial).
- *  - [NavRoute.ExtraTime]    → child requested extra time (T28 — also
- *                              reached when `BlockOverlayService` fires
- *                              the `parentalcontrol://request-extra-time`
- *                              deeplink); returns to ChildStatus when
- *                              the request is sent or cancelled.
+ *  - [NavRoute.Onboarding]      → unpaired device; advances to
+ *                                 MagicLinkSignIn (parent path) or
+ *                                 PairingFlow (child path) when the
+ *                                 user picks a role.
+ *  - [NavRoute.MagicLinkSignIn] → unpaired parent after picking "Soy
+ *                                 el padre"; advances to Dashboard
+ *                                 when the magic-link is verified
+ *                                 (TODO follow-up: deep-link
+ *                                 handler — not in scope of this PR).
+ *                                 Currently returns to Onboarding if
+ *                                 the user taps the back arrow.
+ *  - [NavRoute.PairingFlow]     → child device during pairing;
+ *                                 cancels back to Onboarding.
+ *  - [NavRoute.Dashboard]       → paired parent (initial), or unpaired
+ *                                 user who picked "parent" on
+ *                                 Onboarding.
+ *  - [NavRoute.ChildStatus]     → paired child (initial).
+ *  - [NavRoute.ExtraTime]       → child requested extra time (T28 —
+ *                                 also reached when `BlockOverlayService`
+ *                                 fires the
+ *                                 `parentalcontrol://request-extra-time`
+ *                                 deeplink); returns to ChildStatus
+ *                                 when the request is sent or cancelled.
  *
  * Every ViewModel and manager is passed as a parameter so `MainActivity`
  * resolves them via `hiltViewModel()` / Hilt singletons and tests can
  * inject mocks directly (no Hilt graph needed in the Robolectric tests).
+ * The new [MagicLinkViewModel] is resolved via `hiltViewModel()`
+ * inline (paralleling how `DashboardScreen` resolves
+ * `BehaviorLogViewModel`) so the signature stays bounded.
  *
  * `prefilledPairingCode` and `pendingExtraTimePackage` are hoisted
  * state in `MainActivity` so the corresponding deeplinks survive both
@@ -68,7 +88,10 @@ fun NavGraph(
     timeExtraRepository: TimeExtraRepository,
     deviceId: String,
     onPairingComplete: () -> Unit,
-    onExtraTimeConsumed: () -> Unit
+    onExtraTimeConsumed: () -> Unit,
+    pendingMagicLinkUrl: String? = null,
+    magicLinkVerifier: MagicLinkVerifier? = null,
+    onMagicLinkConsumed: () -> Unit = {}
 ) {
     // `remember(key)` resets the route when the pending deeplink arrives.
     // Without the key, the `var route by remember { ... }` would only
@@ -86,12 +109,44 @@ fun NavGraph(
         )
     }
 
+    // Continuation #2: close the magic-link round-trip. When the parent
+    // taps `parentalcontrol://magic-link?token=…&email=…`, MainActivity
+    // forwards the URL here; the pure MagicLinkDeepLinkHandler verifies the
+    // OTP (which persists the ParentSession via DeviceAuthManager) and, on
+    // success, we route to the Dashboard. On any failure the parent is sent
+    // to the sign-in screen to retry. `onMagicLinkConsumed` clears the
+    // pending URL so a recomposition/recreate does not replay the verify.
+    // Keyed on the URL so a fresh deep-link re-triggers the effect.
+    LaunchedEffect(pendingMagicLinkUrl) {
+        val url = pendingMagicLinkUrl
+        if (url != null && magicLinkVerifier != null) {
+            val result = MagicLinkDeepLinkHandler(magicLinkVerifier).handle(url)
+            route = if (result != null && result.isSuccess) {
+                NavRoute.Dashboard
+            } else {
+                NavRoute.MagicLinkSignIn
+            }
+            onMagicLinkConsumed()
+        }
+    }
+
     when (route) {
         NavRoute.Onboarding -> OnboardingScreen(
-            viewModel = parentViewModel,
-            onAuthenticated = { route = NavRoute.Dashboard },
+            onSelectParent = { route = NavRoute.MagicLinkSignIn },
             onSelectChild = { route = NavRoute.PairingFlow }
         )
+        NavRoute.MagicLinkSignIn -> {
+            // Hilt resolves the VM here (paralleling the
+            // `hiltViewModel<BehaviorLogViewModel>()` call inside
+            // `DashboardScreen` for the BehaviorLog nav target). The
+            // NavGraph signature stays bounded — `MagicLinkViewModel`
+            // does not pollute the constructor arg list.
+            val magicLinkVm: MagicLinkViewModel = hiltViewModel()
+            MagicLinkSignInScreen(
+                viewModel = magicLinkVm,
+                onBack = { route = NavRoute.Onboarding }
+            )
+        }
         NavRoute.PairingFlow -> PairingScreen(
             viewModel = pairingViewModel,
             onPairingComplete = onPairingComplete,
@@ -137,6 +192,7 @@ fun NavGraph(
  */
 internal enum class NavRoute {
     Onboarding,
+    MagicLinkSignIn,
     PairingFlow,
     Dashboard,
     ChildStatus,

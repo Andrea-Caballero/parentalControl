@@ -60,8 +60,12 @@ class SupabaseClientProvider internal constructor(
          */
         val SUPABASE_URL: String =
             if (BuildConfig.USE_SHARED_MOCK) BuildConfig.SHARED_MOCK_URL
-            else "https://your-project.supabase.co"
-        const val SUPABASE_ANON_KEY = "your-anon-key"
+            else BuildConfig.SUPABASE_URL
+        // T3 wiring — read from BuildConfig (set via `-PsupabaseUrl=`
+        // / `-PsupabaseAnonKey=` or `local.properties`). Was `const val`
+        // with the `https://your-project.supabase.co` placeholder, which
+        // silently engaged a `NETWORK_ERROR` on any real-cloud build.
+        val SUPABASE_ANON_KEY: String = BuildConfig.SUPABASE_ANON_KEY
 
         @Volatile
         private var instance: SupabaseClientProvider? = null

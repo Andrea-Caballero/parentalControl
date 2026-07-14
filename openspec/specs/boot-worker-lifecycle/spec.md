@@ -24,6 +24,26 @@ Defines the contract for WorkManager jobs scheduled in response to `BOOT_COMPLET
 - AND `WorkScheduler.cancelWork(context, ReconciliationWorker.WORK_NAME)` SHALL NOT be called
 - AND `WorkScheduler.cancelWork(context, OutboxDrainer.WORK_NAME)` SHALL NOT be called.
 
+### Requirement: After restoreSession, access token is rehydrated before scheduling
+When `BootReceiver.onReceive` runs the `BOOT_COMPLETED` branch and `DeviceAuthManager.restoreSession()` returns a non-null session, the receiver MUST invoke `DeviceAuthManager.authenticateOrCreate()` between `restoreSession()` and any WorkManager enqueue so the in-memory access token is rehydrated from the persisted session before any authenticated request fires. When `restoreSession()` returns null, `authenticateOrCreate()` MUST NOT be invoked.
+
+This rehydration step is required because `loadPersistedState` restores only `deviceId` + `isPaired` from SharedPreferences; the in-memory `currentAccessToken` is left null until the boot path explicitly rehydrates it via `authenticateOrCreate()`. Without this step, any authenticated request (sync, pull, drain) returns `Offline` after a reboot until the user re-pairs.
+
+#### Scenario: Session present rehydrates the token before the sync chain runs
+- GIVEN the device has just emitted `BOOT_COMPLETED`
+- AND `DeviceAuthManager.restoreSession()` returns a non-null session
+- WHEN `BootReceiver.onReceive` runs
+- THEN `authManager.authenticateOrCreate()` SHALL be invoked after `restoreSession()` and before any `WorkScheduler.scheduleSyncAfterBoot` call
+- AND the call order SHALL be `restoreSession()` → `authenticateOrCreate()` → `WorkScheduler.scheduleOutboxDrainer(context)` → `WorkerInitializer.initialize(context, isAfterBoot = true)`.
+
+#### Scenario: No session skips rehydration
+- GIVEN the device has just emitted `BOOT_COMPLETED`
+- AND `DeviceAuthManager.restoreSession()` returns `null`
+- WHEN `BootReceiver.onReceive` runs
+- THEN `authManager.authenticateOrCreate()` SHALL NOT be invoked
+- AND `WorkScheduler.cancelWork(context, "${SyncWorker.WORK_NAME}_after_boot")` SHALL be called
+- AND the `else` branch SHALL proceed straight to the cancel call without any rehydration attempt.
+
 ### Requirement: scheduleSyncAfterBoot enqueues the post-boot chain
 `scheduleSyncAfterBoot(context)` MUST enqueue `${SyncWorker.WORK_NAME}_after_boot` as unique work and MUST chain `HeartbeatWorker.WORK_NAME` and `OutboxDrainer.WORK_NAME` to run after the initial sync. It MUST NOT be invoked when no session is present at boot.
 

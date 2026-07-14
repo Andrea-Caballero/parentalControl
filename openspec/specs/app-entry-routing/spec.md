@@ -49,6 +49,12 @@ The NavGraph SHALL route paired devices without a child `parentId` to `Dashboard
 - **WHEN** `MainActivity.onCreate` runs and `isPaired() == true && parentId == null`,
 - **THEN** `DashboardScreen` SHALL compose with `ParentViewModel` and `AppsViewModel` injected via `hiltViewModel()`.
 
+#### Scenario: ParentViewModel renameChildState observes Hidden by default
+- **WHEN** a `ParentViewModel` instance is constructed (real or stubbed via `mockk(relaxed = true)`),
+- **THEN** `renameChildState.value` SHALL observe `RenameChildState.Hidden`.
+
+`DashboardScreen` reads `viewModel.renameChildState.collectAsState()` on every composition. Any test that mocks `ParentViewModel` with `mockk(relaxed = true)` MUST stub this flow with a real `MutableStateFlow(RenameChildState.Hidden)` so the unchecked `StateFlow<RenameChildState>` cast resolves cleanly; a relaxed mock returns `Any` for the property, which the unchecked cast rejects at runtime.
+
 ### Requirement: Pairing deeplink prefill survives extraction
 `parentalcontrol://pair?code=<code>` intents SHALL pre-fill `PairingScreen.prefilledCode` on both cold start (`onCreate`) and warm start (`onNewIntent`).
 

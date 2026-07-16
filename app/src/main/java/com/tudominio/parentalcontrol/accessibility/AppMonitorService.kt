@@ -3,9 +3,11 @@ package com.tudominio.parentalcontrol.accessibility
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.AccessibilityServiceInfo
 import android.view.accessibility.AccessibilityEvent
+import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 
+@AndroidEntryPoint
 class AppMonitorService : AccessibilityService() {
 
     companion object {

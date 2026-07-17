@@ -268,7 +268,8 @@ class MagicLinkSignInScreenTest {
 /**
  * Hand-rolled test double for [MagicLinkSender]. The VM only calls
  * `signInWithMagicLink(email)` from inside the [MagicLinkViewModel.submit]
- * coroutine, so two seams cover every test:
+ * coroutine under the default `USE_SHARED_MOCK=false` build, so two
+ * seams cover every test:
  *
  *  - [calls] — captures every email the VM submitted (assert the
  *    argument).
@@ -276,6 +277,9 @@ class MagicLinkSignInScreenTest {
  *    [pendingResult] is set, the sender awaits the deferred (lets
  *    the test observe the `Sending` state). Otherwise [nextResult] is
  *    returned synchronously.
+ *
+ * Slice B1 adds `devLogin` to [MagicLinkSender]; the fake throws if
+ * it's ever invoked (test build has `USE_SHARED_MOCK=false`).
  *
  * Kept private to this file so the seam is co-located with the test
  * that uses it. If other tests need it, promote to
@@ -301,4 +305,7 @@ private class FakeMagicLinkSender : MagicLinkSender {
             nextResult
         }
     }
+
+    override suspend fun devLogin(email: String): Result<com.tudominio.parentalcontrol.auth.ParentSession> =
+        error("devLogin not exercised in tests (USE_SHARED_MOCK=false in test build)")
 }

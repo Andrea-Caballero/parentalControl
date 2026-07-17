@@ -2,8 +2,10 @@ package com.tudominio.parentalcontrol.ui.auth
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.tudominio.parentalcontrol.BuildConfig
 import com.tudominio.parentalcontrol.auth.DeviceAuthManager
 import com.tudominio.parentalcontrol.auth.MagicLinkSent
+import com.tudominio.parentalcontrol.auth.ParentSession
 import com.tudominio.parentalcontrol.util.EmailValidator
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -94,9 +96,12 @@ class MagicLinkViewModel @Inject constructor(
         }
         _state.value = MagicLinkUiState.Sending(email)
         viewModelScope.launch {
-            val result = sender.signInWithMagicLink(email)
+            // Slice B1 — when `USE_SHARED_MOCK=true`, call `/auth/v1/dev-login`
+            // and emit `Authenticated`. When false, behavior is unchanged.
+            val useSharedMock = BuildConfig.USE_SHARED_MOCK
+            val result = if (useSharedMock) sender.devLogin(email) else sender.signInWithMagicLink(email)
             _state.value = if (result.isSuccess) {
-                MagicLinkUiState.Sent(email)
+                if (useSharedMock) MagicLinkUiState.Authenticated(email) else MagicLinkUiState.Sent(email)
             } else {
                 val message = result.exceptionOrNull()?.message ?: "Error al enviar el magic-link"
                 MagicLinkUiState.Failed(email = email, errorMessage = message)
@@ -115,28 +120,22 @@ class MagicLinkViewModel @Inject constructor(
     }
 }
 
-/**
- * Functional interface that the [MagicLinkViewModel] uses to dispatch
- * the magic-link sign-in. Lets Compose UI tests stub the call
- * without going through `mockk<DeviceAuthManager>` (the project's
- * pre-existing MockK + JDK 21 incompatibility; see class docs).
- */
-fun interface MagicLinkSender {
+/** Test seam for [MagicLinkViewModel] (avoids `mockk<DeviceAuthManager>`,
+ *  see class docs). Slice B1 adds [devLogin] for the shared-mock bypass. */
+interface MagicLinkSender {
     suspend fun signInWithMagicLink(email: String): Result<MagicLinkSent>
+    suspend fun devLogin(email: String): Result<ParentSession>
 }
 
-/**
- * Hilt-friendly implementation of [MagicLinkSender] that forwards to
- * [DeviceAuthManager.signInWithMagicLink]. Wrapping the singleton in
- * this thin class keeps `DeviceAuthManager.kt` untouched (out-of-scope
- * per the apply contract; the existing `signInWithMagicLink` API
- * already matches the [MagicLinkSender] signature verbatim).
- */
+/** Forwards to [DeviceAuthManager]. Keeps `DeviceAuthManager.kt` untouched. */
 class DeviceAuthManagerMagicLinkSender @Inject constructor(
     private val authManager: DeviceAuthManager
 ) : MagicLinkSender {
     override suspend fun signInWithMagicLink(email: String): Result<MagicLinkSent> =
         authManager.signInWithMagicLink(email)
+
+    override suspend fun devLogin(email: String): Result<ParentSession> =
+        authManager.devLogin(email)
 }
 
 /**
@@ -163,6 +162,9 @@ sealed interface MagicLinkUiState {
     data class Sending(override val email: String) : MagicLinkUiState
 
     data class Sent(override val email: String) : MagicLinkUiState
+
+    /** Slice B1 — terminal state emitted after a successful `devLogin`. */
+    data class Authenticated(override val email: String) : MagicLinkUiState
 
     data class Failed(
         override val email: String,

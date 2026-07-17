@@ -106,7 +106,9 @@ class MainActivity : ComponentActivity() {
             pendingMagicLinkUrl = pendingMagicLinkUrl.value,
             onPairingComplete = ::restartActivity,
             onExtraTimeConsumed = { pendingExtraTimePackage.value = null },
-            onMagicLinkConsumed = { pendingMagicLinkUrl.value = null }
+            onMagicLinkConsumed = { pendingMagicLinkUrl.value = null },
+            // Slice B1 — shared-mock `devLogin` success → recreate activity → Dashboard.
+            onAuthenticated = ::restartActivity
         )
     }
 }

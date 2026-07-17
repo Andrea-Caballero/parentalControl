@@ -139,6 +139,96 @@ def handle_auth_token(handler: http.server.BaseHTTPRequestHandler, _body: dict) 
     )
 
 
+def handle_magiclink(
+    handler: http.server.BaseHTTPRequestHandler, body: dict
+) -> None:
+    """`POST /auth/v1/magiclink` — Supabase magic-link dispatch.
+
+    The real backend would email a one-time link to `body["email"]`. We
+    have no SMTP, so we just return a 200 OK with a synthetic
+    `message_id`. The client (Android) treats this as "email was
+    dispatched" and waits for the user to confirm via the in-app
+    auto-detect / manual paste of the token_hash — which never arrives
+    in this mock, so the parent flow stops at "check your inbox" unless
+    the test harness drives the verify call directly with a fake
+    token_hash (see `handle_verify_magiclink`).
+    """
+    message_id = "mock-msg-" + secrets.token_hex(8)
+    _send_json(
+        handler,
+        HTTPStatus.OK,
+        {"message_id": message_id},
+    )
+
+
+def handle_verify_magiclink(
+    handler: http.server.BaseHTTPRequestHandler, body: dict
+) -> None:
+    """`POST /auth/v1/verify?type=magiclink` — exchanges a (fake)
+    `token_hash` for a parent session.
+
+    Real Supabase would verify the token_hash against the magic-link
+    email it just sent. We skip that step and grant the session
+    unconditionally — every (email, token_hash) pair is accepted. The
+    returned `user.id` is the fixed PARENT_ID so subsequent
+    `Authorization: Bearer …` calls are correlated.
+    """
+    token = "magiclink-" + secrets.token_urlsafe(16)
+    email = (body.get("email") or "anonymous@placeholder.local").strip()
+    _send_json(
+        handler,
+        HTTPStatus.OK,
+        {
+            "access_token": token,
+            "refresh_token": "refresh-" + secrets.token_urlsafe(8),
+            "expires_in": 3600,
+            "expires_at": int(_dt.datetime.now().timestamp()) + 3600,
+            "user": {
+                "id": PARENT_ID,
+                "email": email,
+                "app_metadata": {"device_id": "shared-mock-" + secrets.token_hex(4)},
+            },
+        },
+    )
+
+
+def handle_dev_login(
+    handler: http.server.BaseHTTPRequestHandler, body: dict
+) -> None:
+    """`POST /auth/v1/dev-login` — dev-only shortcut that combines
+    `magiclink` + `verify` in one call.
+
+    Real Supabase needs an email round-trip:
+      POST /auth/v1/magiclink → email with link → user clicks
+      → POST /auth/v1/verify?type=magiclink → session.
+
+    The shared mock has no SMTP. `dev-login` lets the Android client
+    skip the round-trip entirely during cross-device pairing tests:
+    send `{email}` once, get a session back. The returned `user.id` is
+    the fixed PARENT_ID so subsequent `Authorization: Bearer …` calls
+    are correlated with the parent's children list.
+
+    Only enabled in shared-mock mode. Real Supabase rejects this path.
+    """
+    token = "devlogin-" + secrets.token_urlsafe(16)
+    email = (body.get("email") or "anonymous@placeholder.local").strip()
+    _send_json(
+        handler,
+        HTTPStatus.OK,
+        {
+            "access_token": token,
+            "refresh_token": "refresh-" + secrets.token_urlsafe(8),
+            "expires_in": 3600,
+            "expires_at": int(_dt.datetime.now().timestamp()) + 3600,
+            "user": {
+                "id": PARENT_ID,
+                "email": email,
+                "app_metadata": {"device_id": "shared-mock-" + secrets.token_hex(4)},
+            },
+        },
+    )
+
+
 def handle_create_pairing_code(
     handler: http.server.BaseHTTPRequestHandler, body: dict
 ) -> None:
@@ -414,6 +504,12 @@ class _Handler(http.server.BaseHTTPRequestHandler):
 
         if method == "POST" and path.endswith("/auth/v1/token"):
             handle_auth_token(self, body)
+        elif method == "POST" and path.endswith("/auth/v1/magiclink"):
+            handle_magiclink(self, body)
+        elif method == "POST" and path.endswith("/auth/v1/verify"):
+            handle_verify_magiclink(self, body)
+        elif method == "POST" and path.endswith("/auth/v1/dev-login"):
+            handle_dev_login(self, body)
         elif method == "POST" and path.endswith("/functions/v1/create-pairing-code"):
             handle_create_pairing_code(self, body)
         elif method == "POST" and path.endswith("/functions/v1/pairing"):

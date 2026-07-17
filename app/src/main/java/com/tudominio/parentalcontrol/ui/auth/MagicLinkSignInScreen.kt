@@ -23,6 +23,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
@@ -63,7 +64,9 @@ import com.tudominio.parentalcontrol.util.EmailValidator
 @Composable
 fun MagicLinkSignInScreen(
     viewModel: MagicLinkViewModel,
-    onBack: () -> Unit = {}
+    onBack: () -> Unit = {},
+    // Slice B1 — fired on `Authenticated`; activity wires to `restartActivity`.
+    onAuthenticated: (() -> Unit)? = null
 ) {
     val state by viewModel.state.collectAsState()
 
@@ -92,6 +95,10 @@ fun MagicLinkSignInScreen(
                 )
                 is MagicLinkUiState.Sending -> SendingContent()
                 is MagicLinkUiState.Sent -> SentContent(email = s.email)
+                // Slice B1 — `devLogin` persisted the session; fire `onAuthenticated`.
+                is MagicLinkUiState.Authenticated -> {
+                    LaunchedEffect(Unit) { onAuthenticated?.invoke() }
+                }
                 is MagicLinkUiState.Failed -> FailedContent(
                     errorMessage = s.errorMessage,
                     onRetry = viewModel::retry

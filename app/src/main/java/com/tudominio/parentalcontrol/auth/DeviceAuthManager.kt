@@ -179,6 +179,9 @@ data class MagicLinkVerifyRequest(
     val token: String
 )
 
+@Serializable
+data class DevLoginRequest(val email: String)
+
 class DeviceAuthManager private constructor(
     private val context: Context
 ) {
@@ -693,6 +696,40 @@ class DeviceAuthManager private constructor(
             .putString("encrypted_parent_session", encrypted)
             .apply()
     }
+
+    // Slice B1 — shared-mock dev-login bypass. Gated on `USE_SHARED_MOCK`;
+    // uses `SHARED_MOCK_URL` so the request reaches `localhost:8787`.
+    // Production path unchanged: when `USE_SHARED_MOCK=false` the VM never calls this.
+    suspend fun devLogin(email: String): Result<ParentSession> =
+        withContext(Dispatchers.IO) {
+            if (!isValidEmail(email)) {
+                return@withContext Result.failure(ParentAuthError.InvalidEmail)
+            }
+            val baseUrl = if (BuildConfig.USE_SHARED_MOCK) BuildConfig.SHARED_MOCK_URL else SUPABASE_URL
+            try {
+                val response = httpClient.post("$baseUrl/auth/v1/dev-login") {
+                    header("apikey", SUPABASE_ANON_KEY)
+                    contentType(ContentType.Application.Json)
+                    setBody(DevLoginRequest(email = email))
+                }
+                if (!response.status.isSuccess()) {
+                    return@withContext Result.failure(ParentAuthError.Unknown)
+                }
+                val authResponse: SupabaseAuthResponse = response.body()
+                val parentId = authResponse.user?.id
+                    ?: return@withContext Result.failure(ParentAuthError.InvalidRequest)
+                val session = ParentSession(
+                    parentId = parentId,
+                    accessToken = authResponse.access_token,
+                    refreshToken = authResponse.refresh_token
+                )
+                persistParentSession(session)
+                Result.success(session)
+            } catch (e: Exception) {
+                Log.w(TAG, "devLogin failed: ${e.message}", e)
+                Result.failure(ParentAuthError.Unknown)
+            }
+        }
 
     suspend fun forceReauth(): AuthResult = withContext(Dispatchers.IO) {
         clearSession()

@@ -91,7 +91,9 @@ fun NavGraph(
     onExtraTimeConsumed: () -> Unit,
     pendingMagicLinkUrl: String? = null,
     magicLinkVerifier: MagicLinkVerifier? = null,
-    onMagicLinkConsumed: () -> Unit = {}
+    onMagicLinkConsumed: () -> Unit = {},
+    // Slice B1 — wired to activity's `restartActivity` after a shared-mock `devLogin`.
+    onAuthenticated: () -> Unit = {}
 ) {
     // `remember(key)` resets the route when the pending deeplink arrives.
     // Without the key, the `var route by remember { ... }` would only
@@ -144,7 +146,8 @@ fun NavGraph(
             val magicLinkVm: MagicLinkViewModel = hiltViewModel()
             MagicLinkSignInScreen(
                 viewModel = magicLinkVm,
-                onBack = { route = NavRoute.Onboarding }
+                onBack = { route = NavRoute.Onboarding },
+                onAuthenticated = onAuthenticated
             )
         }
         NavRoute.PairingFlow -> PairingScreen(

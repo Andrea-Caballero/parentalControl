@@ -51,7 +51,9 @@ fun AppNavHost(
     pendingMagicLinkUrl: String? = null,
     onPairingComplete: () -> Unit,
     onExtraTimeConsumed: () -> Unit,
-    onMagicLinkConsumed: () -> Unit = {}
+    onMagicLinkConsumed: () -> Unit = {},
+    // Slice B1 — forwarded to `MagicLinkSignInScreen` → `restartActivity`.
+    onAuthenticated: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val authManager = remember { DeviceAuthManager.getInstance(context) }
@@ -90,7 +92,8 @@ fun AppNavHost(
         magicLinkVerifier = magicLinkVerifier,
         onPairingComplete = onPairingComplete,
         onExtraTimeConsumed = onExtraTimeConsumed,
-        onMagicLinkConsumed = onMagicLinkConsumed
+        onMagicLinkConsumed = onMagicLinkConsumed,
+        onAuthenticated = onAuthenticated
     )
 }
 

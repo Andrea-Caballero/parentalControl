@@ -24,22 +24,29 @@ serve(async (req) => {
     }
 
     const token = authHeader.replace("Bearer ", "");
-    const payload = JSON.parse(atob(token.split(".")[1]));
-    const parentId = payload.sub;
 
-    if (!parentId) {
-      return new Response(
-        JSON.stringify({ error: "Usuario no autenticado" }),
-        { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
-    }
-
-    const { device_name, age_band = "7-12", ttl_minutes = 10 } = await req.json();
-
+    // Cliente admin (se crea antes para validar el JWT del padre)
     const supabaseAdmin = createClient(
       Deno.env.get("SUPABASE_URL") ?? "",
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? ""
     );
+
+    // Validar el JWT contra la clave publica de Supabase (no decodificar
+    // a mano como antes — Bug #1 de la auditoria de emparejamiento).
+    // auth.getUser() verifica firma, expiracion y revocacion; un token
+    // forjado o expirado devuelve error.
+    const { data: userData, error: userError } = await supabaseAdmin.auth.getUser(token);
+
+    if (userError || !userData?.user) {
+      return new Response(
+        JSON.stringify({ error: "Token invalido o expirado" }),
+        { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
+    const parentId = userData.user.id;
+
+    const { device_name, age_band = "7-12", ttl_minutes = 10 } = await req.json();
 
     // Generar código aleatorio (6 caracteres alfanuméricos)
     const code = generatePairingCode();

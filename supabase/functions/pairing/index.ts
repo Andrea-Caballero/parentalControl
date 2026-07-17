@@ -211,9 +211,17 @@ export async function handleRequest(req: Request): Promise<Response> {
     const templateAgeBand = age_band || pairingRecord.device_name?.split("-")[0] || "7-12";
     await applyPolicyTemplate(supabaseAdmin, device.id, templateAgeBand);
 
-    // 6. (Intentionally no late `update({ status: "CONSUMED" })` here:
-    //    the atomic claim in step 1 is the one and only transition
-    //    to CONSUMED — adding a second UPDATE re-opens the replay race.)
+    // 6. Marcar código como consumido (Bug #2 de la auditoria).
+    // Antes: status quedaba en 'ACTIVE' y solo se setaba used_at, lo que
+    // permitia reusar el mismo codigo antes del TTL. Ahora transiciona a
+    // 'CONSUMED' (valor agregado por migration 009_pairing_status_consumed.sql).
+    await supabaseAdmin
+      .from("pairing_codes")
+      .update({
+        status: "CONSUMED",
+        used_at: new Date().toISOString()
+      })
+      .eq("id", pairingRecord.id);
 
     // 7. Disparar FCM para notificar al padre
     await sendFcmNotification(supabaseAdmin, pairingRecord.parent_id, {
@@ -353,37 +361,64 @@ async function applyPolicyTemplate(
 
 async function sendFcmNotification(
   supabase: ReturnType<typeof createClient>,
-  userId: string,
+  parentId: string,
   payload: Record<string, unknown>
 ): Promise<void> {
-  // TODO: FCM dispatch to parent requires parent device_id (not user_id).
-  // The `device_push_tokens` table is keyed by device_id; the parent user's
-  // device_id needs to be resolved via the parent device's auth context.
-  // For now, skip the notification — the parent sees the pairing result in
-  // their own UI anyway.
-  console.log("Skipping FCM to parent: parent device_id not yet wired in pairing flow");
-  return;
+  // Bug #3 de la auditoria: enviar push al padre cuando su hijo empareja
+  // un dispositivo. device_push_tokens tiene la columna parent_id desde
+  // la migration 008, asi que resolvemos los tokens directamente por el
+  // parent_id del codigo de emparejamiento (no necesitamos el device_id
+  // del padre como decia el TODO original).
+  const { data: tokens, error: tokensError } = await supabase
+    .from("device_push_tokens")
+    .select("token")
+    .eq("parent_id", parentId)
+    .eq("is_active", true);
 
-  // Enviar via FCM
+  if (tokensError) {
+    // No fallamos el pairing si la notificacion falla — el dispositivo ya
+    // quedo emparejado, el padre se entera al abrir la app de todos modos.
+    console.error(`Error fetching push tokens for parent ${parentId}:`, tokensError);
+    return;
+  }
+
+  if (!tokens || tokens.length === 0) {
+    console.log(`No active FCM tokens for parent ${parentId}; skipping notification`);
+    return;
+  }
+
   const fcmUrl = "https://fcm.googleapis.com/fcm/send";
   const serverKey = Deno.env.get("FCM_SERVER_KEY");
 
+  if (!serverKey) {
+    console.warn("FCM_SERVER_KEY not configured; skipping FCM dispatch");
+    return;
+  }
+
+  const fcmBody = {
+    priority: "high",
+    data: {
+      ...payload,
+      sent_at: new Date().toISOString(),
+    },
+  };
+
   for (const { token } of tokens) {
     try {
-      await fetch(fcmUrl, {
+      const response = await fetch(fcmUrl, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           Authorization: `key=${serverKey}`,
         },
-        body: JSON.stringify({
-          to: token,
-          priority: "high",
-          data: payload,
-        }),
+        body: JSON.stringify({ ...fcmBody, to: token }),
       });
+
+      if (!response.ok) {
+        console.error(`FCM send non-OK for token ...${token.slice(-6)}:`, await response.text());
+      }
     } catch (e) {
-      console.error("FCM send error:", e);
+      console.error("FCM send network error:", e);
     }
   }
 }

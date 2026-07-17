@@ -29,6 +29,8 @@ https://fbuiwtzybalatpeakdiw.supabase.co
 { "device_name": "PC-Hijo", "age_band": "7-12", "ttl_minutes": 10 }
 ```
 
+> **`age_band`** (string): uno de `0-6`, `7-12`, `13-17`. Default `7-12` si el padre no lo especifica. Hoy se valida solo contra las plantillas existentes en `policy_templates` (migration `003_policy_templates.sql`); un valor fuera de esos tres devuelve warning en logs y no aplica plantilla. Recomendacion para hardenizar: crear un enum `age_band_enum` o CHECK constraint en una migration nueva (propuesta en el issue paralelo, ver `windows-agent-contract-requirements.md`).
+
 **Response (200):**
 
 ```json
@@ -64,6 +66,8 @@ https://fbuiwtzybalatpeakdiw.supabase.co
 ```
 
 > `child_first_name` es **obligatorio** (1–32 chars, trimmed). El padre lo captura en su UI antes de generar el código y queda persistido en `pairing_codes.child_first_name`. Sin esto el agente recibe 400.
+>
+> `age_band` es **opcional** en el body del agente pero igual de importante: si no se manda, el backend hace fallback al valor guardado en `pairing_codes.device_name?.split("-")[0]` o al default `7-12`. Valores validos: `0-6`, `7-12`, `13-17`. El campo esta como `TEXT` en la DB (sin enum ni CHECK), asi que cualquier string pasa la Edge Function pero la busqueda de plantilla puede no devolver nada.
 
 **Response (200):**
 

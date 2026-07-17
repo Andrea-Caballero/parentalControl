@@ -33,11 +33,19 @@ Emparejamiento - vincula la PC del hijo con la cuenta del padre.
     "device_model": "Dell XPS 15",
     "os_version": "Windows 11 23H2",
     "app_version": "1.0.0",
-    "platform": "WINDOWS_DESKTOP"
+    "platform": "WINDOWS_DESKTOP",
+    "age_band": "7-12",
+    "child_first_name": "Juan"
   }
   ```
 - **Respuesta esperada:** `device_id`, `parent_id`, token de sesion, `policy_version` inicial.
 - **Errores relevantes:** codigo invalido (404), codigo expirado (410).
+
+> **Campos obligatorios:** `code`, `device_name`, `app_version`, `child_first_name`.
+>
+> **`age_band`** (string): uno de `0-6`, `7-12`, `13-17`. Default `7-12` si el padre no lo especifica. Determina que plantilla de politica se aplica al dispositivo recien emparejado (ver `policy_templates` en migration `003_policy_templates.sql`). El backend hoy NO valida este campo contra un enum ni CHECK constraint, asi que cualquier string pasa la Edge Function pero la busqueda de plantilla puede no devolver nada y caer al warning `No template found for age_band`.
+>
+> **`child_first_name`** (string, 1-32 chars, trimmed): requerido por Bug #2 de la auditoria (ya arreglado). El padre lo captura en su UI antes de generar el codigo y queda persistido en `pairing_codes.child_first_name`.
 
 ---
 

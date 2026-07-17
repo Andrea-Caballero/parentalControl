@@ -339,7 +339,9 @@ private fun DashboardScaffold(
                     onLockDevice = { viewModel.lockDevice(it) },
                     onUnlockDevice = { viewModel.unlockDevice(it) },
                     onRetry = { viewModel.loadDevices() },
-                    onClearError = onClearError
+                    onClearError = onClearError,
+                    // Slice B1 — fix-2: threaded through DevicesTab.
+                    onShowPairingSheet = onShowPairingSheet
                 )
                 1 -> RequestsTab(
                     requests = filteredRequests,
@@ -421,7 +423,9 @@ private fun DevicesTab(
     onLockDevice: (String) -> Unit,
     onUnlockDevice: (String) -> Unit,
     onRetry: () -> Unit,
-    onClearError: () -> Unit
+    onClearError: () -> Unit,
+    // Slice B1 — fix-2: threaded from DashboardScaffold for the CTA.
+    onShowPairingSheet: () -> Unit
 ) {
     val scope = androidx.compose.runtime.rememberCoroutineScope()
     when (listState) {
@@ -448,7 +452,20 @@ private fun DevicesTab(
             EmptyState(
                 icon = Icons.Default.Person,
                 title = "Sin dispositivos",
-                subtitle = "Empareja uno o más dispositivos"
+                subtitle = "Empareja uno o más dispositivos",
+                // Slice B1 — fix-2: inline CTA. The pairing sheet
+                // (DeviceComponents.kt:385) hosts the actual
+                // "Generar código" button on its step transition.
+                action = {
+                    Button(
+                        onClick = onShowPairingSheet,
+                        modifier = Modifier.testTag("empty_devices_pairing_cta")
+                    ) {
+                        Icon(Icons.Default.Add, contentDescription = null)
+                        Spacer(Modifier.width(8.dp))
+                        Text("Generar código")
+                    }
+                }
             )
         }
         is DeviceListUiState.Error -> {
@@ -559,7 +576,10 @@ private fun RequestsTab(
 private fun EmptyState(
     icon: ImageVector,
     title: String,
-    subtitle: String
+    subtitle: String,
+    // Slice B1 — fix-2: optional CTA slot. Defaults to null so the
+    // RequestsTab empty branch stays visually identical.
+    action: (@Composable () -> Unit)? = null
 ) {
     Box(
         modifier = Modifier.fillMaxSize(),
@@ -567,7 +587,7 @@ private fun EmptyState(
     ) {
         Column(
             horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(8.dp)
+            verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             Icon(
                 icon,
@@ -584,6 +604,7 @@ private fun EmptyState(
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.outline
             )
+            action?.invoke()
         }
     }
 }

@@ -724,6 +724,13 @@ class DeviceAuthManager private constructor(
                     refreshToken = authResponse.refresh_token
                 )
                 persistParentSession(session)
+                // Slice B1 — fix-1: hydrate the in-memory tokens so the
+                // dashboard's loadDevices() works without a force-stop.
+                // Mirrors `completePairing` (sets _sessionState=PAIRED).
+                _sessionState.value = SessionState.PAIRED
+                currentAccessToken = session.accessToken
+                currentRefreshToken = session.refreshToken
+                sessionExpiresAt = 0
                 Result.success(session)
             } catch (e: Exception) {
                 Log.w(TAG, "devLogin failed: ${e.message}", e)

@@ -49,10 +49,13 @@ fun AppNavHost(
     prefilledPairingCode: String?,
     pendingExtraTimePackage: String?,
     pendingMagicLinkUrl: String? = null,
+    pendingAuthenticatedRoute: Long? = null,
     onPairingComplete: () -> Unit,
     onExtraTimeConsumed: () -> Unit,
     onMagicLinkConsumed: () -> Unit = {},
-    // Slice B1 — forwarded to `MagicLinkSignInScreen` → `restartActivity`.
+    onAuthenticatedRouteConsumed: () -> Unit = {},
+    // Slice B1 — forwarded to MagicLinkSignInScreen; activity wires to a
+    // nav trigger (no more recreate, see MainActivity.pendingAuthenticatedRoute).
     onAuthenticated: () -> Unit = {}
 ) {
     val context = LocalContext.current
@@ -82,6 +85,7 @@ fun AppNavHost(
         prefilledPairingCode = prefilledPairingCode,
         pendingExtraTimePackage = pendingExtraTimePackage,
         pendingMagicLinkUrl = pendingMagicLinkUrl,
+        pendingAuthenticatedRoute = pendingAuthenticatedRoute,
         parentViewModel = hiltViewModel<ParentViewModel>(),
         appsViewModel = hiltViewModel<AppsViewModel>(),
         pairingViewModel = hiltViewModel<PairingViewModel>(),
@@ -93,6 +97,7 @@ fun AppNavHost(
         onPairingComplete = onPairingComplete,
         onExtraTimeConsumed = onExtraTimeConsumed,
         onMagicLinkConsumed = onMagicLinkConsumed,
+        onAuthenticatedRouteConsumed = onAuthenticatedRouteConsumed,
         onAuthenticated = onAuthenticated
     )
 }

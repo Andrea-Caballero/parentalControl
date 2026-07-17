@@ -38,6 +38,10 @@ class MainActivity : ComponentActivity() {
     private val prefilledPairingCode = mutableStateOf<String?>(null)
     private val pendingExtraTimePackage = mutableStateOf<String?>(null)
     private val pendingMagicLinkUrl = mutableStateOf<String?>(null)
+    // Slice B1 — fix-1: nav trigger for the devLogin success path;
+    // NavGraph's LaunchedEffect routes to Dashboard without calling
+    // recreate() (see field kdoc in commit body for the root cause).
+    private val pendingAuthenticatedRoute = mutableStateOf<Long?>(null)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -104,11 +108,13 @@ class MainActivity : ComponentActivity() {
             prefilledPairingCode = prefilledPairingCode.value,
             pendingExtraTimePackage = pendingExtraTimePackage.value,
             pendingMagicLinkUrl = pendingMagicLinkUrl.value,
+            pendingAuthenticatedRoute = pendingAuthenticatedRoute.value,
             onPairingComplete = ::restartActivity,
             onExtraTimeConsumed = { pendingExtraTimePackage.value = null },
             onMagicLinkConsumed = { pendingMagicLinkUrl.value = null },
-            // Slice B1 — shared-mock `devLogin` success → recreate activity → Dashboard.
-            onAuthenticated = ::restartActivity
+            onAuthenticatedRouteConsumed = { pendingAuthenticatedRoute.value = null },
+            // Slice B1 — devLogin success → set nav trigger (replaces `::restartActivity`).
+            onAuthenticated = { pendingAuthenticatedRoute.value = System.currentTimeMillis() }
         )
     }
 }

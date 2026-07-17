@@ -92,7 +92,10 @@ fun NavGraph(
     pendingMagicLinkUrl: String? = null,
     magicLinkVerifier: MagicLinkVerifier? = null,
     onMagicLinkConsumed: () -> Unit = {},
-    // Slice B1 — wired to activity's `restartActivity` after a shared-mock `devLogin`.
+    pendingAuthenticatedRoute: Long? = null,
+    onAuthenticatedRouteConsumed: () -> Unit = {},
+    // Slice B1 — fires after `devLogin` success; activity wires to a
+    // hoisted nav-trigger (see MainActivity.pendingAuthenticatedRoute).
     onAuthenticated: () -> Unit = {}
 ) {
     // `remember(key)` resets the route when the pending deeplink arrives.
@@ -129,6 +132,16 @@ fun NavGraph(
                 NavRoute.MagicLinkSignIn
             }
             onMagicLinkConsumed()
+        }
+    }
+
+    // Slice B1 — fix-1: navigate to Dashboard on devLogin success
+    // without recreate() (see MainActivity field kdoc + commit body).
+    // Mirrors the pendingMagicLinkUrl pattern above.
+    LaunchedEffect(pendingAuthenticatedRoute) {
+        if (pendingAuthenticatedRoute != null) {
+            route = NavRoute.Dashboard
+            onAuthenticatedRouteConsumed()
         }
     }
 

@@ -37,6 +37,10 @@ def _reset_devices() -> None:
     with _server._lock:
         _server._devices.clear()
         _server._time_requests.clear()
+        # Parent-fix: clear the new side-effect queue so a stale event
+        # from a prior test doesn't leak into the next one's assertions.
+        if hasattr(_server, "_request_events"):
+            _server._request_events.clear()
 
 
 def _capture_handler(
@@ -382,6 +386,102 @@ class SetDeviceStateTest(unittest.TestCase):
             {"device_id": "dev-existing", "state": "DELETED"})
         self.assertEqual(status, 422)
         self.assertIn("LOCKED", body["error"])
+
+
+class RequestCreatedSideEffectTest(unittest.TestCase):
+    """Parent-fix — POST /rest/v1/time_requests must trigger a
+    non-blocking side effect that pushes a `request_created` event onto
+    the parent's realtime stream, so the parent sees the request in
+    seconds instead of waiting up to 5 min for `SolicitudesPollingWorker`.
+    The shared mock mirrors that by spawning a daemon thread that logs
+    the event and appends it to `_request_events` — an in-process queue
+    this test pokes."""
+
+    def setUp(self) -> None:
+        with _server._lock:
+            _server._devices.clear()
+            _server._time_requests.clear()
+            _server._request_events.clear()
+        with _server._lock:
+            _server._devices.append({
+                "id": "dev-A",
+                "device_name": "Tablet A",
+                "device_state": "ACTIVE",
+                "policy_version": 1,
+                "last_seen_at": "2026-07-21T00:00:00Z",
+                "parent_id": _server.PARENT_ID,
+            })
+
+    def _wait_for(self, request_id, timeout=1.0):
+        """Poll `_server._request_events` until the matching event lands
+        or `timeout` expires. The POST handler fires a daemon thread to
+        append the event — we wait for that thread without starting the
+        HTTP server (per the no-real-socket constraint)."""
+        import time
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            with _server._lock:
+                events = list(_server._request_events.get(_server.PARENT_ID, []))
+            if any(e["request_id"] == request_id for e in events):
+                return events
+            time.sleep(0.01)
+        return events  # last snapshot for the assertion error message
+
+    def test_post_time_requests_enqueues_request_created_event(self):
+        """POST /rest/v1/time_requests must emit a non-blocking
+        `request_created` event keyed by parent_id and carrying the new
+        `request_id`, so a parent subscribed to the realtime channel sees
+        the request within seconds."""
+        status_code, rows = _capture_handler(
+            _server.handle_post_time_requests,
+            method="POST",
+            path="/rest/v1/time_requests",
+            body={"device_id": "dev-A", "minutes_requested": 15, "reason": "homework"},
+        )
+        self.assertEqual(status_code, 201)
+        request_id = rows[0]["id"]
+
+        events = self._wait_for(request_id)
+        self.assertTrue(
+            any(e["request_id"] == request_id for e in events),
+            f"request_created side-effect for {request_id} never landed "
+            f"in _request_events within 1s; events={events!r}",
+        )
+        matched = next(e for e in events if e["request_id"] == request_id)
+        self.assertEqual(matched["event"], "request_created")
+        self.assertEqual(matched["parent_id"], _server.PARENT_ID)
+
+    def test_post_time_requests_response_is_not_delayed_by_side_effect(self):
+        """The POST /rest/v1/time_requests response must come back
+        WITHOUT waiting on the daemon thread — otherwise a slow channel
+        would block the child's optimistic UI. Verify by capturing the
+        latency between the handler returning and the queue being
+        populated; we accept anything up to 50ms (the thread spawn
+        itself must not be in the request path)."""
+        import time
+        with _server._lock:
+            _server._request_events.clear()
+        t0 = time.monotonic()
+        status_code, rows = _capture_handler(
+            _server.handle_post_time_requests,
+            method="POST",
+            path="/rest/v1/time_requests",
+            body={"device_id": "dev-A", "minutes_requested": 5, "reason": "snack"},
+        )
+        elapsed_ms = (time.monotonic() - t0) * 1000.0
+        self.assertEqual(status_code, 201)
+        self.assertLess(
+            elapsed_ms, 50.0,
+            f"handler took {elapsed_ms:.1f}ms — side-effect appears to "
+            f"be running on the request path instead of a daemon thread",
+        )
+        # And the thread still lands eventually.
+        request_id = rows[0]["id"]
+        events = self._wait_for(request_id)
+        self.assertTrue(
+            any(e["request_id"] == request_id for e in events),
+            f"daemon thread should still have appended {request_id}",
+        )
 
 
 class GetPolicyTest(unittest.TestCase):

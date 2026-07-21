@@ -95,6 +95,10 @@ class RealtimeViewModel @Inject constructor(
                             RequestChangeEvent.Type.APPROVED -> UiRefreshEvent.RequestChanged.ChangeType.APPROVED
                             RequestChangeEvent.Type.DENIED -> UiRefreshEvent.RequestChanged.ChangeType.DENIED
                             RequestChangeEvent.Type.UPDATED -> UiRefreshEvent.RequestChanged.ChangeType.UPDATED
+                            // Parent-fix — propagate the new
+                            // `request_created` push so the dashboard can
+                            // surface the Solicitudes chip within seconds.
+                            RequestChangeEvent.Type.CREATED -> UiRefreshEvent.RequestChanged.ChangeType.CREATED
                         },
                         requestId = event.requestId
                     )
@@ -183,7 +187,13 @@ sealed class UiRefreshEvent {
         enum class ChangeType {
             APPROVED,
             DENIED,
-            UPDATED
+            UPDATED,
+            // Parent-fix — propagated from `RequestChangeEvent.Type.CREATED`
+            // when a child posts `/rest/v1/time_requests`. The dashboard
+            // renders this as the "Solicitud nueva" chip so the parent
+            // reacts within seconds instead of waiting on the polling
+            // worker.
+            CREATED
         }
     }
 

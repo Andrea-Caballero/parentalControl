@@ -65,6 +65,14 @@ _devices: list[dict] = []
 # Pending time requests from children (the "Pedir tiempo" flow).
 _time_requests: list[dict] = []
 
+# Parent-fix — realtime side-effect queue (mock-only). After a child POSTs
+# `/rest/v1/time_requests`, a daemon thread appends a `request_created`
+# entry here so the parent's realtime channel can replay it within
+# seconds. Keyed by parent_id so a future multi-parent mock extension
+# stays isolated. Tests poke this queue directly without starting the
+# HTTP server (see `test_projections.RequestCreatedSideEffectTest`).
+_request_events: dict[str, list[dict]] = {}
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -73,6 +81,31 @@ _time_requests: list[dict] = []
 
 def _now_iso() -> str:
     return _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _fanout_request_created(parent_id: str, request_id: str) -> None:
+    """Parent-fix — fire-and-forget side effect that mirrors what
+    production Supabase Realtime would push on the
+    `device:{deviceId}:requests` channel when a new time request lands.
+    Runs on a daemon thread so the POST handler's response is NOT
+    delayed by the simulated push (test asserts this in
+    `RequestCreatedSideEffectTest.test_post_time_requests_response_is_not_delayed_by_side_effect`).
+
+    The log line is the production-shape observability surface; the
+    in-process queue is a test-only seam that lives only on the mock.
+    """
+    def _emit() -> None:
+        print(
+            f"[realtime] request_created parent_id={parent_id} "
+            f"request_id={request_id}",
+            flush=True,
+        )
+        with _lock:
+            _request_events.setdefault(parent_id, []).append(
+                {"event": "request_created", "parent_id": parent_id, "request_id": request_id}
+            )
+
+    threading.Thread(target=_emit, daemon=True).start()
 
 
 def _generate_code(length: int = 8) -> str:
@@ -485,7 +518,13 @@ def handle_post_time_requests(
     """`POST /rest/v1/time_requests` — child asks for more time. Echoes the
     inserted row back. Field name `minutes_requested` matches the production
     Postgres schema (`supabase/migrations/001_initial_schema.sql`) and the
-    client DTO in `ParentRepository.TimeRequestDto`."""
+    client DTO in `ParentRepository.TimeRequestDto`.
+
+    Parent-fix — after appending the row, fan out a non-blocking
+    `request_created` event so the parent sees the request within seconds
+    (was: up to 5 min via `SolicitudesPollingWorker`). The fan-out runs
+    on a daemon thread so the child's optimistic POST response is not
+    delayed; see `_fanout_request_created`."""
     row = {
         "id": "req-" + secrets.token_hex(4),
         "device_id": body.get("device_id") or "unknown",
@@ -493,9 +532,17 @@ def handle_post_time_requests(
         "reason": body.get("reason"),
         "status": "PENDING",
         "created_at": _now_iso(),
+        "parent_id": PARENT_ID,
     }
     with _lock:
         _time_requests.append(row)
+    # Resolve the parent for the realtime side-effect. Single-parent
+    # mock keeps it constant, but we derive from the device row when
+    # available so a future multi-parent mock stays self-consistent.
+    with _lock:
+        device = next((d for d in _devices if d["id"] == row["device_id"]), None)
+        parent_id = device["parent_id"] if device else PARENT_ID
+    _fanout_request_created(parent_id, row["id"])
     _send_json(handler, HTTPStatus.CREATED, [row])
 
 

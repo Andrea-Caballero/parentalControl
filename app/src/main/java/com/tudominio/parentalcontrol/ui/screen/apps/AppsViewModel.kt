@@ -75,6 +75,16 @@ class AppsViewModel @Inject constructor(
      * exposes them as [AppInfo] (package name + display label + icon). Uses
      * [Intent.ACTION_MAIN] + `CATEGORY_LAUNCHER` per the `app-block-policy`
      * spec scenario "Lists every launchable package".
+     *
+     * **OPPO dual-SIM dedup (WU-3):** OPPO devices ship `com.android.stk`
+     * with TWO launcher activities (one per SIM slot). The naive
+     * `map { it.activityInfo.packageName }` produced two AppInfo rows
+     * with identical `packageName`, breaking the parent Compose
+     * `LazyColumn`'s `key = { it.packageName }` with
+     * `IllegalArgumentException: Key "com.android.stk" was already used`.
+     * `distinctBy { activityInfo.packageName }` collapses them to one row;
+     * `sortedBy { it.activityInfo.packageName }` keeps the row order
+     * stable across recompositions.
      */
     fun loadInstalledApps() {
         viewModelScope.launch(Dispatchers.IO) {
@@ -83,13 +93,16 @@ class AppsViewModel @Inject constructor(
                 val pm = context.packageManager
                 val intent = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
                 val resolved = pm.queryIntentActivities(intent, 0)
-                _apps.value = resolved.map { ri ->
-                    AppInfo(
-                        packageName = ri.activityInfo.packageName,
-                        displayName = ri.loadLabel(pm).toString(),
-                        icon = null
-                    )
-                }
+                _apps.value = resolved
+                    .distinctBy { it.activityInfo.packageName }
+                    .sortedBy { it.activityInfo.packageName }
+                    .map { ri ->
+                        AppInfo(
+                            packageName = ri.activityInfo.packageName,
+                            displayName = ri.loadLabel(pm).toString(),
+                            icon = null
+                        )
+                    }
             } finally {
                 _isLoading.value = false
             }

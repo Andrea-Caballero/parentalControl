@@ -47,6 +47,18 @@ class DeviceAuthManagerRoleTest {
         prefs.edit().clear().commit()
         prefs.edit().remove("role").commit()
         prefs.edit().clear().commit()
+        // Reset the [DeviceAuthManager] singleton so each test sees a
+        // true cold start. Without this, a previous test's manager
+        // (with stale in-memory state + init-already-ran) is reused
+        // and `loadPersistedState` never re-runs against the current
+        // prefs, defeating the migration regression tests.
+        resetManagerInstance()
+    }
+
+    private fun resetManagerInstance() {
+        val field = DeviceAuthManager::class.java.getDeclaredField("instance")
+        field.isAccessible = true
+        field.set(null, null)
     }
 
     private fun newManager(): DeviceAuthManager =
@@ -121,6 +133,83 @@ class DeviceAuthManagerRoleTest {
         manager.authenticateOrCreate(Role.PARENT)
         assertEquals(
             "Re-auth must overwrite the persisted role",
+            Role.PARENT,
+            manager.getRole()
+        )
+    }
+
+    // Slice B1 — child-pairing persistence regression tests.
+    //
+    // The previous implementation of `savePairedSession` and
+    // `completePairing` wrote `is_paired=true` + `device_id` +
+    // `parent_id` but NOT `role`. After process restart,
+    // `DeviceAuthManager.getRole()` returned null for real paired
+    // children, so the role-based routing discriminator
+    // (`resolveIsChildDevice`) would route them to Dashboard. These
+    // tests pin the contract: child pairing MUST persist role=CHILD
+    // atomically with the session so cold-start routing is correct.
+
+    @Test
+    fun `savePairedSession persists role CHILD atomically with the paired session`() = runTest {
+        val manager = newManager()
+
+        manager.savePairedSession(
+            deviceId = "12345678-1234-1234-1234-123456789001",
+            parentId = "12345678-1234-1234-1234-123456789002"
+        )
+
+        assertEquals(
+            "savePairedSession must persist Role.CHILD so cold-start " +
+                "routing hits resolveIsChildDevice=true",
+            Role.CHILD,
+            manager.getRole()
+        )
+    }
+
+    @Test
+    fun `loadPersistedState migrates isPaired without role to CHILD`() = runTest {
+        // Pre-fix child install: is_paired=true, parent_id=<uuid>,
+        // role=missing. loadPersistedState must write role=CHILD so
+        // the next getRole() returns CHILD. The migration is safe
+        // because in the current codebase is_paired=true is only
+        // written by savePairedSession / completePairing (the child
+        // pairing paths); parent devices go through devLogin /
+        // magic-link which never set is_paired=true.
+        val prefs = context.getSharedPreferences("device_auth_prefs", Context.MODE_PRIVATE)
+        prefs.edit()
+            .clear()
+            .putBoolean("is_paired", true)
+            .putString("device_id", "12345678-1234-1234-1234-123456789001")
+            .putString("parent_id", "12345678-1234-1234-1234-123456789002")
+            .commit()
+
+        val manager = newManager()
+
+        assertEquals(
+            "Pre-fix child install (is_paired=true, no role) must be " +
+                "migrated to Role.CHILD by loadPersistedState",
+            Role.CHILD,
+            manager.getRole()
+        )
+    }
+
+    @Test
+    fun `loadPersistedState does NOT overwrite existing PARENT role`() = runTest {
+        // OPPO parent: role=PARENT, parent_id=<uuid>, NO is_paired.
+        // The migration heuristic must NOT touch this — PARENT is
+        // authoritative.
+        val prefs = context.getSharedPreferences("device_auth_prefs", Context.MODE_PRIVATE)
+        prefs.edit()
+            .clear()
+            .putString("role", Role.PARENT.name)
+            .putString("parent_id", "12345678-1234-1234-1234-123456789002")
+            .commit()
+
+        val manager = newManager()
+
+        assertEquals(
+            "An existing PARENT role must never be overwritten by the " +
+                "child-install migration heuristic",
             Role.PARENT,
             manager.getRole()
         )

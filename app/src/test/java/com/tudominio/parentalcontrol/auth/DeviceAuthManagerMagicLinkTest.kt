@@ -322,7 +322,9 @@ class DeviceAuthManagerMagicLinkTest {
             prefs().getString("parent_id", null)
         )
         assertTrue(
-            "verifyMagicLinkOtp must persist encrypted_parent_session=<blob> to device_auth_prefs (W1 closure). Keys: ${prefs().all.keys}",
+            "verifyMagicLinkOtp must persist encrypted_parent_session " +
+                "to device_auth_prefs (W1 closure). Keys: " +
+                "${prefs().all.keys}",
             prefs().contains("encrypted_parent_session")
         )
         assertNull(
@@ -353,28 +355,37 @@ class DeviceAuthManagerMagicLinkTest {
      */
     @Test
     fun cleanCutover_staleParentIdWiped() = runBlocking {
-        // Pre-cloud legacy state.
-        prefs().edit()
-            .putString("role", "PARENT")
-            .putString("parent_id", "parent-demo")
-            .putString("synthetic_access_token", "anon-PARENT-pre-cloud-uuid")
-            .commit()
+        // Pre-cloud legacy state. F1 narrows the OPPO PARENT synthetic
+        // bypass to debug/mock/shared builds only; this test pins the
+        // release-like wipe path so the legacy migration contract is
+        // not regressed. We force the seam to release-like so the
+        // wipe fires even in the JVM unit-test debug build.
+        DeviceAuthManager.testIsMockOrSharedMockBuild = false
+        try {
+            prefs().edit()
+                .putString("role", "PARENT")
+                .putString("parent_id", "parent-demo")
+                .putString("synthetic_access_token", "anon-PARENT-pre-cloud-uuid")
+                .commit()
 
-        // Cold start: build a fresh manager whose init { loadPersistedState }
-        // must wipe the stale `parent-demo` key.
-        val coldStart = freshManager()
+            // Cold start: build a fresh manager whose init { loadPersistedState }
+            // must wipe the stale `parent-demo` key.
+            val coldStart = freshManager()
 
-        assertNull(
-            "Clean-cutover (Q2=b) MUST wipe legacy parent_id=\"parent-demo\" on " +
-                "cold start. Today loadPersistedState calls migrateStaleParentId " +
-                "which re-writes \"parent-demo\" from MOCK_PARENT_ID (PR #28). " +
-                "Keys present after cold start: ${prefs().all.keys}",
-            prefs().getString("parent_id", null)
-        )
-        assertNull(
-            "getParentId() must return null after clean-cutover wipe",
-            coldStart.getParentId()
-        )
+            assertNull(
+                "Clean-cutover (Q2=b) MUST wipe legacy parent_id=\"parent-demo\" on " +
+                    "cold start. Today loadPersistedState calls migrateStaleParentId " +
+                    "which re-writes \"parent-demo\" from MOCK_PARENT_ID (PR #28). " +
+                    "Keys present after cold start: ${prefs().all.keys}",
+                prefs().getString("parent_id", null)
+            )
+            assertNull(
+                "getParentId() must return null after clean-cutover wipe",
+                coldStart.getParentId()
+            )
+        } finally {
+            DeviceAuthManager.testIsMockOrSharedMockBuild = null
+        }
     }
 
     /**

@@ -332,4 +332,75 @@ class DeviceAuthManagerAuthenticatePersistTest {
             coldStart.getAccessToken()
         )
     }
+
+    /**
+     * F1 RED→GREEN — release-like invalid PARENT install. The OPPO
+     * PARENT synthetic bypass is NARROWED to debug/mock/shared builds
+     * (`USE_MOCK_SUPABASE || USE_SHARED_MOCK`). In a release build
+     * the clean-cutover wipe still fires so a stale `parent-demo`
+     * sentinel cannot leak into a real cloud session.
+     *
+     * The `DeviceAuthManager.testForceReleaseLikeBuild` companion
+     * seam lets us pin the release-like branch without mutating
+     * BuildConfig finals (JDK 17+ removed `Field.modifiers`
+     * reflection tricks — see loadPersistedState kdoc).
+     */
+    @Test
+    fun `cold start with PARENT synthetic in release-like build must still wipe`() = runTest {
+        try {
+            // Force the build-mode gate to release-like (wipe fires
+            // even with a synthetic token present at role=PARENT).
+            DeviceAuthManager.testIsMockOrSharedMockBuild = false
+
+            context.getSharedPreferences("device_auth_prefs", Context.MODE_PRIVATE)
+                .edit()
+                .putString("role", Role.PARENT.name)
+                .putString("parent_id", "parent-demo")
+                .putString("synthetic_access_token", "anon-PARENT-release-flag")
+                .commit()
+
+            newManager()
+
+            val prefs = context.getSharedPreferences("device_auth_prefs", Context.MODE_PRIVATE)
+            assertNull(
+                "Release-like build (USE_MOCK_SUPABASE=false, " +
+                    "USE_SHARED_MOCK=false) with role=PARENT + " +
+                    "synthetic_access_token + parent_id=parent-demo MUST " +
+                    "still wipe — OPPO PARENT bypass must be debug-only.",
+                prefs.getString("parent_id", null)
+            )
+        } finally {
+            DeviceAuthManager.testIsMockOrSharedMockBuild = null
+        }
+    }
+
+    /**
+     * F1 RED→GREEN — debug/MockSupabaseEngine build: PARENT synthetic
+     * + parent_id=parent-demo + role=PARENT + synthetic_access_token
+     * preserves the synthetic session across cold start (OPPO bug
+     * analog for PARENT).
+     */
+    @Test
+    fun `cold start with PARENT synthetic in debug build preserves the synthetic token`() = runTest {
+        // The default JVM BuildConfig has `USE_MOCK_SUPABASE=true`,
+        // the same shape as the OPPO PARENT debug/mock scenario
+        // the OPPO task fix targets.
+        val token = "anon-PARENT-restore-target-uuid"
+        context.getSharedPreferences("device_auth_prefs", Context.MODE_PRIVATE)
+            .edit()
+            .putString("role", Role.PARENT.name)
+            .putString("parent_id", "parent-demo")
+            .putString("synthetic_access_token", token)
+            .commit()
+
+        val coldStart = newManager()
+
+        assertEquals(
+            "Debug build (USE_MOCK_SUPABASE=true) with role=PARENT + " +
+                "synthetic_access_token + parent_id=parent-demo MUST " +
+                "preserve the synthetic token — OPPO PARENT analog fix.",
+            token,
+            coldStart.getAccessToken()
+        )
+    }
 }

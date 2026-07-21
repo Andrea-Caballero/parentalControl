@@ -38,7 +38,16 @@ class PairingViewModel @Inject constructor(
     val manualCode: StateFlow<String> = _manualCode.asStateFlow()
 
     // Eventos de navegación
-    private val _navigationEvents = MutableSharedFlow<PairingNavigationEvent>()
+    // extraBufferCapacity so a `suspend fun emit` from a non-coroutine
+    // caller (e.g. test triggering confirmAdminDecisionAndNavigate
+    // synchronously before a collector has subscribed) does not block
+    // indefinitely. `replay = 0` keeps the existing contract: the
+    // event is delivered to live collectors only.
+    private val _navigationEvents = MutableSharedFlow<PairingNavigationEvent>(
+        replay = 0,
+        extraBufferCapacity = 4,
+        onBufferOverflow = kotlinx.coroutines.channels.BufferOverflow.DROP_OLDEST
+    )
     val navigationEvents: SharedFlow<PairingNavigationEvent> = _navigationEvents.asSharedFlow()
 
     // QR escaneado recientemente (para evitar procesamiento duplicado)
@@ -86,14 +95,48 @@ class PairingViewModel @Inject constructor(
         
         lastScannedCode = content
         lastScanTime = currentTime
-        
+
         Log.d(TAG, "Procesando QR: ${content.take(20)}...")
         _uiState.value = PairingUiState.Pairing
-        
+
         viewModelScope.launch {
             val result = pairingManager.pairWithQr(content)
             handlePairingResult(result)
         }
+    }
+
+    private val applicationScope = kotlinx.coroutines.CoroutineScope(
+        kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.Main.immediate
+    )
+
+    /**
+     * WU-D — confirms the Device Admin decision and navigates home.
+     * The PairingScreen.SuccessContent calls this once the user
+     * activates admin OR chooses "Más tarde". Pre-fix, this
+     * navigation fired synchronously from `handlePairingResult`
+     * before the Device Admin prompt could mount.
+     *
+     * `suspend` so the caller awaits the emission without leaking
+     * a fire-and-forget job into a global scope. The SharedFlow
+     * has `replay = 0`, so the event is delivered exactly once to a
+     * live collector (PairingScreen.LaunchedEffect).
+     */
+    suspend fun confirmAdminDecisionAndNavigate() {
+        _navigationEvents.emit(PairingNavigationEvent.NavigateToHome)
+    }
+
+    /**
+     * Test seam — injects a Success result without going through
+     * the full QR / manual-code path. Synchronous so unit tests can
+     * observe the post-handlePairingResult state without scheduling
+     * into viewModelScope (which uses Dispatchers.Main, not the
+     * test's StandardTestDispatcher).
+     */
+    internal fun simulateSuccess(deviceId: String) {
+        // Skip the WorkerInitializer IO side-effect in tests; the
+        // production flow runs that side-effect via the real
+        // handlePairingResult -> pairWithManualCode path.
+        _uiState.value = PairingUiState.Success(deviceId)
     }
 
     /**
@@ -133,7 +176,11 @@ class PairingViewModel @Inject constructor(
                     WorkerInitializer.reinitializeAfterPairing(context)
                 }
                 _uiState.value = PairingUiState.Success(result.deviceId)
-                _navigationEvents.emit(PairingNavigationEvent.NavigateToHome)
+                // WU-D — DO NOT auto-emit NavigateToHome. The Device
+                // Admin prompt in PairingScreen.SuccessContent gates
+                // the navigation; SuccessContent calls
+                // [confirmAdminDecisionAndNavigate] once the user
+                // activates admin or chooses "Más tarde".
             }
             
             is PairingResult.Error -> {

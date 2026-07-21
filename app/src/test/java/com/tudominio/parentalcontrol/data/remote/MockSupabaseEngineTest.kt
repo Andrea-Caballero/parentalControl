@@ -3,6 +3,7 @@ package com.tudominio.parentalcontrol.data.remote
 import androidx.test.core.app.ApplicationProvider
 import io.ktor.client.call.body
 import io.ktor.client.request.get
+import io.ktor.client.request.header
 import io.ktor.client.request.post
 import io.ktor.client.request.setBody
 import io.ktor.client.statement.bodyAsText
@@ -499,11 +500,18 @@ class MockSupabaseEngineTest {
             "child-lucas",
             dev001.child!!.id
         )
+        // Wire field is snake_case `first_name`; the camelCase domain
+        // getter is preserved via `hydratedChild`.
         assertEquals(
             "dev-001.child.firstName must be Lucas (not the UID-style " +
                 "anonymous entry that ships today)",
             "Lucas",
-            dev001.child!!.firstName
+            dev001.child!!.first_name
+        )
+        assertEquals(
+            "hydratedChild.firstName must surface the camelCase Child shape",
+            "Lucas",
+            dev001.hydratedChild!!.firstName
         )
     }
 
@@ -550,7 +558,121 @@ class MockSupabaseEngineTest {
         assertEquals(
             "dev-003.child.firstName must be Sofía with the accent preserved",
             "Sofía",
-            dev003.child!!.firstName
+            dev003.child!!.first_name
         )
+    }
+
+    /**
+     * `POST /rest/v1/time_requests` is a plain INSERT with
+     * `Prefer: return=representation` (no `select=` embed). Mock
+     * must echo 201 + a bare inserted-row list — no nested `devices`,
+     * no flat `device_name` (the `time_requests` table has no such
+     * column). The companion regression test pins the GET path still
+     * carries the embedded `devices.device_name` projection.
+     */
+    @Test
+    fun `time_requests POST returns 201 with bare inserted row and no devices relation`() = runTest {
+        val body = engine.httpClient.post("/rest/v1/time_requests") {
+            contentType(ContentType.Application.Json)
+            setBody("{\"device_id\":\"dev-001\",\"minutes_requested\":15,\"reason\":\"x\"}")
+        }.let { assertEquals(201, it.status.value); it.bodyAsText() }
+        assertFalse("must NOT include nested `devices`, got: $body", body.contains("\"devices\":"))
+        assertFalse("must NOT include flat `device_name`, got: $body", body.contains("\"device_name\":"))
+        val parsed = kotlinx.serialization.json.Json.parseToJsonElement(body)
+        val obj = (parsed as kotlinx.serialization.json.JsonArray)
+            .first() as kotlinx.serialization.json.JsonObject
+        assertEquals(kotlinx.serialization.json.JsonPrimitive(15), obj["minutes_requested"]!!)
+        assertEquals(kotlinx.serialization.json.JsonPrimitive("PENDING"), obj["status"]!!)
+    }
+
+    @Test
+    fun `time_requests GET still returns nested devices relation`() = runTest {
+        val body = engine.httpClient.get(
+            "/rest/v1/time_requests?select=*,devices(device_name)&status=eq.PENDING"
+        ).let { assertTrue(it.status.value in 200..299); it.bodyAsText() }
+        assertTrue("must include nested `devices`, got: $body", body.contains("\"devices\":"))
+    }
+
+    /**
+     * WU-2 — MockSupabaseEngine `set-device-state` route must echo
+     * 200 + Supabase-auth-shape single-object envelope on a valid
+     * lock request, mutate the in-memory devicesState mirror, and
+     * preserve the policy_version increment contract. Mirrors the
+     * shared-mock + production edge-function shape.
+     */
+    @Test
+    fun `set-device-state lock returns 200 with bumped policy_version and updated mirror`() = runTest {
+        val baseline = engine.currentDevices()
+        val target = baseline.first()
+        val baselinePolicy = target.policy_version
+
+        val response = engine.httpClient.post("/functions/v1/set-device-state") {
+            contentType(ContentType.Application.Json)
+            header("Authorization", "Bearer test-jwt")
+            setBody("""{"device_id":"${target.id}","state":"LOCKED"}""")
+        }
+        assertEquals(
+            "set-device-state must return 2xx on a valid request, got: " +
+                response.status,
+            200,
+            response.status.value
+        )
+        val body = response.bodyAsText()
+        assertTrue(
+            "body must carry success=true, got: $body",
+            body.contains("\"success\":true")
+        )
+        assertTrue(
+            "body must carry state=LOCKED, got: $body",
+            body.contains("\"state\":\"LOCKED\"")
+        )
+        assertTrue(
+            "body must carry device_id=<id>, got: $body",
+            body.contains("\"device_id\":\"${target.id}\"")
+        )
+        assertTrue(
+            "policy_version must increment, got: $body",
+            body.contains("\"policy_version\":${baselinePolicy + 1}")
+        )
+
+        // The in-memory mirror must reflect the new state. We can
+        // re-read the engine's currently-held devices list to verify
+        // the side-effect.
+        val after = engine.currentDevices().first { it.id == target.id }
+        assertEquals(
+            "In-memory mirror must reflect LOCKED, got: ${after.device_state}",
+            "LOCKED",
+            after.device_state
+        )
+        assertEquals(
+            "policy_version must increment by 1, got: ${after.policy_version}",
+            baselinePolicy + 1,
+            after.policy_version
+        )
+    }
+
+    /**
+     * WU-2 — set-device-state must reject missing token (401) and
+     * invalid state (422). Regression guard so the mock-engine
+     * gateway matches the production edge-function contract and the
+     * ParentRepository contract tests stay honest.
+     */
+    @Test
+    fun `set-device-state missing auth header returns 401`() = runTest {
+        val response = engine.httpClient.post("/functions/v1/set-device-state") {
+            contentType(ContentType.Application.Json)
+            setBody("""{"device_id":"dev-001","state":"LOCKED"}""")
+        }
+        assertEquals(401, response.status.value)
+    }
+
+    @Test
+    fun `set-device-state invalid state returns 422`() = runTest {
+        val response = engine.httpClient.post("/functions/v1/set-device-state") {
+            contentType(ContentType.Application.Json)
+            header("Authorization", "Bearer test-jwt")
+            setBody("""{"device_id":"dev-001","state":"BOGUS"}""")
+        }
+        assertEquals(422, response.status.value)
     }
 }

@@ -39,60 +39,78 @@ fun DeviceDetailScreen(
     var selectedTab by remember { mutableIntStateOf(0) }
     var showTemplateDialog by remember { mutableStateOf(false) }
 
-    // Cargar templates
+    // WU-4 — refresh the device list while the detail is visible so
+    // a parent tapping "lock" sees the new state when they navigate back.
     LaunchedEffect(Unit) {
         viewModel.loadTemplates()
+        viewModel.loadDevices()
     }
 
-    // Datos mock
-    val device = remember {
-        ChildDevice(
-            id = deviceId,
-            name = "Galaxy S21 de Juan",
-            model = "SM-G991B",
-            appVersion = "1.0.0",
-            policyVersion = 5,
-            state = DeviceState.ACTIVE,
-            lastSeenAt = "2026-06-04T12:00:00Z",
-            isOnline = true
-        )
-    }
+    // F3 — flip `hasLoadedDevices` to true on the first emission where
+    // `isLoading` is false (one-shot). Pre-fix the screen relied on
+    // `isLoading` alone, which reverts to false after load — could not
+    // distinguish "load still in flight" from "load returned empty
+    // list". The cold empty cache stays in LOADING; only a CONFIRMED
+    // empty list after a successful load surfaces NOT-FOUND.
+    var hasLoadedDevices by remember { mutableStateOf(false) }
+    LaunchedEffect(isLoading) { if (!isLoading) hasLoadedDevices = true }
 
-    val usageStats = remember {
-        listOf(
-            UsageStats(deviceId, "com.instagram.android", "Instagram", "2026-06-04", 45, 60, 15),
-            UsageStats(deviceId, "com.whatsapp", "WhatsApp", "2026-06-04", 30, null, null),
-            UsageStats(deviceId, "com.example.game", "Juego XYZ", "2026-06-04", 20, 30, 10)
-        )
-    }
-
-    val health = remember {
-        DeviceHealth(
-            enforcementLevel = "STANDARD",
-            suspicionLevel = "NONE",
-            lastHeartbeat = "2026-06-04T12:00:00Z",
-            batteryLevel = 85,
-            isCharging = false
-        )
-    }
+    // WU-4 — real device lookup via `viewModel.devices`. Pre-fix the
+    // screen hardcoded a fake "Galaxy S21 de Juan" record and ignored
+    // `viewModel.devices` entirely.
+    val device: ChildDevice? = resolveSelectedDevice(devices, deviceId)
 
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text(device.name) },
+                title = { Text(device?.name ?: "Sin dispositivo") },
                 navigationIcon = {
                     IconButton(onClick = onNavigateBack) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, "Volver")
                     }
                 },
                 actions = {
-                    IconButton(onClick = { viewModel.lockDevice(deviceId) }) {
+                    IconButton(
+                        onClick = { device?.id?.let(viewModel::lockDevice) },
+                        enabled = device != null
+                    ) {
                         Icon(Icons.Default.Lock, "Bloquear")
                     }
                 }
             )
         }
     ) { padding ->
+        when (resolveDetailLoadState(devices, isLoading, hasLoadedDevices, deviceId)) {
+            DetailLoadState.Loading -> {
+                Column(
+                    modifier = Modifier.fillMaxSize().padding(padding),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.Center
+                ) { CircularProgressIndicator() }
+                return@Scaffold
+            }
+            DetailLoadState.NotFound -> {
+                Column(
+                    modifier = Modifier.fillMaxSize().padding(padding).padding(16.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Spacer(Modifier.height(32.dp))
+                    Icon(Icons.Default.Info, null, modifier = Modifier.size(48.dp),
+                        tint = MaterialTheme.colorScheme.outline)
+                    Text("Dispositivo no encontrado", style = MaterialTheme.typography.titleMedium)
+                    Text(
+                        "El dispositivo \"$deviceId\" no está en la lista del padre. " +
+                            "Vuelve al panel y vuelve a intentarlo.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.outline,
+                    )
+                }
+                return@Scaffold
+            }
+            DetailLoadState.Found -> Unit
+        }
+
         Column(
             modifier = Modifier
                 .fillMaxSize()
@@ -104,7 +122,7 @@ fun DeviceDetailScreen(
                     .fillMaxWidth()
                     .padding(16.dp),
                 colors = CardDefaults.cardColors(
-                    containerColor = when (device.state) {
+                    containerColor = when (device!!.state) {
                         DeviceState.LOCKED -> MaterialTheme.colorScheme.errorContainer
                         DeviceState.DOWNTIME -> MaterialTheme.colorScheme.tertiaryContainer
                         DeviceState.ACTIVE -> MaterialTheme.colorScheme.primaryContainer
@@ -123,7 +141,7 @@ fun DeviceDetailScreen(
                         horizontalArrangement = Arrangement.spacedBy(12.dp)
                     ) {
                         Icon(
-                            when (device.state) {
+                            when (device!!.state) {
                                 DeviceState.LOCKED -> Icons.Default.Lock
                                 DeviceState.DOWNTIME -> Icons.Default.Star
                                 DeviceState.ACTIVE -> Icons.Default.Check
@@ -133,7 +151,7 @@ fun DeviceDetailScreen(
                         )
                         Column {
                             Text(
-                                when (device.state) {
+                                when (device!!.state) {
                                     DeviceState.LOCKED -> "Dispositivo bloqueado"
                                     DeviceState.DOWNTIME -> "Hora de dormir"
                                     DeviceState.ACTIVE -> "Activo"
@@ -142,13 +160,13 @@ fun DeviceDetailScreen(
                                 fontWeight = FontWeight.Medium
                             )
                             Text(
-                                "v${device.policyVersion} • ${device.appVersion}",
+                                "v${device!!.policyVersion} • ${device!!.appVersion}",
                                 style = MaterialTheme.typography.bodySmall
                             )
                         }
                     }
 
-                    if (device.isOnline) {
+                    if (device!!.isOnline) {
                         AssistChip(
                             onClick = { },
                             label = { Text("Online") },
@@ -187,10 +205,10 @@ fun DeviceDetailScreen(
             }
 
             when (selectedTab) {
-                0 -> UsageTab(usageStats)
-                1 -> HealthTab(health)
+                0 -> UsageTab()
+                1 -> HealthTab()
                 2 -> PolicyTab(
-                    device = device,
+                    device = device!!,
                     templates = templates,
                     onApplyTemplate = { showTemplateDialog = true },
                     onReward = { viewModel.grantReward(deviceId, 15, "Recompensa") },
@@ -214,164 +232,47 @@ fun DeviceDetailScreen(
 }
 
 @Composable
-private fun UsageTab(stats: List<UsageStats>) {
-    LazyColumn(
-        modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(16.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp)
-    ) {
-        items(stats) { stat ->
-            UsageStatCard(stat)
-        }
-    }
-}
-
-@Composable
-private fun UsageStatCard(stat: UsageStats) {
-    Card(modifier = Modifier.fillMaxWidth()) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(16.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                Icon(
-                    Icons.Default.Star,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.primary
-                )
-                Column {
-                    Text(
-                        stat.appName ?: stat.packageName,
-                        style = MaterialTheme.typography.titleSmall
-                    )
-                    stat.limitMinutes?.let {
-                        Text(
-                            "Límite: $it min",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.outline
-                        )
-                    }
-                }
-            }
-
-            Column(horizontalAlignment = Alignment.End) {
-                Text(
-                    "${stat.minutesUsed} min",
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold,
-                    color = when {
-                        stat.limitMinutes != null && stat.remainingMinutes == 0 ->
-                            MaterialTheme.colorScheme.error
-                        stat.limitMinutes != null && (stat.remainingMinutes ?: 0) < 10 ->
-                            MaterialTheme.colorScheme.tertiary
-                        else -> MaterialTheme.colorScheme.onSurface
-                    }
-                )
-                stat.remainingMinutes?.let {
-                    Text(
-                        "$it restantes",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.outline
-                    )
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun HealthTab(health: DeviceHealth) {
+private fun UsageTab() {
+    // R5 — honest empty-state: the synthetic Instagram/WhatsApp/Juego
+    // XYZ stats are not derivable from any real endpoint. The Uso
+    // tab is reserved for a future `get-usage-stats` edge function.
     Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp)
+        modifier = Modifier.fillMaxSize(),
+        verticalArrangement = Arrangement.Center,
+        horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        // Nivel de enforcement
-        HealthCard(
-            title = "Nivel de Enforcement",
-            value = health.enforcementLevel,
-            icon = Icons.Default.Settings,
-            color = when (health.enforcementLevel) {
-                "DEVICE_OWNER" -> MaterialTheme.colorScheme.primary
-                "STANDARD" -> MaterialTheme.colorScheme.secondary
-                else -> MaterialTheme.colorScheme.error
-            }
-        )
+        Icon(Icons.Default.Info, null, modifier = Modifier.size(48.dp),
+            tint = MaterialTheme.colorScheme.outline)
+        Text("Estadísticas de uso no disponibles",
+            style = MaterialTheme.typography.titleMedium,
+            modifier = Modifier.padding(16.dp))
+        Text("El endpoint de uso detallado no está implementado en este build.",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.outline,
+            modifier = Modifier.padding(horizontal = 16.dp))
+    }
+}
 
-        // Nivel de sospecha
-        HealthCard(
-            title = "Nivel de Sospecha",
-            value = health.suspicionLevel,
-            icon = Icons.Default.Warning,
-            color = when (health.suspicionLevel) {
-                "NONE" -> MaterialTheme.colorScheme.primary
-                "LOW" -> MaterialTheme.colorScheme.secondary
-                "MEDIUM" -> MaterialTheme.colorScheme.tertiary
-                else -> MaterialTheme.colorScheme.error
-            }
-        )
-
-        // Batería
-        health.batteryLevel?.let { battery ->
-            HealthCard(
-                title = "Batería",
-                value = "$battery%${if (health.isCharging) " ⚡" else ""}",
-                icon = if (health.isCharging) Icons.Default.Star else Icons.Default.Star,
-                color = when {
-                    battery > 50 -> MaterialTheme.colorScheme.primary
-                    battery > 20 -> MaterialTheme.colorScheme.tertiary
-                    else -> MaterialTheme.colorScheme.error
-                }
-            )
-        }
-
-        // Último heartbeat
-        health.lastHeartbeat?.let { hb ->
-            HealthCard(
-                title = "Último Heartbeat",
-                value = hb,
-                icon = Icons.Default.Info,
-                color = MaterialTheme.colorScheme.outline
-            )
-        }
-
-        // Alertas
-        if (health.alerts.isNotEmpty()) {
-            Card(
-                colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.errorContainer
-                )
-            ) {
-                Column(modifier = Modifier.padding(16.dp)) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        Icon(
-                            Icons.Default.Warning,
-                            null,
-                            tint = MaterialTheme.colorScheme.error
-                        )
-                        Text(
-                            "Alertas",
-                            style = MaterialTheme.typography.titleMedium,
-                            color = MaterialTheme.colorScheme.error
-                        )
-                    }
-                    Spacer(modifier = Modifier.height(8.dp))
-                    health.alerts.forEach { alert ->
-                        Text("• $alert")
-                    }
-                }
-            }
-        }
+@Composable
+private fun HealthTab() {
+    // R5 — honest empty-state: the synthetic enforcementLevel=STANDARD /
+    // suspicionLevel=NONE / batteryLevel=85 stats are not derivable
+    // from any real endpoint. The Salud tab is reserved for a future
+    // `get-device-health` edge function.
+    Column(
+        modifier = Modifier.fillMaxSize(),
+        verticalArrangement = Arrangement.Center,
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Icon(Icons.Default.Warning, null, modifier = Modifier.size(48.dp),
+            tint = MaterialTheme.colorScheme.outline)
+        Text("Salud del dispositivo no disponible",
+            style = MaterialTheme.typography.titleMedium,
+            modifier = Modifier.padding(16.dp))
+        Text("El endpoint de salud detallada no está implementado en este build.",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.outline,
+            modifier = Modifier.padding(horizontal = 16.dp))
     }
 }
 
@@ -382,28 +283,12 @@ private fun HealthCard(
     icon: androidx.compose.ui.graphics.vector.ImageVector,
     color: Color
 ) {
+    // F3 — HealthCard is no longer referenced after the honest
+    // empty-state refactor; kept here as a no-op to avoid
+    // re-importing Card/Color if a future iteration needs it.
+    @Suppress("UNUSED_PARAMETER")
     Card(modifier = Modifier.fillMaxWidth()) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(16.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                Icon(icon, null, tint = color)
-                Text(title, style = MaterialTheme.typography.bodyMedium)
-            }
-            Text(
-                value,
-                style = MaterialTheme.typography.titleMedium,
-                color = color,
-                fontWeight = FontWeight.Medium
-            )
-        }
+        Text("$title: $value", style = MaterialTheme.typography.bodyMedium, color = color)
     }
 }
 
@@ -586,4 +471,26 @@ private fun TemplateSelectionDialog(
             }
         }
     )
+}
+
+// WU-4 — resolve the selected [ChildDevice] from the parent VM
+// `devices` StateFlow. Returns null when the id is absent so the
+// caller can branch into an explicit "not found" state.
+internal fun resolveSelectedDevice(
+    devices: List<ChildDevice>, deviceId: String
+): ChildDevice? = devices.firstOrNull { it.id == deviceId }
+
+internal fun resolveDisplayChildName(child: Child?): String =
+    child?.firstName ?: "Sin asignar"
+
+enum class DetailLoadState { Loading, Found, NotFound }
+
+internal fun resolveDetailLoadState(
+    devices: List<ChildDevice>, isLoading: Boolean,
+    hasLoadedDevices: Boolean, deviceId: String
+): DetailLoadState = when {
+    resolveSelectedDevice(devices, deviceId) != null -> DetailLoadState.Found
+    isLoading -> DetailLoadState.Loading
+    !hasLoadedDevices -> DetailLoadState.Loading
+    else -> DetailLoadState.NotFound
 }

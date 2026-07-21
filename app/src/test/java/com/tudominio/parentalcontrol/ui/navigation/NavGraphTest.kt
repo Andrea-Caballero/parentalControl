@@ -2,6 +2,7 @@ package com.tudominio.parentalcontrol.ui.navigation
 
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithText
+import com.tudominio.parentalcontrol.auth.Role
 import com.tudominio.parentalcontrol.copy.CopyManager
 import com.tudominio.parentalcontrol.data.repository.TimeExtraRepository
 import com.tudominio.parentalcontrol.domain.model.ChildDevice
@@ -142,6 +143,41 @@ class NavGraphTest {
             NavRoute.Dashboard,
             resolveInitialRoute(isPaired = true, isChildDevice = false)
         )
+    }
+
+    // -----------------------------------------------------------------
+    // 1a. Role-aware discriminator: resolveIsChildDevice (regression for
+    //     the OPPO parent → CHILD UI misroute after relaunch).
+    // -----------------------------------------------------------------
+
+    @Test
+    fun resolveIsChildDevice_unpaired_always_returnsFalse() {
+        assertEquals(false, resolveIsChildDevice(isPaired = false, role = null))
+        assertEquals(false, resolveIsChildDevice(isPaired = false, role = Role.CHILD))
+        assertEquals(false, resolveIsChildDevice(isPaired = false, role = Role.PARENT))
+    }
+
+    @Test
+    fun resolveIsChildDevice_pairedNullRole_returnsFalse() {
+        // Defensive: a paired device without a role annotation is NOT
+        // a child device by default. Stale pre-fix child installs are
+        // migrated to Role.CHILD by loadPersistedState before this is
+        // read, so this branch only fires for genuinely role-less
+        // paired devices (a narrow edge case).
+        assertEquals(false, resolveIsChildDevice(isPaired = true, role = null))
+    }
+
+    @Test
+    fun resolveIsChildDevice_pairedParentRole_returnsFalse() {
+        // THE BUG: previously this branch routed the OPPO parent to
+        // the CHILD UI after devLogin because parent_id was present.
+        assertEquals(false, resolveIsChildDevice(isPaired = true, role = Role.PARENT))
+    }
+
+    @Test
+    fun resolveIsChildDevice_pairedChildRole_returnsTrue() {
+        // Genuinely paired child devices must still route to ChildStatus.
+        assertEquals(true, resolveIsChildDevice(isPaired = true, role = Role.CHILD))
     }
 
     // T28: pendingExtraTimePackage overrides the natural initial route

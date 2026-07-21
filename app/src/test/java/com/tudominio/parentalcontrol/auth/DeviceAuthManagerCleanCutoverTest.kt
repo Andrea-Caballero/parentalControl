@@ -67,6 +67,17 @@ class DeviceAuthManagerCleanCutoverTest {
         context.getSharedPreferences("device_auth_prefs", Context.MODE_PRIVATE)
             .edit().clear().commit()
         resetManagerInstance()
+        // F1 — this suite pins the RELEASE-like clean-cutover wipe
+        // contract ("legacy parent-demo sentinel always wipes, even
+        // with a synthetic_access_token"). Force the seam to
+        // release-like so the OPPO PARENT debug bypass doesn't kick
+        // in. Cleared in tearDown.
+        DeviceAuthManager.testIsMockOrSharedMockBuild = false
+    }
+
+    @org.junit.After
+    fun tearDown() {
+        DeviceAuthManager.testIsMockOrSharedMockBuild = null
     }
 
     private fun resetManagerInstance() {

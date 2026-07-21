@@ -1,6 +1,7 @@
 package com.tudominio.parentalcontrol.di
 
 import android.content.Context
+import com.tudominio.parentalcontrol.admin.DeviceAdminPromptCoordinator
 import com.tudominio.parentalcontrol.auth.DeviceAuthManager
 import com.tudominio.parentalcontrol.network.SupabaseClientProvider
 import com.tudominio.parentalcontrol.time.DefaultTimeProvider
@@ -64,4 +65,17 @@ object RepositoryModule {
             injectedClient = httpClient
         )
     }
+
+    /**
+     * WU-D — Device Admin prompt coordinator. Hilt-managed singleton
+     * so the same state machine is shared across the pairing screen
+     * (which gates the NavigateToHome) and the child status screen
+     * (which renders the one-time banner). The coordinator owns
+     * the state — neither the Compose layers nor the ViewModel
+     * ViewModel touch the lifecycle directly.
+     */
+    @Provides
+    @Singleton
+    fun provideDeviceAdminPromptCoordinator(): DeviceAdminPromptCoordinator =
+        DeviceAdminPromptCoordinator()
 }

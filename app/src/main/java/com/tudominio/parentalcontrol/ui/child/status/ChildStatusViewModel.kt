@@ -4,6 +4,8 @@ import android.content.Context
 import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.tudominio.parentalcontrol.admin.DeviceAdminPromptCoordinator
+import com.tudominio.parentalcontrol.admin.DeviceAdminPromptState
 import com.tudominio.parentalcontrol.auth.DeviceAuthManager
 import com.tudominio.parentalcontrol.data.db.ParentalDatabase
 import com.tudominio.parentalcontrol.data.model.GrantEntity
@@ -12,12 +14,26 @@ import com.tudominio.parentalcontrol.health.DegradationAlertManager
 import com.tudominio.parentalcontrol.health.HealthChecker
 import com.tudominio.parentalcontrol.health.Permission
 import com.tudominio.parentalcontrol.reward.RewardManager
+import com.tudominio.parentalcontrol.sync.SyncManager
 import com.tudominio.parentalcontrol.time.TimeProvider
 import com.tudominio.parentalcontrol.time.DefaultTimeProvider
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.*
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import java.time.Duration
 import java.time.Instant
@@ -30,7 +46,16 @@ class ChildStatusViewModel @Inject constructor(
     private val rewardManager: RewardManager,
     private val degradationAlertManager: DegradationAlertManager,
     private val timeProvider: TimeProvider = DefaultTimeProvider(context),
-    private val authManager: DeviceAuthManager = DeviceAuthManager.getInstance(context)
+    private val authManager: DeviceAuthManager = DeviceAuthManager.getInstance(context),
+    // P1 — bounded pullPolicy loop. Hilt-injected via the existing
+    // @Singleton @Inject SyncManager. The test seam for ktlint is
+    // documented in `PolicyPollTest`; production uses the real
+    // singleton.
+    private val syncManager: SyncManager? = null,
+    // WU-D — Device Admin prompt coordinator (Hilt-injected). Exposes
+    // the one-time banner that the child screen renders when a fresh
+    // pairing completed and admin is not yet active.
+    private val adminCoordinator: DeviceAdminPromptCoordinator = DeviceAdminPromptCoordinator()
 ) : ViewModel() {
 
     companion object {
@@ -51,6 +76,25 @@ class ChildStatusViewModel @Inject constructor(
 
     private val _timeRemaining = MutableStateFlow(0L)
     val timeRemaining: StateFlow<Long> = _timeRemaining.asStateFlow()
+
+    /**
+     * WU-D — banner visibility. True when a fresh pairing completed
+     * AND Device Admin is not yet active (so the child screen
+     * renders a one-time informational banner). Cleared once admin
+     * is activated (adminActive → banner=false). Sticky true when
+     * the user explicitly defers (skipUsed → banner=true) so the
+     * banner renders on the next screen.
+     */
+    val deviceAdminBanner: StateFlow<Boolean> = adminCoordinator.state
+        .map { state ->
+            state is DeviceAdminPromptState.NeedsActivation ||
+                (state is DeviceAdminPromptState.Dismissed && state.skipUsed)
+        }
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.Eagerly,
+            initialValue = false
+        )
 
     private val _timeUsedToday = MutableStateFlow(0L)
     val timeUsedToday: StateFlow<Long> = _timeUsedToday.asStateFlow()
@@ -88,6 +132,33 @@ class ChildStatusViewModel @Inject constructor(
         loadInitialState()
         startObserving()
         startDegradationMonitoring()
+        startPolicyPoll()
+    }
+
+    /**
+     * P1 — bounded pullPolicy loop. The child observes the parent's
+     * `set-device-state → LOCKED` within ≤8s via this loop (see
+     * `PolicyPollTest` for the contract). Bounded by [PolicyPoll.INTERVAL_MS].
+     * Cancels automatically on `viewModelScope.cancel()`.
+     */
+    private var policyPollJob: kotlinx.coroutines.Job? = null
+    private fun startPolicyPoll() {
+        val sync = syncManager ?: return
+        val newJob = PolicyPoll.start(
+            scope = viewModelScope,
+            pullPolicy = {
+                runCatching { sync.pullPolicy() }
+            }
+        )
+        policyPollJob = newJob
+    }
+
+    override fun onCleared() {
+        super.onCleared()
+        // P1 — explicit cancel contract. `viewModelScope.cancel()`
+        // already cancels all children; this is the explicit
+        // OPPO-required cancel hook.
+        policyPollJob?.cancel()
     }
 
     private fun loadInitialState() {

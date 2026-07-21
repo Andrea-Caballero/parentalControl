@@ -37,7 +37,7 @@ import com.tudominio.parentalcontrol.data.model.UsageTodayEntity
         TimeRequestEntity::class,
         BehavioralEventEntity::class
     ],
-    version = 7,
+    version = 8,
     exportSchema = true
 )
 @TypeConverters(Converters::class)
@@ -104,26 +104,32 @@ abstract class ParentalDatabase : RoomDatabase() {
 
         /**
          * Migration v6 → v7 on the `behavioral_events` table.
-         *
-         * - Adds `parent_id TEXT` (nullable, no default value). Existing
-         *   rows read with `parent_id = NULL` until the next
-         *   `AnalyticsManager.track()` writes the column from
-         *   `DeviceAuthService.getParentId()` (per proposal.md open
-         *   question #3 — lazy backfill strategy, no SQL rewrite).
-         * - Nullable on purpose: a NOT NULL constraint would force a
-         *   one-shot backfill that maps each existing row to its
-         *   device's parent via the `devices.parent_id` join. Deferring
-         *   that to the writer keeps PR A's migration single-statement.
-         *
-         * Change A of `feat-parent-behavioral-event-log` (PR A only).
-         * The v7 schema opens the door for
-         * `BehavioralEventsRepository.refresh(parentId)` to filter by
-         * `parent_id = eq.<parentId>` and for the DAO to expose
-         * `flowByParent(parentId)`.
          */
         val MIGRATION_6_7: Migration = object : Migration(6, 7) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL("ALTER TABLE behavioral_events ADD COLUMN parent_id TEXT")
+            }
+        }
+
+        /**
+         * F2a — Migration v7 → v8 on the `policy` table.
+         *
+         * - Adds `device_state TEXT NOT NULL DEFAULT 'ACTIVE'`. Existing
+         *   rows read with `device_state = 'ACTIVE'` until the parent's
+         *   next lock/unlock writes a fresh value through
+         *   `PolicyDao.upsertPolicyIfNewer`.
+         * - The DEFAULT is non-NULL so the existing `PolicyEntity`
+         *   migration test (which constructs entities with the older
+         *   `device_id/version/category_assignments` triple) keeps
+         *   working — the new constructor parameter `device_state`
+         *   defaults to "ACTIVE" and Room populates the column on
+         *   insert.
+         */
+        val MIGRATION_7_8: Migration = object : Migration(7, 8) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "ALTER TABLE policy ADD COLUMN device_state TEXT NOT NULL DEFAULT 'ACTIVE'"
+                )
             }
         }
     }

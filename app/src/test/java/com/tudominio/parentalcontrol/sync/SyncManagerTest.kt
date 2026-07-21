@@ -20,59 +20,59 @@ class SyncManagerTest {
     @Test
     fun `pull policy applies when version is higher`() = runBlocking {
         val syncManager = TestableSyncManager()
-        
+
         val currentVersion = 3L
         val serverVersion = 5L
-        
+
         val result = syncManager.pullPolicy(currentVersion, serverVersion)
-        
+
         assertTrue(result is SyncResult.Success)
     }
 
     @Test
     fun `pull policy ignores when version is lower`() = runBlocking {
         val syncManager = TestableSyncManager()
-        
+
         val currentVersion = 10L
         val serverVersion = 5L
-        
+
         // Server returned older version, should be ignored
         val result = syncManager.pullPolicy(currentVersion, serverVersion)
-        
+
         assertTrue(result is SyncResult.Success) // No error, solo ignora
     }
 
     @Test
     fun `pull policy ignores when version is equal`() = runBlocking {
         val syncManager = TestableSyncManager()
-        
+
         val currentVersion = 5L
         val serverVersion = 5L
-        
+
         val result = syncManager.pullPolicy(currentVersion, serverVersion)
-        
+
         assertTrue(result is SyncResult.Success)
     }
 
     @Test
     fun `offline sync returns offline result`() = runBlocking {
         val syncManager = TestableSyncManager(isOnline = false)
-        
+
         val result = syncManager.sync()
-        
+
         assertTrue(result is SyncResult.Offline)
     }
 
     @Test
     fun `outbox respects dedup key`() = runBlocking {
         val syncManager = TestableSyncManager()
-        
+
         val dedupKey = "test-dedup-key"
-        
+
         // First insert should succeed
         val result1 = syncManager.enqueue(OutboxEventType.USAGE_LOG, mapOf("test" to "value"), dedupKey)
         assertTrue(result1)
-        
+
         // Second insert with same key should fail (duplicate)
         val result2 = syncManager.enqueue(OutboxEventType.USAGE_LOG, mapOf("test" to "value2"), dedupKey)
         assertFalse(result2)
@@ -82,11 +82,11 @@ class SyncManagerTest {
     fun `outbox retry does not duplicate on same dedup key`() = runBlocking {
         val syncManager = TestableSyncManager()
         val dedupKey = "retry-test-key"
-        
+
         // First send succeeds
         val firstSend = syncManager.sendOutboxItem(dedupKey, OutboxEventType.USAGE_LOG)
         assertTrue(firstSend)
-        
+
         // Retry with same dedup key should also succeed (idempotent)
         val retrySend = syncManager.sendOutboxItem(dedupKey, OutboxEventType.USAGE_LOG)
         assertTrue(retrySend)
@@ -95,36 +95,36 @@ class SyncManagerTest {
     @Test
     fun `server returns 500 triggers error`() = runBlocking {
         val syncManager = TestableSyncManager()
-        
+
         val result = syncManager.handleServerError(500)
-        
+
         assertTrue(result is SyncResult.Error)
     }
 
     @Test
     fun `timeout triggers offline fallback`() = runBlocking {
         val syncManager = TestableSyncManager()
-        
+
         val result = syncManager.handleTimeout()
-        
+
         assertTrue(result is SyncResult.Offline)
     }
 
     @Test
     fun `malformed JSON is handled gracefully`() = runBlocking {
         val syncManager = TestableSyncManager()
-        
+
         val result = syncManager.parseMalformedJson("not valid json {{{")
-        
+
         assertTrue(result is SyncResult.Error)
     }
 
     @Test
     fun `heartbeat is sent successfully`() = runBlocking {
         val syncManager = TestableSyncManager()
-        
+
         val result = syncManager.sendHeartbeat()
-        
+
         assertTrue(result)
     }
 
@@ -142,19 +142,19 @@ class SyncManagerTest {
     fun `server time offset is calculated`() {
         val localTime = System.currentTimeMillis() / 1000
         val serverTime = localTime + 30 // 30 seconds ahead
-        
+
         val offset = calculateServerOffset(serverTime, localTime)
-        
+
         assertEquals(30L, offset)
     }
 
     @Test
     fun `enqueue with null dedup key generates unique key`() = runBlocking {
         val syncManager = TestableSyncManager()
-        
+
         val result1 = syncManager.enqueue(OutboxEventType.USAGE_LOG, mapOf("test" to "value1"), null)
         val result2 = syncManager.enqueue(OutboxEventType.USAGE_LOG, mapOf("test" to "value2"), null)
-        
+
         assertTrue(result1)
         assertTrue(result2) // Different auto-generated keys
     }
@@ -258,7 +258,7 @@ class OutboxEventTypeTest {
     @Test
     fun `all event types are defined`() {
         val types = OutboxEventType.entries.toTypedArray()
-        
+
         assertEquals(5, types.size)
         assertTrue(types.contains(OutboxEventType.USAGE_LOG))
         assertTrue(types.contains(OutboxEventType.DEVICE_ALERT))
@@ -276,14 +276,14 @@ class SyncResultTest {
     @Test
     fun `success result is distinguishable`() {
         val result = SyncResult.Success
-        
+
         assertTrue(result is SyncResult.Success)
     }
 
     @Test
     fun `partial success contains failed count`() {
         val result = SyncResult.PartialSuccess(3)
-        
+
         assertTrue(result is SyncResult.PartialSuccess)
         assertEquals(3, result.failedItems)
     }
@@ -291,7 +291,7 @@ class SyncResultTest {
     @Test
     fun `error result contains message`() {
         val result = SyncResult.Error("Connection timeout")
-        
+
         assertTrue(result is SyncResult.Error)
         assertEquals("Connection timeout", result.message)
     }
@@ -299,7 +299,7 @@ class SyncResultTest {
     @Test
     fun `offline result is distinguishable`() {
         val result = SyncResult.Offline
-        
+
         assertTrue(result is SyncResult.Offline)
     }
 }
@@ -312,7 +312,7 @@ class SyncStatusTest {
     @Test
     fun `all sync statuses are defined`() {
         val statuses = SyncStatus.entries.toTypedArray()
-        
+
         assertEquals(5, statuses.size)
         assertTrue(statuses.contains(SyncStatus.IDLE))
         assertTrue(statuses.contains(SyncStatus.SYNCING))
@@ -344,9 +344,9 @@ class PolicyPullResponseTest {
             "server_time": 1234567890
         }
         """.trimIndent()
-        
+
         val response = Json.decodeFromString<PolicyPullResponse>(json)
-        
+
         assertEquals("policy-123", response.policy_id)
         assertEquals(5L, response.version)
         assertEquals(1, response.app_policies?.size)
@@ -360,12 +360,46 @@ class PolicyPullResponseTest {
             "version": 1
         }
         """.trimIndent()
-        
+
         val response = Json.decodeFromString<PolicyPullResponse>(json)
-        
+
         assertNull(response.policy_id)
         assertEquals(1L, response.version)
         assertNull(response.app_policies)
+    }
+
+    /**
+     * R4 — `PolicyPullResponse.device_state` decodes correctly. The
+     * shared Python mock + production edge function both include this
+     * field so the child can pick up a parent's LOCKED/ACTIVE
+     * signal on the next pullPolicy cycle (NextSync propagation).
+     */
+    @Test
+    fun `policy response decodes device_state LOCKED`() {
+        val json = """
+        {
+            "version": 5,
+            "device_state": "LOCKED",
+            "category_assignments": {}
+        }
+        """.trimIndent()
+
+        val response = Json.decodeFromString<PolicyPullResponse>(json)
+        assertEquals("LOCKED", response.device_state)
+    }
+
+    @Test
+    fun `policy response decodes device_state ACTIVE`() {
+        val json = """
+        {
+            "version": 5,
+            "device_state": "ACTIVE",
+            "category_assignments": {}
+        }
+        """.trimIndent()
+
+        val response = Json.decodeFromString<PolicyPullResponse>(json)
+        assertEquals("ACTIVE", response.device_state)
     }
 }
 
@@ -377,18 +411,18 @@ class OutboxIdempotencyTest {
     @Test
     fun `same payload different dedup key succeeds`() = runBlocking {
         val syncManager = TestableSyncManager()
-        
+
         val result1 = syncManager.enqueue(
-            OutboxEventType.USAGE_LOG, 
+            OutboxEventType.USAGE_LOG,
             mapOf("minutes" to 10, "package" to "com.example.app"),
             "key-1"
         )
         val result2 = syncManager.enqueue(
-            OutboxEventType.USAGE_LOG, 
+            OutboxEventType.USAGE_LOG,
             mapOf("minutes" to 10, "package" to "com.example.app"),
             "key-2"
         )
-        
+
         assertTrue(result1)
         assertTrue(result2)
     }
@@ -396,18 +430,18 @@ class OutboxIdempotencyTest {
     @Test
     fun `different payloads same dedup key fails`() = runBlocking {
         val syncManager = TestableSyncManager()
-        
+
         val result1 = syncManager.enqueue(
-            OutboxEventType.USAGE_LOG, 
+            OutboxEventType.USAGE_LOG,
             mapOf("minutes" to 10),
             "same-key"
         )
         val result2 = syncManager.enqueue(
-            OutboxEventType.USAGE_LOG, 
+            OutboxEventType.USAGE_LOG,
             mapOf("minutes" to 20),
             "same-key"
         )
-        
+
         assertTrue(result1)
         assertFalse(result2)
     }
@@ -421,22 +455,22 @@ class OfflineToleranceTest {
     @Test
     fun `enqueue works when offline`() = runBlocking {
         val syncManager = TestableSyncManager(isOnline = false)
-        
+
         val result = syncManager.enqueue(
             OutboxEventType.USAGE_LOG,
             mapOf("minutes" to 10),
             "offline-key"
         )
-        
+
         assertTrue(result) // Should still queue locally
     }
 
     @Test
     fun `sync returns offline when not connected`() = runBlocking {
         val syncManager = TestableSyncManager(isOnline = false)
-        
+
         val result = syncManager.sync()
-        
+
         assertTrue(result is SyncResult.Offline)
     }
 }

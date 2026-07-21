@@ -759,19 +759,77 @@ open class ParentRepository @Inject constructor(
         }
 
     /**
-     * Bloquea dispositivo inmediatamente.
+     * Lock device immediately by setting `device_state = 'LOCKED'` via
+     * the auth-gated `set-device-state` edge function.
+     *
+     * The function runs with `service_role` privileges inside the edge
+     * function (mirroring `create-pairing-code`) — Supabase RLS does
+     * not expose a `devices_parent_update` policy in
+     * `supabase/migrations/002_rls_policies.sql`, so direct PostgREST
+     * PATCH from a parent's JWT would be rejected. The edge function
+     * is the only safe surface to mutate `devices.device_state` from
+     * a parent's session.
+     *
+     * Returns `true` on a 2xx response and `false` on a missing
+     * token, non-2xx response, or any network exception. Callers
+     * (notably [com.tudominio.parentalcontrol.viewmodel.ParentViewModel.lockDevice])
+     * surface the failure as a snackbar / error state so the parent
+     * sees the click failed rather than a silent reload.
      */
-    suspend fun lockDevice(deviceId: String): Boolean = withContext(Dispatchers.IO) {
-        // TODO: En implementación real, cambiar estado del dispositivo
-        true
-    }
+    suspend fun lockDevice(deviceId: String): Boolean = setDeviceState(
+        deviceId = deviceId,
+        state = "LOCKED"
+    )
 
     /**
-     * Desbloquea dispositivo.
+     * Unlock device by setting `device_state = 'ACTIVE'` via the
+     * auth-gated `set-device-state` edge function. Mirrors
+     * [lockDevice] — see that contract for the wire format and RLS
+     * rationale.
      */
-    suspend fun unlockDevice(deviceId: String): Boolean = withContext(Dispatchers.IO) {
-        // TODO: En implementación real, cambiar estado del dispositivo
-        true
+    suspend fun unlockDevice(deviceId: String): Boolean = setDeviceState(
+        deviceId = deviceId,
+        state = "ACTIVE"
+    )
+
+    /**
+     * WU-2 — internal helper that issues the `set-device-state` POST
+     * with the parent's bearer token + apikey + the typed-state body.
+     * Shared by [lockDevice] (state=LOCKED) and
+     * [unlockDevice] (state=ACTIVE).
+     *
+     * Returns `false` when:
+     *  - the access token is missing (auth missing → caller shows
+     *    sign-in CTA, not a snackbar)
+     *  - the HTTP response is non-2xx (server-side validation: bad
+     *    state, unknown device_id, ownership mismatch)
+     *  - the request throws (network error, JSON parse failure,
+     *    Keystore unavailable during token refresh)
+     */
+    private suspend fun setDeviceState(
+        deviceId: String,
+        state: String
+    ): Boolean = withContext(Dispatchers.IO) {
+        try {
+            val token = authManager.getAccessToken()
+                ?: return@withContext false
+
+            val body = """{"device_id":"${deviceId.replace("\\", "\\\\").replace("\"", "\\\"")}",""" +
+                """"state":"$state"}"""
+
+            val response = clientProvider.httpClient.post(
+                "${SupabaseClientProvider.SUPABASE_URL}/functions/v1/set-device-state"
+            ) {
+                header("Authorization", "Bearer $token")
+                header("apikey", SupabaseClientProvider.SUPABASE_ANON_KEY)
+                contentType(ContentType.Application.Json)
+                setBody(body)
+            }
+
+            response.status.isSuccess()
+        } catch (e: Exception) {
+            false
+        }
     }
 
     /**
@@ -826,18 +884,23 @@ open class ParentRepository @Inject constructor(
         val deeplink: String
     )
 
+    /** Nested `devices` from `select=*,devices(device_name)` (OBJECT or null). */
+    @Serializable
+    private data class TimeRequestDeviceRelationDto(
+        val device_name: String
+    )
+
     /**
      * Wire shape returned by `${SUPABASE_URL}/rest/v1/time_requests` when
-     * called with `select=*,devices(device_name)`. The `device_name` field
-     * is joined from the `devices` table by Supabase's resource embedding.
-     * Status values are the [RequestStatus] enum names (`PENDING`,
-     * `APPROVED`, `DENIED`).
+     * called with `select=*,devices(device_name)`. The `device_name`
+     * field is joined from the `devices` table by Supabase's resource
+     * embedding. Status values are the [RequestStatus] enum names
+     * (`PENDING`, `APPROVED`, `DENIED`).
      */
     @Serializable
     private data class TimeRequestDto(
         val id: String,
         val device_id: String,
-        val device_name: String? = null,
         val package_name: String? = null,
         val app_name: String? = null,
         val minutes_requested: Int,
@@ -845,12 +908,13 @@ open class ParentRepository @Inject constructor(
         val status: String,
         val created_at: String,
         val responded_at: String? = null,
-        val parent_response: String? = null
+        val parent_response: String? = null,
+        val devices: TimeRequestDeviceRelationDto? = null
     ) {
         fun toTimeRequest(): TimeRequest = TimeRequest(
             id = id,
             deviceId = device_id,
-            deviceName = device_name,
+            deviceName = devices?.device_name,
             packageName = package_name,
             appName = app_name,
             minutesRequested = minutes_requested,
@@ -879,6 +943,13 @@ open class ParentRepository @Inject constructor(
         val expires_at: String? = null
     )
 
+    /** Nested `child` from `child:children(id, first_name)` (OBJECT or null). */
+    @Serializable
+    private data class DeviceChildRelationDto(
+        val id: String,
+        val first_name: String
+    )
+
     /**
      * Wire shape returned by the `get-devices-for-parent` edge function
      * (Supabase REST row). Mirrors the columns selected in
@@ -904,7 +975,7 @@ open class ParentRepository @Inject constructor(
         val policy_version: Int = 1,
         val last_seen_at: String,
         val child_id: String? = null,
-        val child_first_name: String? = null
+        val child: DeviceChildRelationDto? = null
     ) {
         fun toChildDevice(): ChildDevice = ChildDevice(
             id = id,
@@ -934,16 +1005,14 @@ open class ParentRepository @Inject constructor(
             // "Sin asignar" surface per design A.6. The `parentId` /
             // `createdAt` / `updatedAt` are empty on the device payload —
             // a future `getChildren()` call hydrates them (design A.6).
-            child = if (child_id != null && child_first_name != null) {
+            child = child?.let {
                 Child(
-                    id = child_id,
+                    id = it.id,
                     parentId = "",
-                    firstName = child_first_name,
+                    firstName = it.first_name,
                     createdAt = "",
                     updatedAt = ""
                 )
-            } else {
-                null
             }
         )
     }

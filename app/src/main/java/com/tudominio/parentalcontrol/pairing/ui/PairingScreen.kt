@@ -36,6 +36,10 @@ import com.google.mlkit.vision.barcode.BarcodeScanning
 import com.google.mlkit.vision.common.InputImage
 import com.tudominio.parentalcontrol.pairing.PairingUiState
 import com.tudominio.parentalcontrol.pairing.PairingViewModel
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 import java.util.concurrent.Executors
 
 /**
@@ -57,7 +61,7 @@ fun PairingScreen(
         viewModel.updateManualCode(code)
         viewModel.startManualPairing()
     }
-    
+
     LaunchedEffect(Unit) {
         viewModel.navigationEvents.collect { event ->
             when (event) {
@@ -73,7 +77,7 @@ fun PairingScreen(
             }
         }
     }
-    
+
     Box(modifier = Modifier.fillMaxSize()) {
         when (uiState) {
             is PairingUiState.Idle -> {
@@ -99,7 +103,7 @@ fun PairingScreen(
                 PairingContent()
             }
             is PairingUiState.Success -> {
-                SuccessContent()
+                SuccessContent(viewModel = viewModel, onPairingComplete = onPairingComplete)
             }
             is PairingUiState.Error -> {
                 val error = uiState as PairingUiState.Error
@@ -133,44 +137,44 @@ private fun IdleContent(
             text = "🔗",
             style = MaterialTheme.typography.displayLarge
         )
-        
+
         Spacer(modifier = Modifier.height(24.dp))
-        
+
         Text(
             text = "Emparejar dispositivo",
             style = MaterialTheme.typography.headlineMedium,
             fontWeight = FontWeight.Bold
         )
-        
+
         Spacer(modifier = Modifier.height(8.dp))
-        
+
         Text(
             text = "Conecta este dispositivo con tu cuenta parental",
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             textAlign = TextAlign.Center
         )
-        
+
         Spacer(modifier = Modifier.height(48.dp))
-        
+
         Button(
             onClick = onQrClick,
             modifier = Modifier.fillMaxWidth().height(56.dp)
         ) {
             Text("📷 Escanear código QR")
         }
-        
+
         Spacer(modifier = Modifier.height(16.dp))
-        
+
         OutlinedButton(
             onClick = onCodeClick,
             modifier = Modifier.fillMaxWidth().height(56.dp)
         ) {
             Text("⌨️ Ingresar código manualmente")
         }
-        
+
         Spacer(modifier = Modifier.height(32.dp))
-        
+
         TextButton(onClick = onCancel) {
             Text("Cancelar")
         }
@@ -185,13 +189,13 @@ private fun QrScannerContent(
     var hasCameraPermission by remember { mutableStateOf(false) }
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
-    
+
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { granted ->
         hasCameraPermission = granted
     }
-    
+
     LaunchedEffect(Unit) {
         val permission = ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA)
         if (permission == android.content.pm.PackageManager.PERMISSION_GRANTED) {
@@ -200,21 +204,21 @@ private fun QrScannerContent(
             permissionLauncher.launch(Manifest.permission.CAMERA)
         }
     }
-    
+
     Box(modifier = Modifier.fillMaxSize()) {
         if (hasCameraPermission) {
             AndroidView(
                 factory = { ctx ->
                     val previewView = PreviewView(ctx)
                     val cameraProviderFuture = ProcessCameraProvider.getInstance(ctx)
-                    
+
                     cameraProviderFuture.addListener({
                         val cameraProvider = cameraProviderFuture.get()
-                        
+
                         val preview = Preview.Builder().build().also {
                             it.setSurfaceProvider(previewView.surfaceProvider)
                         }
-                        
+
                         val imageAnalysis = ImageAnalysis.Builder()
                             .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
                             .build()
@@ -244,7 +248,7 @@ private fun QrScannerContent(
                                     }
                                 }
                             }
-                        
+
                         try {
                             cameraProvider.unbindAll()
                             cameraProvider.bindToLifecycle(
@@ -257,12 +261,12 @@ private fun QrScannerContent(
                             Log.e("QrScanner", "Error: ${e.message}")
                         }
                     }, ContextCompat.getMainExecutor(ctx))
-                    
+
                     previewView
                 },
                 modifier = Modifier.fillMaxSize()
             )
-            
+
             Box(
                 modifier = Modifier
                     .size(250.dp)
@@ -270,7 +274,7 @@ private fun QrScannerContent(
                     .clip(RoundedCornerShape(16.dp))
                     .background(Color.White.copy(alpha = 0.2f))
             )
-            
+
             Column(
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
@@ -285,7 +289,7 @@ private fun QrScannerContent(
                     style = MaterialTheme.typography.bodyLarge
                 )
             }
-            
+
             IconButton(
                 onClick = onBack,
                 modifier = Modifier
@@ -321,7 +325,7 @@ private fun ManualCodeContent(
     onBack: () -> Unit
 ) {
     val manualCode by viewModel.manualCode.collectAsState()
-    
+
     Column(
         modifier = Modifier.fillMaxSize().padding(24.dp),
         horizontalAlignment = Alignment.CenterHorizontally
@@ -329,30 +333,30 @@ private fun ManualCodeContent(
         IconButton(onClick = onBack, modifier = Modifier.align(Alignment.Start)) {
             Icon(Icons.Default.ArrowBack, "Volver")
         }
-        
+
         Spacer(modifier = Modifier.weight(0.5f))
-        
+
         Text("⌨️", style = MaterialTheme.typography.displayMedium)
-        
+
         Spacer(modifier = Modifier.height(16.dp))
-        
+
         Text(
             text = "Código de emparejamiento",
             style = MaterialTheme.typography.headlineSmall,
             fontWeight = FontWeight.Bold
         )
-        
+
         Spacer(modifier = Modifier.height(8.dp))
-        
+
         Text(
             text = "Ingresa el código de 8 caracteres del panel parental",
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             textAlign = TextAlign.Center
         )
-        
+
         Spacer(modifier = Modifier.height(32.dp))
-        
+
         OutlinedTextField(
             value = manualCode,
             onValueChange = { viewModel.updateManualCode(it) },
@@ -368,17 +372,17 @@ private fun ManualCodeContent(
                 onDone = { viewModel.pairWithManualCode() }
             )
         )
-        
+
         Spacer(modifier = Modifier.height(8.dp))
-        
+
         Text(
             text = "${manualCode.length}/8 caracteres",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
-        
+
         Spacer(modifier = Modifier.height(24.dp))
-        
+
         Button(
             onClick = { viewModel.pairWithManualCode() },
             enabled = manualCode.length >= 8,
@@ -386,7 +390,7 @@ private fun ManualCodeContent(
         ) {
             Text("✅ Emparejar")
         }
-        
+
         Spacer(modifier = Modifier.weight(1f))
     }
 }
@@ -411,27 +415,136 @@ private fun PairingContent() {
 }
 
 @Composable
-private fun SuccessContent() {
-    Column(
-        modifier = Modifier.fillMaxSize().padding(24.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center
-    ) {
-        Text("✅", style = MaterialTheme.typography.displayLarge)
-        Spacer(modifier = Modifier.height(24.dp))
-        Text(
-            text = "¡Emparejado!",
-            style = MaterialTheme.typography.headlineMedium,
-            fontWeight = FontWeight.Bold
-        )
-        Spacer(modifier = Modifier.height(8.dp))
-        Text(
-            text = "Este dispositivo está conectado a tu cuenta parental",
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            textAlign = TextAlign.Center
-        )
+private fun SuccessContent(
+    viewModel: PairingViewModel,
+    onPairingComplete: () -> Unit
+) {
+    val context = LocalContext.current
+    val lockManager = remember { com.tudominio.parentalcontrol.admin.LockManager(context) }
+    // WU-D — gating coordinator shared with ChildStatusViewModel so
+    // the same state machine drives the pairing screen gating and
+    // the child status banner. Default to a fresh coordinator in the
+    // test seam; Hilt-injected in production.
+    val coordinator = remember { com.tudominio.parentalcontrol.admin.DeviceAdminPromptCoordinator() }
+
+    var adminChecked by remember { mutableStateOf(false) }
+    var adminActive by remember { mutableStateOf(lockManager.isAdminActive()) }
+    var showPrompt by remember { mutableStateOf(!adminActive) }
+    var navigating by remember { mutableStateOf(false) }
+
+    val adminLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { _ ->
+        // Re-check admin status. The `ACTION_ADD_DEVICE_ADMIN` activity
+        // returns RESULT_OK on activation, RESULT_CANCELED on dismiss.
+        // Both cases land here — we treat the user as "needs to
+        // re-verify admin status" either way.
+        adminActive = lockManager.isAdminActive()
+        if (adminActive) {
+            coordinator.markAdminActive()
+            showPrompt = false
+            if (!navigating) {
+                navigating = true
+                onAdminConfirmed(viewModel)
+            }
+        }
     }
+
+    // Check admin on first mount.
+    LaunchedEffect(Unit) {
+        if (!adminChecked) {
+            adminActive = lockManager.isAdminActive()
+            adminChecked = true
+            if (adminActive) {
+                // Admin already active — record a fresh pairing but
+                // the coordinator stays in Idle, and we proceed.
+                coordinator.recordFreshPairing()
+                if (!navigating) {
+                    navigating = true
+                    onAdminConfirmed(viewModel)
+                }
+            } else {
+                coordinator.recordFreshPairing()
+            }
+        }
+    }
+
+    if (showPrompt && !adminActive) {
+        AdminActivationDialog(
+            onActivate = {
+                adminLauncher.launch(lockManager.getEnableAdminIntent())
+            },
+            onSkip = {
+                coordinator.markSkipped()
+                showPrompt = false
+                if (!navigating) {
+                    navigating = true
+                    onAdminConfirmed(viewModel)
+                }
+            }
+        )
+    } else {
+        Column(
+            modifier = Modifier.fillMaxSize().padding(24.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center
+        ) {
+            Text("✅", style = MaterialTheme.typography.displayLarge)
+            Spacer(Modifier.height(24.dp))
+            Text(
+                text = "¡Emparejado!",
+                style = MaterialTheme.typography.headlineMedium,
+                fontWeight = FontWeight.Bold
+            )
+            Spacer(Modifier.height(8.dp))
+            Text(
+                text = "Este dispositivo está conectado a tu cuenta parental",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                textAlign = TextAlign.Center
+            )
+        }
+    }
+}
+
+/**
+ * WU-D — ask the view model to emit the navigation event. The actual
+ * `onPairingComplete()` callback runs from [PairingScreen]'s
+ * `navigationEvents` collector in the outer LaunchedEffect, so we
+ * keep a single source of truth for navigation.
+ */
+private fun onAdminConfirmed(viewModel: PairingViewModel) {
+    CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate).launch {
+        viewModel.confirmAdminDecisionAndNavigate()
+    }
+}
+
+@Composable
+private fun AdminActivationDialog(
+    onActivate: () -> Unit,
+    onSkip: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = { /* require explicit choice — no auto-dismiss */ },
+        title = { Text("Activar control parental") },
+        text = {
+            Text(
+                "Para que el panel parental pueda bloquear este " +
+                    "dispositivo remotamente, se necesita activar el " +
+                    "permiso de administrador del dispositivo."
+            )
+        },
+        confirmButton = {
+            TextButton(onClick = onActivate) {
+                Text("Activar control parental")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onSkip) {
+                Text("Más tarde")
+            }
+        }
+    )
 }
 
 @Composable
@@ -470,7 +583,7 @@ private fun ErrorContent(
             )
         }
         Spacer(modifier = Modifier.height(32.dp))
-        
+
         if (canRetry) {
             Button(onClick = onRetry, modifier = Modifier.fillMaxWidth()) {
                 Icon(Icons.Default.Refresh, null)
@@ -479,7 +592,7 @@ private fun ErrorContent(
             }
             Spacer(modifier = Modifier.height(8.dp))
         }
-        
+
         if (canRequestNew) {
             OutlinedButton(onClick = onRequestNew, modifier = Modifier.fillMaxWidth()) {
                 Icon(Icons.Default.Refresh, null)
@@ -488,7 +601,7 @@ private fun ErrorContent(
             }
             Spacer(modifier = Modifier.height(8.dp))
         }
-        
+
         TextButton(onClick = onBack) { Text("Cancelar") }
     }
 }

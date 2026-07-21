@@ -568,7 +568,6 @@ class ParentRepositoryV2FilterTest {
               {
                 "id":"req-001",
                 "device_id":"dev-001",
-                "device_name":"Lucas Tablet",
                 "package_name":"com.instagram.android",
                 "app_name":"Instagram",
                 "minutes_requested":15,
@@ -576,12 +575,12 @@ class ParentRepositoryV2FilterTest {
                 "status":"PENDING",
                 "created_at":"2026-07-07T12:00:00Z",
                 "responded_at":null,
-                "parent_response":null
+                "parent_response":null,
+                "devices": {"device_name":"Lucas Tablet"}
               },
               {
                 "id":"req-002",
                 "device_id":"dev-002",
-                "device_name":"Other Tablet",
                 "package_name":"com.whatsapp",
                 "app_name":"WhatsApp",
                 "minutes_requested":10,
@@ -589,7 +588,8 @@ class ParentRepositoryV2FilterTest {
                 "status":"PENDING",
                 "created_at":"2026-07-07T12:01:00Z",
                 "responded_at":null,
-                "parent_response":null
+                "parent_response":null,
+                "devices": {"device_name":"Other Tablet"}
               }
             ]
         """
@@ -599,10 +599,9 @@ class ParentRepositoryV2FilterTest {
          * `${SUPABASE_URL}/functions/v1/get-devices-for-parent` when
          * the V2 path's lazy hydration fires. Mirrors the columns
          * the `DeviceDto` parser at
-         * `ParentRepository.kt:771-823` expects. The
-         * `child_id` + `child_first_name` pair is what allows the V2
-         * path to resolve `CHILD_LUCAS_ID` → "dev-001" once the
-         * hydration completes.
+         * `ParentRepository.kt:771-823` expects. The nested
+         * `child.id` is what allows the V2 path to resolve
+         * `CHILD_LUCAS_ID` → "dev-001" once the hydration completes.
          */
         private const val GET_DEVICES_RESPONSE_BODY = """
             [
@@ -616,7 +615,7 @@ class ParentRepositoryV2FilterTest {
                 "policy_version":3,
                 "last_seen_at":"2026-07-07T12:00:00Z",
                 "child_id":"child-lucas-id",
-                "child_first_name":"Lucas"
+                "child": {"id":"child-lucas-id","first_name":"Lucas"}
               }
             ]
         """

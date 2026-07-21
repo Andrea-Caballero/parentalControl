@@ -101,6 +101,29 @@ class MockSupabaseEngine(private val context: Context) {
         MutableStateFlow(children())
 
     /**
+     * WU-2 — in-memory mirror of the devices fixture, seeded once from
+     * `devices()` so subsequent `POST /functions/v1/set-device-state`
+     * calls can mutate `device_state` and `policy_version` and tests
+     * can verify the lock/unlock round-trip without a re-fetch.
+     * Mirrors [childrenState] for the device list.
+     *
+     * Production GET path returns the static fixture; the lock/unlock
+     * mutation path updates this flow so the next read reflects the
+     * state without requiring a disk round-trip. Test-only seam.
+     */
+    private val devicesState: MutableStateFlow<List<DeviceFixture>> =
+        MutableStateFlow(devices())
+
+    /**
+     * Read-only view of the post-`POST /functions/v1/set-device-state`
+     * state. Production code reaches the parent list via the regular
+     * `get-devices-for-parent` HTTP path; this seam exists so the
+     * V2-filter / WU-2 tests can prove a real mutation survived the
+     * mock-engine's POST → state-shape transform.
+     */
+    fun currentDevices(): List<DeviceFixture> = devicesState.value
+
+    /**
      * Read-only view of the post-PATCH `children` state. The production
      * GET path returns the static fixture; the PATCH path mutates this
      * flow so the next read reflects the rename without requiring a
@@ -134,12 +157,17 @@ class MockSupabaseEngine(private val context: Context) {
         engine = MockEngine { request ->
             val path = request.url.encodedPath
             val body: String = when {
-                path.endsWith("/auth/v1/token") ->
-                    // Per `fix-supabase-client-provider-legacy-mock-gate`
-                    // family: the legacy `DeviceAuthManager.httpClient` now
-                    // routes through this mock too, so `createAnonymousSession`
-                    // gets a parseable `SupabaseAuthResponse` instead of a
-                    // placeholder-URL connection error.
+                // R1 — official Supabase anonymous auth entry point. The
+                // shared-mock and in-process mock both serve the same
+                // `auth-anonymous.json` fixture. Mirrors the production
+                // AnonAccessTokenResponse shape.
+                path.endsWith("/auth/v1/signup") ||
+                    path.endsWith("/auth/v1/token") ->
+                    // `auth/v1/token` is kept as a fallback for legacy
+                    // callers (e.g. supabase-js refresh tokens); the
+                    // new anonymous-auth contract routes through
+                    // `/auth/v1/signup` with an empty body. The mock
+                    // fixture shape is identical.
                     readAsset("mock-supabase/auth-anonymous.json")
                 path.endsWith("/functions/v1/create-pairing-code") ->
                     readAsset("mock-supabase/create-pairing-code.json")
@@ -150,7 +178,17 @@ class MockSupabaseEngine(private val context: Context) {
                     readAsset("mock-supabase/templates.json")
                 path.endsWith("/functions/v1/pairing") ->
                     readAsset("mock-supabase/pairing.json")
+                path.endsWith("/functions/v1/set-device-state") ->
+                    handleSetDeviceState(request)
+                path.startsWith("/rest/v1/time_requests") &&
+                    request.method == HttpMethod.Post ->
+                    // POST = plain INSERT with Prefer: return=representation;
+                    // no `select=` embed, so no nested `devices` projection
+                    // (status 201 below).
+                    readAsset("mock-supabase/time-request-insert.json")
                 path.startsWith("/rest/v1/time_requests") ->
+                    // GET keeps the embedded `devices.device_name` projection
+                    // from the production `select=*,devices(device_name)`.
                     readAsset("mock-supabase/pending-requests.json")
                 path.startsWith("/rest/v1/behavioral_events") ->
                     handleBehavioralEventsGet(request)
@@ -161,10 +199,19 @@ class MockSupabaseEngine(private val context: Context) {
                 else ->
                     """{"error":"unknown route $path"}"""
             }
-            val status = if (body.startsWith("""{"error":""")) {
-                HttpStatusCode.NotFound
-            } else {
-                HttpStatusCode.OK
+            val status = when {
+                body.startsWith("""{"error":"Token requerido""") -> HttpStatusCode.Unauthorized
+                body.startsWith("""{"error":"Token inv""") -> HttpStatusCode.Unauthorized
+                body.startsWith("""{"error":"device_id no encontrado""") -> HttpStatusCode.NotFound
+                body.startsWith("""{"error":"state debe ser""") -> HttpStatusCode.UnprocessableEntity
+                body.startsWith("""{"error":"device_id es requerido""") -> HttpStatusCode.UnprocessableEntity
+                body.startsWith("""{"error":"unknown route""") -> HttpStatusCode.NotFound
+                body.startsWith("""{"error":""") -> HttpStatusCode.NotFound
+                // POST /rest/v1/time_requests echoes CREATED 201 to match
+                // the production `Prefer: return=representation` contract.
+                path.startsWith("/rest/v1/time_requests") &&
+                    request.method == HttpMethod.Post -> HttpStatusCode.Created
+                else -> HttpStatusCode.OK
             }
             respond(
                 content = ByteReadChannel(body),
@@ -251,6 +298,74 @@ class MockSupabaseEngine(private val context: Context) {
         // computed getter on `ChildFixture`.
         return """{"id":"${updated.id}","parent_id":"${updated.parent_id}","first_name":"$newName",""" +
             """"created_at":"${updated.created_at}","updated_at":"${updated.updated_at}"}"""
+    }
+
+    /**
+     * Handles `POST /functions/v1/set-device-state` (WU-2). Mirrors
+     * the production edge function contract at
+     * `supabase/functions/set-device-state/index.ts`. Validates
+     * `{ device_id, state }` and applies the state + policy_version
+     * bump to [devicesState]. Returns a Supabase-auth-shape JSON
+     * envelope (single object — the production `.single()` contract).
+     *
+     * For test seam coverage the parent token is checked the same way
+     * the production function does: `Authorization: Bearer ...`
+     * header must be present. Validation of `state` (must be
+     * `LOCKED` or `ACTIVE`) and `device_id` (must exist) is enforced
+     * so a unit test that drives the WRONG state hits the 422 path.
+     */
+    private fun handleSetDeviceState(request: HttpRequestData): String {
+        val authHeader = request.headers["Authorization"]
+        if (authHeader == null) {
+            return """{"error":"Token requerido"}"""
+        }
+
+        val bodyText = requestBodyText(request)
+        val deviceId = parseJsonField(bodyText, "device_id")
+            ?: return """{"error":"device_id es requerido"}"""
+        val state = parseJsonField(bodyText, "state")?.uppercase()
+            ?: return """{"error":"state debe ser uno de LOCKED, ACTIVE"}"""
+        if (state != "LOCKED" && state != "ACTIVE") {
+            return """{"error":"state debe ser uno de LOCKED, ACTIVE"}"""
+        }
+
+        val current = devicesState.value.firstOrNull { it.id == deviceId }
+            ?: return """{"error":"device_id no encontrado"}"""
+
+        val nextPolicyVersion = current.policy_version + 1
+        val updatedAt = java.time.Instant.now().toString()
+        devicesState.update { list ->
+            list.map { d ->
+                if (d.id == deviceId)
+                    d.copy(
+                        device_state = state,
+                        policy_version = nextPolicyVersion
+                    ) else d
+            }
+        }
+        val updated = current.copy(
+            device_state = state,
+            policy_version = nextPolicyVersion
+        )
+        return buildString {
+            append("""{"success":true,"device_id":"${updated.id}",""")
+            append(""" "state":"${updated.device_state}",""")
+            append(""" "policy_version":${updated.policy_version},"updated_at":"$updatedAt"}""")
+        }
+    }
+
+    /**
+     * Lightweight JSON-field extractor used by the mock handlers
+     * (`handleChildrenPatch`, `handleSetDeviceState`) for the
+     * test-seam-friendly mocks. Production code uses
+     * kotlinx.serialization, but in the mock path we're already
+     * hand-rolling JSON envelopes — a regex keeps that path
+     * symmetric.
+     */
+    private fun parseJsonField(body: String, field: String): String? {
+        val match = Regex("\"$field\"\\s*:\\s*\"([^\"]*)\"").find(body)
+            ?: return null
+        return match.groupValues[1].takeIf { it.isNotEmpty() }
     }
 
     /**
@@ -377,9 +492,9 @@ class MockSupabaseEngine(private val context: Context) {
  *
  * Change A of `feat-multi-child-picker` (design §A.6 + §A.9): the
  * `child_id` + `child_first_name` columns mirror the new shape the real
- * `get-devices-for-parent` edge function returns after A.4.2. Default-null
- * so the seed shape stays back-compat with pre-migration rows (the spec
- * scenario "Pre-migration device keeps a NULL child_id").
+ * `get-devices-for-parent` edge function returns after A.4.2.
+ * Default-null so the seed shape stays back-compat with pre-migration
+ * rows (the spec scenario "Pre-migration device keeps a NULL child_id").
  */
 @Serializable
 data class DeviceFixture(
@@ -392,29 +507,35 @@ data class DeviceFixture(
     val policy_version: Int = 1,
     val last_seen_at: String,
     val child_id: String? = null,
-    val child_first_name: String? = null
+    val child: ChildRelationFixture? = null
 ) {
     /**
      * Hydrated child for in-memory consumers. Computed (no backing
      * field) so kotlinx.serialization ignores it — the on-disk fixture
-     * stays flat with `child_id` + `child_first_name` columns, mirroring
-     * the columns the real Supabase REST row carries. `parent_id` /
-     * timestamps are placeholders for the mock fixture; the future
-     * standalone `GET /rest/v1/children` fetch returns them.
+     * carries the nested `child` object the production edge function
+     * returns, and this getter exists for code that already imports the
+     * camelCase [ChildFixture] shape. `parent_id` / timestamps are
+     * placeholders for the mock fixture; the future standalone
+     * `GET /rest/v1/children` fetch returns them.
      */
-    val child: ChildFixture?
-        get() = if (child_id != null && child_first_name != null) {
+    val hydratedChild: ChildFixture?
+        get() = child?.let {
             ChildFixture(
-                id = child_id,
+                id = it.id,
                 parent_id = "parent-demo",
-                first_name = child_first_name,
+                first_name = it.first_name,
                 created_at = "",
                 updated_at = ""
             )
-        } else {
-            null
         }
 }
+
+/** Nested `child` from `child:children(id, first_name)` (OBJECT or null). */
+@Serializable
+data class ChildRelationFixture(
+    val id: String,
+    val first_name: String
+)
 
 /**
  * Change A of `feat-multi-child-picker` (design §A.9): wire shape that
@@ -452,7 +573,6 @@ data class ChildFixture(
 data class PendingFixture(
     val id: String,
     val device_id: String,
-    val device_name: String? = null,
     val package_name: String? = null,
     val app_name: String? = null,
     val minutes_requested: Int,
@@ -460,7 +580,14 @@ data class PendingFixture(
     val status: String,
     val created_at: String,
     val responded_at: String? = null,
-    val parent_response: String? = null
+    val parent_response: String? = null,
+    val devices: DeviceRelationFixture? = null
+)
+
+/** Nested `devices` from `select=*,devices(device_name)` (OBJECT or null). */
+@Serializable
+data class DeviceRelationFixture(
+    val device_name: String
 )
 
 /**

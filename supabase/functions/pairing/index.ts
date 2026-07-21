@@ -1,5 +1,15 @@
 // T15: Emparejamiento - Edge Function
 // Valida pairing_code, crea/asocia device y escribe device_id en app_metadata
+//
+// SECURITY: the previous code did SELECT ACTIVE → side effects → UPDATE
+// status=CONSUMED, allowing two concurrent claims with the same ACTIVE
+// code to each create a device before either UPDATE ran. The fix is
+// the atomic UPDATE … RETURNING inside `claimPairingCode` (status=ACTIVE
+// AND expires_at>NOW() predicate) so only one request can claim the
+// row. Downstream effects are run only by the winner; race losers get
+// a deterministic 4xx with zero side effects. If downstream work fails
+// after the claim, the code STAYS CONSUMED — caller must generate a
+// new code.
 
 import { serve } from "https://deno.land/std@0.177.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
@@ -9,7 +19,14 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
-serve(async (req) => {
+// Generator alphabet shared with `create-pairing-code/index.ts`
+// (A-H, J-N, P-Z, 2-9 — excludes I/O/0/1). 8 chars exactly; any
+// mismatch → 400 INVALID_CODE_FORMAT before any DB hit.
+const PAIRING_CODE_REGEX = /^[A-HJ-NP-Z2-9]{8}$/;
+
+/** Exported for `index_test.ts`; the HTTP listener runs only when this
+ *  file is the program entry point (gated by `import.meta.main` below). */
+export async function handleRequest(req: Request): Promise<Response> {
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
   }
@@ -22,6 +39,19 @@ serve(async (req) => {
     if (!code || !device_name || !app_version) {
       return new Response(
         JSON.stringify({ error: "Faltan campos requeridos" }),
+        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
+    // Format validation — reject anything that doesn't match the
+    // `create-pairing-code` generator alphabet before any DB or auth
+    // traffic. Returning 400 here keeps the deterministic shape of
+    // the audit contract: format errors are 4xx-client, distinct
+    // from INVALID_CODE (404 — well-formed but unknown) and from
+    // ALREADY_USED / EXPIRED_CODE (race-loss / TTL-lost).
+    if (typeof code !== "string" || !PAIRING_CODE_REGEX.test(code)) {
+      return new Response(
+        JSON.stringify({ error: "INVALID_CODE_FORMAT", code: "INVALID_CODE_FORMAT" }),
         { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
@@ -53,35 +83,19 @@ serve(async (req) => {
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? ""
     );
 
-    // 1. Validar código existente, vigente y no consumido
-    const { data: pairingRecord, error: fetchError } = await supabaseAdmin
-      .from("pairing_codes")
-      .select("*")
-      .eq("code", code)
-      .eq("status", "ACTIVE")
-      .single();
-
-    if (fetchError || !pairingRecord) {
+    // 1. Atomic CAS claim (UPDATE … RETURNING filtered by
+    //    code=eq.X AND status=ACTIVE AND expires_at>NOW()). Postgres'
+    //    row-level lock serializes concurrent UPDATEs so only one
+    //    predicate matches. Atomic — replaces the previous
+    //    SELECT→side-effects→UPDATE race window.
+    const claim = await claimPairingCode(supabaseAdmin, code);
+    if (!claim.ok) {
       return new Response(
-        JSON.stringify({ error: "Código inválido o expirado" }),
-        { status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        JSON.stringify({ error: claim.error, code: claim.error }),
+        { status: claim.httpStatus, headers: { ...corsHeaders, "Content-Type": "application/json" } },
       );
     }
-
-    // Verificar expiración
-    const expiresAt = new Date(pairingRecord.expires_at);
-    if (expiresAt < new Date()) {
-      // Marcar como expirado
-      await supabaseAdmin
-        .from("pairing_codes")
-        .update({ status: "EXPIRED" })
-        .eq("id", pairingRecord.id);
-
-      return new Response(
-        JSON.stringify({ error: "Código expirado" }),
-        { status: 410, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
-    }
+    const pairingRecord = claim.row;
 
     // 2. Obtener o crear usuario anónimo del agente (auth.users)
     // El agente usa anon key, así que auth.uid() es null
@@ -111,6 +125,8 @@ serve(async (req) => {
       });
 
       if (createError || !newUser.user) {
+        // SECURITY: code stays CONSUMED — caller must generate a new
+        // code if they want to retry.
         throw new Error(`Error creando usuario: ${createError?.message}`);
       }
       agentUserId = newUser.user.id;
@@ -171,6 +187,9 @@ serve(async (req) => {
       .single();
 
     if (deviceError || !device) {
+      // SECURITY: code stays CONSUMED — caller must generate a new
+      // code if they want to retry. Intentionally no rollback to
+      // ACTIVE; the fail-closed tradeoff is part of the audit fix.
       throw new Error(`Error creando dispositivo: ${deviceError?.message}`);
     }
 
@@ -192,12 +211,15 @@ serve(async (req) => {
     const templateAgeBand = age_band || pairingRecord.device_name?.split("-")[0] || "7-12";
     await applyPolicyTemplate(supabaseAdmin, device.id, templateAgeBand);
 
-    // 6. Marcar código como consumido
+    // 6. Marcar código como consumido (Bug #2 de la auditoria).
+    // Antes: status quedaba en 'ACTIVE' y solo se setaba used_at, lo que
+    // permitia reusar el mismo codigo antes del TTL. Ahora transiciona a
+    // 'CONSUMED' (valor agregado por migration 009_pairing_status_consumed.sql).
     await supabaseAdmin
       .from("pairing_codes")
-      .update({ 
-        status: "ACTIVE", // Sigue activo pero se marca used_at
-        used_at: new Date().toISOString() 
+      .update({
+        status: "CONSUMED",
+        used_at: new Date().toISOString()
       })
       .eq("id", pairingRecord.id);
 
@@ -224,7 +246,59 @@ serve(async (req) => {
       { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   }
-});
+}
+
+// ============ Atomic claim + diagnostic ============
+
+type ClaimOutcome =
+  | { ok: true; row: { id: string; parent_id: string; device_name: string | null } }
+  | { ok: false; httpStatus: 404 | 409 | 410; error: string };
+
+/**
+ * Atomic UPDATE … RETURNING (status='CONSUMED', used_at=NOW())
+ * filtered by code=eq.X AND status=ACTIVE AND expires_at>NOW().
+ * Postgres' row-level lock serializes concurrent UPDATEs; only the
+ * request whose predicate matches sees the row. On 0 rows, the
+ * diagnostic SELECT below is read-only (NO mutation) so rows still
+ * ACTIVE-past-TTL stay ACTIVE for the pg_cron cleanup job.
+ */
+// deno-lint-ignore no-explicit-any
+async function claimPairingCode(supabase: any, code: string): Promise<ClaimOutcome> {
+  const nowIso = new Date().toISOString();
+
+  const { data: claimed, error: claimError } = await supabase
+    .from("pairing_codes")
+    .update({ status: "CONSUMED", used_at: nowIso })
+    .eq("code", code)
+    .eq("status", "ACTIVE")
+    .gt("expires_at", nowIso)
+    .select("*")
+    .maybeSingle();
+
+  if (claimError) {
+    throw new Error(`pairing claim failed: ${claimError.message}`);
+  }
+  if (claimed) {
+    return {
+      ok: true,
+      row: claimed as { id: string; parent_id: string; device_name: string | null },
+    };
+  }
+
+  // Read-only diagnostic — classify the 0-row outcome.
+  const { data: diag } = await supabase
+    .from("pairing_codes")
+    .select("*")
+    .eq("code", code)
+    .maybeSingle();
+
+  if (!diag) return { ok: false, httpStatus: 404, error: "INVALID_CODE" };
+  const d = diag as { status: string; expires_at: string };
+  if (d.status === "CONSUMED") return { ok: false, httpStatus: 409, error: "ALREADY_USED" };
+  if (d.status === "EXPIRED" || d.expires_at <= nowIso) return { ok: false, httpStatus: 410, error: "EXPIRED_CODE" };
+  if (d.status === "REVOKED") return { ok: false, httpStatus: 409, error: "REVOKED_CODE" };
+  return { ok: false, httpStatus: 409, error: "INACTIVE_CODE" };
+}
 
 // ============ Helpers ============
 
@@ -287,37 +361,71 @@ async function applyPolicyTemplate(
 
 async function sendFcmNotification(
   supabase: ReturnType<typeof createClient>,
-  userId: string,
+  parentId: string,
   payload: Record<string, unknown>
 ): Promise<void> {
-  // TODO: FCM dispatch to parent requires parent device_id (not user_id).
-  // The `device_push_tokens` table is keyed by device_id; the parent user's
-  // device_id needs to be resolved via the parent device's auth context.
-  // For now, skip the notification — the parent sees the pairing result in
-  // their own UI anyway.
-  console.log("Skipping FCM to parent: parent device_id not yet wired in pairing flow");
-  return;
+  // Bug #3 de la auditoria: enviar push al padre cuando su hijo empareja
+  // un dispositivo. device_push_tokens tiene la columna parent_id desde
+  // la migration 008, asi que resolvemos los tokens directamente por el
+  // parent_id del codigo de emparejamiento (no necesitamos el device_id
+  // del padre como decia el TODO original).
+  const { data: tokens, error: tokensError } = await supabase
+    .from("device_push_tokens")
+    .select("token")
+    .eq("parent_id", parentId)
+    .eq("is_active", true);
 
-  // Enviar via FCM
+  if (tokensError) {
+    // No fallamos el pairing si la notificacion falla — el dispositivo ya
+    // quedo emparejado, el padre se entera al abrir la app de todos modos.
+    console.error(`Error fetching push tokens for parent ${parentId}:`, tokensError);
+    return;
+  }
+
+  if (!tokens || tokens.length === 0) {
+    console.log(`No active FCM tokens for parent ${parentId}; skipping notification`);
+    return;
+  }
+
   const fcmUrl = "https://fcm.googleapis.com/fcm/send";
   const serverKey = Deno.env.get("FCM_SERVER_KEY");
 
+  if (!serverKey) {
+    console.warn("FCM_SERVER_KEY not configured; skipping FCM dispatch");
+    return;
+  }
+
+  const fcmBody = {
+    priority: "high",
+    data: {
+      ...payload,
+      sent_at: new Date().toISOString(),
+    },
+  };
+
   for (const { token } of tokens) {
     try {
-      await fetch(fcmUrl, {
+      const response = await fetch(fcmUrl, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           Authorization: `key=${serverKey}`,
         },
-        body: JSON.stringify({
-          to: token,
-          priority: "high",
-          data: payload,
-        }),
+        body: JSON.stringify({ ...fcmBody, to: token }),
       });
+
+      if (!response.ok) {
+        console.error(`FCM send non-OK for token ...${token.slice(-6)}:`, await response.text());
+      }
     } catch (e) {
-      console.error("FCM send error:", e);
+      console.error("FCM send network error:", e);
     }
   }
+}
+
+// Only `serve` when this file is the program entry point. Importing
+// from `index_test.ts` does NOT open a listener — same gating
+// pattern as `get-devices-for-parent/index.ts`.
+if (import.meta.main) {
+  serve(handleRequest);
 }

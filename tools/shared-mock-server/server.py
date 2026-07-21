@@ -329,16 +329,93 @@ def handle_pairing(handler: http.server.BaseHTTPRequestHandler, body: dict) -> N
     )
 
 
+def _public_device(d: dict) -> dict:
+    """Pure projection from an internal `_devices` row to the wire shape
+    `get-devices-for-parent` returns.
+
+    Strips underscore-prefixed helper keys (server-side bookkeeping).
+    The production query explicitly selects `child_id`, so the
+    top-level `child_id` key MUST always appear on the wire — with
+    `null` value on rows that have no children-table join. The nested
+    `child: {id, first_name}` is set when both `child_id` and
+    `_child_first_name` are present; otherwise it is `null`.
+    """
+    child_id = d.get("child_id")
+    child_name = d.get("_child_first_name")
+    row = {k: v for k, v in d.items() if not k.startswith("_")}
+    # Ensure the selected `child_id` column is present on every row,
+    # even when null — PostgREST emits `null` for selected columns that
+    # have no value, never omits the key.
+    row.setdefault("child_id", None)
+    if child_id is not None and child_name is not None:
+        row["child"] = {"id": child_id, "first_name": child_name}
+    else:
+        row["child"] = None
+    return row
+
+
+def _public_time_request(row: dict, device_by_id: dict) -> dict:
+    """Pure projection to wire shape `select=*,devices(device_name)`.
+    Adds `devices: {device_name}` for known device ids, `devices: null`
+    for orphaned rows. The flat `device_name` column is never emitted.
+    """
+    out = dict(row)
+    device = device_by_id.get(row.get("device_id") or "")
+    if device is not None:
+        out["devices"] = {"device_name": device["device_name"]}
+    else:
+        out["devices"] = None
+    return out
+
+
 def handle_get_devices(handler: http.server.BaseHTTPRequestHandler) -> None:
     """`GET /functions/v1/get-devices-for-parent` — returns the list of
-    devices paired with the parent. We strip the internal
-    `_child_reported_name` field before sending (the real edge function
-    doesn't return it)."""
+    devices paired with the parent. We project each row through
+    `_public_device` so the wire shape mirrors production
+    (`child_id` always present, `child` nested object/null)."""
     with _lock:
-        public = []
-        for d in _devices:
-            public.append({k: v for k, v in d.items() if not k.startswith("_")})
+        public = [_public_device(d) for d in _devices]
     _send_json(handler, HTTPStatus.OK, public)
+
+
+def handle_get_policy(handler: http.server.BaseHTTPRequestHandler) -> None:
+    """R4 — `GET /functions/v1/get-policy` — child reads the live policy
+    + device_state for its own row. The Android client pulls this on
+    a deterministic lifecycle (startup / foreground / manual
+    refresh, per the WU-2d residual note). The response carries
+    the up-to-date `device_state` so the parent's lock/unlock
+    propagates to the child device on the next sync cycle
+    (NextSync; FCM push is OUT OF SCOPE).
+    """
+    with _lock:
+        # The mock has at most one device for the agent. We pick the
+        # most recently updated row so lock propagation follows the
+        # `set-device-state` timeline.
+        devices_sorted = sorted(
+            _devices,
+            key=lambda d: d.get("updated_at") or d.get("last_seen_at") or "",
+            reverse=True,
+        )
+        target = devices_sorted[0] if devices_sorted else None
+
+    if target is None:
+        _send_json(handler, HTTPStatus.OK, [])
+        return
+
+    _send_json(
+        handler,
+        HTTPStatus.OK,
+        [
+            {
+                "policy_id": f"policy-{target['id']}",
+                "version": target.get("policy_version", 1),
+                "category_assignments": {},
+                "app_policies": [],
+                "device_state": target.get("device_state", "ACTIVE"),
+                "server_time": int(_dt.datetime.now().timestamp()),
+            }
+        ],
+    )
 
 
 def handle_get_templates(handler: http.server.BaseHTTPRequestHandler) -> None:
@@ -396,9 +473,9 @@ def handle_get_time_requests(handler: http.server.BaseHTTPRequestHandler) -> Non
         for r in keep:
             if r["id"] not in seen:
                 seen.add(r["id"])
-                public.append(r)
+                public.append(_public_time_request(r, device_by_id))
     else:
-        public = rows
+        public = [_public_time_request(r, device_by_id) for r in rows]
     _send_json(handler, HTTPStatus.OK, public)
 
 
@@ -536,6 +613,8 @@ class _Handler(http.server.BaseHTTPRequestHandler):
         # The real Supabase edge function accepts both, so we mirror that.
         elif path.endswith("/functions/v1/get-devices-for-parent") and method in ("GET", "POST"):
             handle_get_devices(self)
+        elif path.endswith("/functions/v1/get-policy") and method == "GET":
+            handle_get_policy(self)
         elif (
             path.endswith("/functions/v1/get-templates")
             or path.endswith("/rest/v1/templates")

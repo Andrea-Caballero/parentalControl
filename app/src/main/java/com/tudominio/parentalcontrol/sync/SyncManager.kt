@@ -79,7 +79,15 @@ data class PolicyPullResponse(
     val version: Long,
     val category_assignments: Map<String, String>? = null,
     val app_policies: List<AppPolicyResponse>? = null,
-    val server_time: Long? = null
+    val server_time: Long? = null,
+    // R4 — child reads the parent's `device_state` (LOCKED / ACTIVE)
+    // here so the local enforcement flow can pick up a parent's lock
+    // or unlock on the next pullPolicy cycle. The shared Python mock
+    // and the production `get-policy` edge function both include
+    // this field in their response; without it, a parent-side
+    // `lockDevice` would have no propagation path beyond the
+    // device's current heartbeat.
+    val device_state: String? = null
 )
 
 @Serializable
@@ -147,6 +155,14 @@ class SyncManager @Inject constructor(
 
     private val _serverTimeOffset = MutableStateFlow(0L)
     val serverTimeOffset: StateFlow<Long> = _serverTimeOffset.asStateFlow()
+
+    // R4 — observed `device_state` from the most recent pullPolicy
+    // response. Exposed as a `StateFlow<String?>` so the
+    // `EnforcementController` (and any future local lock indicator)
+    // can switch on the parent's LOCKED/ACTIVE signal without
+    // polling. `null` until the first successful `get-policy`.
+    private val _deviceStateFlow = MutableStateFlow<String?>(null)
+    val deviceStateFlow: StateFlow<String?> = _deviceStateFlow.asStateFlow()
 
     private var syncJob: Job? = null
     private var periodicSyncJob: Job? = null
@@ -449,12 +465,30 @@ class SyncManager @Inject constructor(
     }
 
     private suspend fun applyPolicy(response: PolicyPullResponse, deviceId: String) {
+        // F2a — persist the parent's `device_state` (LOCKED / ACTIVE)
+        // into the local `policy` table. The default `"ACTIVE"` keeps
+        // pre-v8 installs working; the column is read back through
+        // `PolicyEntity.toPolicy` in `EnforcementController`, which
+        // observes the policy and triggers the lock callback on
+        // `LOCKED`. We deliberately do NOT block the pullPolicy cycle
+        // — the next observation of the table picks up the change.
+        // FCM push is OUT OF SCOPE per the residual limitations.
         val policyEntity = PolicyEntity(
             device_id = deviceId,
             version = response.version,
-            category_assignments = response.category_assignments ?: emptyMap()
+            category_assignments = response.category_assignments ?: emptyMap(),
+            device_state = response.device_state ?: "ACTIVE"
         )
         database.policyDao().upsertPolicyIfNewer(policyEntity)
+
+        // F2a — the in-memory `_deviceStateFlow` is now redundant
+        // (the Room policy is the single source of truth). Kept for
+        // backward compatibility with any external consumer; setting it
+        // from the persisted value keeps the StateFlow coherent with
+        // the table.
+        response.device_state?.let { state ->
+            _deviceStateFlow.value = state
+        }
 
         response.app_policies?.forEach { appPolicy ->
             val windows = appPolicy.allowed_windows?.map { windowStr ->

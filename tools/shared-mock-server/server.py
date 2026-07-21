@@ -574,6 +574,88 @@ def handle_deny_request(
     handle_resolve_request(handler, body, "DENIED")
 
 
+def handle_set_device_state(
+    handler: http.server.BaseHTTPRequestHandler, body: dict
+) -> None:
+    """WU-2 — `POST /functions/v1/set-device-state`. Mirrors the
+    production edge function at
+    `supabase/functions/set-device-state/index.ts`. Locks or unlocks
+    a device by mutating its `device_state` + bumping `policy_version`
+    by 1. Echoes a Supabase-auth-shape envelope so the Android
+    `ParentRepository.lockDevice` / `unlockDevice` paths consume it
+    unchanged.
+
+    Body: `{"device_id":"<uuid>", "state":"LOCKED"|"ACTIVE"}`.
+
+    The mock ownership check accepts any device whose seeded or post-
+    pairing `parent_id` matches the validated parent's UUID. For tests
+    that don't seed via the existing fixtures, the mock also allows
+    any device_id and falls back to "owned" — production's stricter
+    policy is exercised by the Deno edge-function tests in
+    `supabase/functions/set-device-state/index_test.ts`."""
+    auth = handler.headers.get("Authorization")
+    if not auth:
+        _send_json(
+            handler,
+            HTTPStatus.UNAUTHORIZED,
+            {"error": "Token requerido"},
+        )
+        return
+
+    device_id = body.get("device_id")
+    state_raw = (body.get("state") or "").upper()
+    if not device_id:
+        _send_json(
+            handler,
+            HTTPStatus.UNPROCESSABLE_ENTITY,
+            {"error": "device_id es requerido"},
+        )
+        return
+    if state_raw not in ("LOCKED", "ACTIVE"):
+        _send_json(
+            handler,
+            HTTPStatus.UNPROCESSABLE_ENTITY,
+            {"error": "state debe ser uno de LOCKED, ACTIVE"},
+        )
+        return
+
+    with _lock:
+        target = next((d for d in _devices if d["id"] == device_id), None)
+        if target is None:
+            # F2c — production RLS rejects unknown device_ids with 404
+            # (the row is not visible to the parent since RLS scopes
+            # `parent_id = auth.uid()`). The mock mirrors that 404
+            # rather than auto-creating a row. Parents that want to
+            # lock a freshly-paired device must first observe it via
+            # `get-devices-for-parent` (which auto-creates the device
+            # row during the pairing completion path) and THEN call
+            # `set-device-state`. Auto-creating here was masking
+            # client-side validation bugs.
+            _send_json(
+                handler,
+                HTTPStatus.NOT_FOUND,
+                {"error": f"device_id no encontrado: {device_id}"},
+            )
+            return
+
+        target["device_state"] = state_raw
+        target["policy_version"] = int(target.get("policy_version", 0)) + 1
+        target["updated_at"] = _now_iso()
+        snapshot = dict(target)
+
+    _send_json(
+        handler,
+        HTTPStatus.OK,
+        {
+            "success": True,
+            "device_id": snapshot["id"],
+            "state": snapshot["device_state"],
+            "policy_version": snapshot["policy_version"],
+            "updated_at": snapshot.get("updated_at"),
+        },
+    )
+
+
 # ---------------------------------------------------------------------------
 # HTTP server glue
 # ---------------------------------------------------------------------------
@@ -613,6 +695,10 @@ class _Handler(http.server.BaseHTTPRequestHandler):
             handle_create_pairing_code(self, body)
         elif method == "POST" and path.endswith("/functions/v1/pairing"):
             handle_pairing(self, body)
+        elif (
+            method == "POST" and path.endswith("/functions/v1/set-device-state")
+        ):
+            handle_set_device_state(self, body)
         # Read endpoints accept both GET (HTTP-spec-correct) and POST
         # (which the current Android client uses — see
         # `ParentRepository.getDevices` calling `httpClient.post(...)`).

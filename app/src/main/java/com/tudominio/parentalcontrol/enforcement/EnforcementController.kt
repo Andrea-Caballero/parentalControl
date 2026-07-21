@@ -8,6 +8,7 @@ import android.os.Build
 import android.os.SystemClock
 import com.tudominio.parentalcontrol.accessibility.AppMonitorService
 import com.tudominio.parentalcontrol.admin.LockManager
+import com.tudominio.parentalcontrol.auth.DeviceAuthManager
 import com.tudominio.parentalcontrol.data.db.ParentalDatabase
 import com.tudominio.parentalcontrol.data.model.AppPolicyEntity
 import com.tudominio.parentalcontrol.data.model.GrantEntity
@@ -29,17 +30,20 @@ import java.time.LocalDateTime
 /**
  * Controlador central de enforcement.
  * Orchestra T02 (motor), T03 (Room), T05 (T05), T06 (contador), T08 (overlay), T09 (lock).
- * 
+ *
  * Ciclo funcional:
  * 1. Evento de accesibilidad (T05) → motor (T02) evalúa sobre Room (T03) → decisión
  * 2. BLOQUEAR → overlay (T08) + HOME; si locked → lockNow() (T09)
  * 3. PERMITIR → contador (T06) marca foreground
  * 4. Reevaluar cuando usage_today cruza un umbral
  */
+@OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
 class EnforcementController(
     private val context: Context,
     private val database: ParentalDatabase,
-    private val timeProvider: TimeProvider
+    private val timeProvider: TimeProvider,
+    private val authManager: DeviceAuthManager = DeviceAuthManager.getInstance(context),
+    private val lockManager: LockManager = LockManager(context),
 ) {
     companion object {
         private const val THRESHOLD_RECHECK_MINUTES = 5 // Reevaluar cada 5 minutos
@@ -57,9 +61,20 @@ class EnforcementController(
     }
 
     private val controllerScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
-    private val lockManager = LockManager(context)
     private val reconciler = UsageStatsReconciler(context, database)
     private val deviceOwnerManager = DeviceOwnerManager.getInstance(context)
+
+    /**
+     * F2b — the child device id under which the local Room cache
+     * is observed. Pre-fix was the hardcoded literal `"default"`,
+     * which never matched the real id written by
+     * [com.tudominio.parentalcontrol.sync.SyncManager.applyPolicy].
+     * Falls back to `"default"` when the device is not yet paired
+     * (defensive — the controller is only active when paired, so
+     * this is unused in practice).
+     */
+    private fun effectiveDeviceId(): String =
+        authManager.deviceId.value ?: "default"
 
     // Estado actual
     private var currentPolicy: Policy? = null
@@ -81,41 +96,83 @@ class EnforcementController(
     }
 
     /**
-     * Carga la política desde Room (T03).
+     * Carga la política desde Room (T03). F2b — observes the row
+     * for the REAL device id (or `"default"` fallback). Re-subscribes
+     * when the device id changes (e.g. after a fresh pairing
+     * flips `authManager.deviceId` from null to a real id).
      */
     private fun loadCurrentPolicy() {
         controllerScope.launch {
-            database.policyDao().getPolicyFlow("default").collect { entity ->
-                entity?.let {
-                    currentPolicy = entity.toPolicy(currentGrants, currentAppPolicies)
+            authManager.deviceId
+                .flatMapLatest { id ->
+                    database.policyDao().getPolicyFlow(id ?: "default")
                 }
-            }
+                .collect { entity ->
+                    entity?.let {
+                        currentPolicy = it.toPolicy(currentGrants, currentAppPolicies)
+                        onPolicyDeviceStateChanged(it.device_state)
+                    }
+                }
+        }
+    }
+
+    /**
+     * F2a — react to the parent's `device_state` (LOCKED / ACTIVE)
+     * observed in the policy table. On LOCKED we call
+     * [LockManager.lockNow] so the child locks its screen without
+     * waiting for an FCM push. On ACTIVE we no-op (the parent has
+     * unlocked; the next accessibility event re-evaluates). The
+     * `lastAppliedDeviceState` guard makes the call idempotent so
+     * a re-emit of the same row doesn't re-fire the lock.
+     */
+    private var lastAppliedDeviceState: String? = null
+    private fun onPolicyDeviceStateChanged(deviceState: String) {
+        if (deviceState == lastAppliedDeviceState) return
+        lastAppliedDeviceState = deviceState
+        if (deviceState == DeviceState.LOCKED.name) {
+            // The parent locked the device. Apply the lock locally
+            // so the child screen locks immediately on the next sync
+            // (NextSync propagation; FCM is OUT OF SCOPE per the
+            // residual limitations).
+            runCatching { lockManager.lockNow() }
         }
     }
 
     /**
      * Carga las app_policies desde Room para el dispositivo actual.
+     * F2b — observes the real device id.
      */
     private fun loadAppPolicies() {
         controllerScope.launch {
-            database.appPolicyDao().getAppPoliciesForDeviceFlow("default").collect { entities ->
-                currentAppPolicies = entities.mapNotNull { it.toAppPolicyOrNull() }
-                // Re-evalúa con la política actual ya cargada para que tome los nuevos app policies
-                currentPolicy?.let { currentPolicy = it.copy(app_policies = currentAppPolicies) }
-            }
+            authManager.deviceId
+                .flatMapLatest { id ->
+                    database.appPolicyDao()
+                        .getAppPoliciesForDeviceFlow(id ?: "default")
+                }
+                .collect { entities ->
+                    currentAppPolicies = entities.mapNotNull { it.toAppPolicyOrNull() }
+                    // Re-evalúa con la política actual ya cargada para que tome los nuevos app policies
+                    currentPolicy?.let { currentPolicy = it.copy(app_policies = currentAppPolicies) }
+                }
         }
     }
 
     /**
-     * Carga los grants activos desde Room.
+     * Carga los grants activos desde Room. F2b — observes the real
+     * device id.
      */
     private fun loadGrants() {
         controllerScope.launch {
-            val now = java.time.Instant.now().toString()
-            database.grantDao().getActiveGrantsFlow("default", now).collect { entities ->
-                currentGrants = entities.map { it.toGrant() }
-                currentPolicy = currentPolicy?.copy(grants = currentGrants)
-            }
+            authManager.deviceId
+                .flatMapLatest { id ->
+                    val now = java.time.Instant.now().toString()
+                    database.grantDao()
+                        .getActiveGrantsFlow(id ?: "default", now)
+                }
+                .collect { entities ->
+                    currentGrants = entities.map { it.toGrant() }
+                    currentPolicy = currentPolicy?.copy(grants = currentGrants)
+                }
         }
     }
 
@@ -135,10 +192,11 @@ class EnforcementController(
      */
     fun evaluateAndEnforce(packageName: String) {
         val policy = currentPolicy ?: return
-        
+
         // Evitar reevaluaciones frecuentes
-        if (packageName == lastEvaluatedPackage && 
-            SystemClock.elapsedRealtime() - lastEvaluationTime < 1000) {
+        if (packageName == lastEvaluatedPackage &&
+            SystemClock.elapsedRealtime() - lastEvaluationTime < 1000
+        ) {
             return
         }
 
@@ -181,7 +239,7 @@ class EnforcementController(
     private fun handleBlocked(packageName: String, motivo: String, policy: Policy) {
         val level = deviceOwnerManager.getEnforcementLevel()
         val capabilities = deviceOwnerManager.getAvailableCapabilities()
-        
+
         // DEVICE_OWNER: Hard enforcement
         if (level == EnforcementLevel.DEVICE_OWNER) {
             // Usar suspensión o ocultamiento (hard block)
@@ -190,15 +248,15 @@ class EnforcementController(
             } else if (capabilities.contains(DeviceCapability.APP_HIDING)) {
                 deviceOwnerManager.hideApplication(packageName)
             }
-            
+
             // Ir a home
             goToHome()
             return
         }
-        
+
         // STANDARD: Soft enforcement (overlay + warnings)
         // El mismo motor, acción degradada
-        
+
         // Si device_state es LOCKED, usar lockNow (T09)
         if (policy.device_state == DeviceState.LOCKED) {
             lockManager.lockNow()
@@ -310,7 +368,7 @@ class EnforcementController(
      */
     fun reevaluateOnThreshold(passedMinutes: Int) {
         val policy = currentPolicy ?: return
-        
+
         // Verificar si cruzamos un umbral
         if (passedMinutes > 0 && passedMinutes % THRESHOLD_RECHECK_MINUTES == 0) {
             lastEvaluatedPackage?.let { evaluateAndEnforce(it) }
@@ -377,10 +435,18 @@ private fun PolicyEntity.toPolicy(
     grants: List<Grant> = emptyList(),
     appPolicies: List<AppPolicy> = emptyList()
 ): Policy {
+    // F2a — parse the persisted `device_state` column (default
+    // ACTIVE) so a parent lock surfaces in
+    // [EnforcementController.observePolicy] and triggers the lock
+    // callback. Unknown values fall back to ACTIVE so a corrupted
+    // column doesn't block local enforcement.
+    val parsedDeviceState = runCatching {
+        DeviceState.valueOf(device_state)
+    }.getOrDefault(DeviceState.ACTIVE)
     return Policy(
         device_id = device_id,
         version = version.toInt(),
-        device_state = DeviceState.ACTIVE,
+        device_state = parsedDeviceState,
         daily_screen_time_minutes = 120,
         schedules = emptyList(),
         category_limits = emptyList(),

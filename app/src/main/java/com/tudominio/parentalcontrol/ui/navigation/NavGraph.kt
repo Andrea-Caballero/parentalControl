@@ -9,6 +9,7 @@ import androidx.compose.runtime.setValue
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.tudominio.parentalcontrol.auth.MagicLinkDeepLinkHandler
 import com.tudominio.parentalcontrol.auth.MagicLinkVerifier
+import com.tudominio.parentalcontrol.auth.Role
 import com.tudominio.parentalcontrol.copy.CopyManager
 import com.tudominio.parentalcontrol.data.repository.TimeExtraRepository
 import com.tudominio.parentalcontrol.pairing.PairingViewModel
@@ -218,19 +219,23 @@ internal enum class NavRoute {
 /**
  * Pure-function decision for the entry-point route.
  *
- * Extracted from the composable so tests can pin the 4-way branch with
- * trivial assertions — no Compose, no Hilt, no Robolectric needed for
- * the routing contract itself. The Compose test in [NavGraphTest]
- * complements this by proving the chosen route actually renders.
+ * Extracted from the composable so tests can pin the 4-way branch
+ * with trivial assertions — no Compose, no Hilt, no Robolectric
+ * needed for the routing contract itself. The Compose test in
+ * [NavGraphTest] complements this by proving the chosen route
+ * actually renders.
  *
  * T28: `pendingExtraTimePackage` overrides the natural initial route
- * so the `parentalcontrol://request-extra-time?pkg=…` deeplink (fired
- * by `BlockOverlayService`) routes the child straight to
- * `ExtraTimeScreen` without bouncing through `ChildStatus` first.
+ * so the `parentalcontrol://request-extra-time?pkg=…` deeplink
+ * routes the child straight to `ExtraTimeScreen`. Unpaired devices
+ * drop the deeplink (no parent link exists to grant against).
  *
- * Edge case: if the device is NOT paired yet, the pending extra-time
- * request is dropped — there's nothing for the parent to grant because
- * no pairing link exists. The user lands on Onboarding as usual.
+ * **Discriminator contract (Slice B1 fix)**: `isChildDevice` MUST
+ * come from [resolveIsChildDevice] (role-based), not from the legacy
+ * `isPaired && parent_id != null` heuristic. Parent devices
+ * legitimately carry a `parent_id` for parent-scoped Supabase
+ * queries; the heuristic misroutes them to the CHILD UI after a
+ * process relaunch.
  */
 internal fun resolveInitialRoute(
     isPaired: Boolean,
@@ -242,3 +247,23 @@ internal fun resolveInitialRoute(
     isChildDevice -> NavRoute.ChildStatus
     else -> NavRoute.Dashboard
 }
+
+/**
+ * Pure-function discriminator that decides whether the device should
+ * be routed to the CHILD UI on cold start.
+ *
+ * Contract:
+ *   - Unpaired                        → always `false`.
+ *   - Paired + [Role.CHILD]           → `true`.
+ *   - Paired + [Role.PARENT]          → `false`. (The OPPO parent
+ *                                       relaunch bug.)
+ *   - Paired + `role == null`         → `false`. (Defensive default;
+ *                                       a stale pre-fix child install
+ *                                       is migrated by
+ *                                       `DeviceAuthManager.loadPersistedState`
+ *                                       before this is read.)
+ */
+internal fun resolveIsChildDevice(
+    isPaired: Boolean,
+    role: Role?
+): Boolean = isPaired && role == Role.CHILD

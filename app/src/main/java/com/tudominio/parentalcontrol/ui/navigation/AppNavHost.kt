@@ -1,6 +1,5 @@
 package com.tudominio.parentalcontrol.ui.navigation
 
-import android.content.Context
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.platform.LocalContext
@@ -72,11 +71,16 @@ fun AppNavHost(
     // the handler stays Context-free and NavGraph can run it off the
     // pending URL without a Hilt dependency.
     val magicLinkVerifier = remember { DeviceAuthManagerMagicLinkVerifier(authManager) }
-    val prefs = remember {
-        context.getSharedPreferences(DEVICE_AUTH_PREFS, Context.MODE_PRIVATE)
-    }
     val isPaired = authManager.isPaired()
-    val isChildDevice = isPaired && prefs.getString(PARENT_ID_KEY, null) != null
+    // Slice B1 — fix-1 (discriminator): use the explicit Role flag
+    // instead of the previous `isPaired && parent_id != null` heuristic.
+    // Parent devices LEGITIMATELY carry a parent_id (parent-scoped
+    // Supabase queries filter by parent_id server-side), so the
+    // previous check misrouted the OPPO parent to the CHILD UI after
+    // a process relaunch. See [resolveIsChildDevice] for the full
+    // contract and regression test in NavGraphTest.
+    val role = authManager.getRole()
+    val isChildDevice = resolveIsChildDevice(isPaired = isPaired, role = role)
     val deviceId = authManager.deviceId.value.orEmpty()
 
     NavGraph(
@@ -101,6 +105,3 @@ fun AppNavHost(
         onAuthenticated = onAuthenticated
     )
 }
-
-private const val DEVICE_AUTH_PREFS = "device_auth_prefs"
-private const val PARENT_ID_KEY = "parent_id"

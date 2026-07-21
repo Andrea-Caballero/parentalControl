@@ -52,6 +52,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import com.tudominio.parentalcontrol.data.repository.DeviceListError
 import com.tudominio.parentalcontrol.domain.model.ChildDevice
@@ -108,8 +109,27 @@ fun DashboardScreen(
     // tabs, [DeviceDetailScreen], and [AppsScreen].
     var navTarget by remember { mutableStateOf<NavTarget>(NavTarget.Dashboard) }
 
+    // Slice B1 — fix-3: bounded lifecycle-aware refresh while the
+    // device list is empty. The OPPO parent opens the Dashboard
+    // BEFORE the child has consumed the pairing code; the existing
+    // SolicitudesPollingWorker only refreshes the requests flow, not
+    // the devices list. The scheduler survives the Empty→Loading→
+    // Empty flicker (Loading must NOT reset the attempt counter)
+    // and stops after EMPTY_REFRESH_MAX_ATTEMPTS retries.
+    val emptyRefreshScheduler = remember { EmptyRefreshScheduler() }
+
     val appsVm: AppsViewModel = appsViewModel
         ?: error("DashboardScreen requires `appsViewModel` to be provided by the caller (Hilt @HiltViewModel).")
+
+    // Slice B1 — fix-3 (effect body). The scheduler decides whether
+    // to keep waiting / schedule the next fetch / give up. Loading
+    // and non-Empty states are not reset points; only Success/Error
+    // ends the empty cycle.
+    LaunchedEffect(deviceListState) {
+        val delayMs = emptyRefreshScheduler.onState(deviceListState) ?: return@LaunchedEffect
+        delay(delayMs)
+        viewModel.loadDevices()
+    }
 
     when (val target = navTarget) {
         is NavTarget.Dashboard -> {
@@ -307,14 +327,14 @@ private fun DashboardScaffold(
             // body so it visually scopes both tabs.
             if (distinctChildren.size >= 2) {
                 ChildPickerChips(
-                     children = distinctChildren,
-                     selected = selectedChildId,
-                     onSelect = onSelectChild,
-                     onLongPress = { child -> onLongPressChild(child) }
-                 )
-             }
+                    children = distinctChildren,
+                    selected = selectedChildId,
+                    onSelect = onSelectChild,
+                    onLongPress = { child -> onLongPressChild(child) }
+                )
+            }
 
-             // D1 of `fix-parent-solicitudes-auto-poll` — re-fetch pending
+            // D1 of `fix-parent-solicitudes-auto-poll` — re-fetch pending
             // requests whenever the parent switches to the Solicitudes tab
             // (index 1). `LaunchedEffect(selectedTab)` cancels and re-launches
             // on every tab change; the body is gated to `selectedTab == 1`
@@ -723,3 +743,52 @@ private fun TransientErrorBanner(
         }
     }
 }
+
+/**
+ * Bounded lifecycle-aware refresh scheduler for the parent Dashboard's
+ * empty device list (Slice B1 — fix-3: parent eventually sees a newly
+ * paired child without force-stop).
+ *
+ * Encoded as a pure state machine (no Compose / no side effects in
+ * `onState`) so the empty→loading→empty sequence can be unit-tested
+ * with no Robolectric. The contract:
+ *
+ *  - [DeviceListUiState.Empty]: returns the backoff delay for the
+ *    current attempt and advances the counter; `null` once the
+ *    budget is exhausted.
+ *  - [DeviceListUiState.Loading]: returns `null` and PRESERVES the
+ *    attempt counter so the post-fetch Empty re-entry resumes the
+ *    budget instead of restarting at 1 (the prior bug).
+ *  - [DeviceListUiState.Success] / [DeviceListUiState.Error]:
+ *    returns `null` and resets the counter to 1 so a later empty
+ *    cycle starts fresh.
+ *
+ * Linear backoff: attempt N waits `EMPTY_REFRESH_BASE_DELAY_MS * N`
+ * ms before the next fetch. With the default constants the total
+ * window is `21 * 10s = 210s ≈ 3.5min`, under the 5-min
+ * `SolicitudesPollingWorker` cadence.
+ */
+internal class EmptyRefreshScheduler(
+    private val maxAttempts: Int = EMPTY_REFRESH_MAX_ATTEMPTS,
+    private val baseDelayMs: Long = EMPTY_REFRESH_BASE_DELAY_MS
+) {
+    private var attempt = 1
+
+    fun onState(state: DeviceListUiState): Long? = when (state) {
+        DeviceListUiState.Empty -> {
+            if (attempt > maxAttempts) return null
+            val delayMs = baseDelayMs * attempt
+            attempt++
+            delayMs
+        }
+        DeviceListUiState.Loading -> null
+        is DeviceListUiState.Success,
+        is DeviceListUiState.Error -> {
+            attempt = 1
+            null
+        }
+    }
+}
+
+internal const val EMPTY_REFRESH_MAX_ATTEMPTS: Int = 6
+internal const val EMPTY_REFRESH_BASE_DELAY_MS: Long = 10_000L

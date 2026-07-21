@@ -240,6 +240,18 @@ class DeviceAuthManager private constructor(
         @JvmStatic
         internal var testCipherOverride: AuthCipher? = null
 
+        /**
+         * F1 — test seam for the build-mode gate. Production reads
+         * `BuildConfig.USE_MOCK_SUPABASE || BuildConfig.USE_SHARED_MOCK`
+         * (see [loadPersistedState]). Unit tests set this to `false`
+         * to exercise the release-like clean-cutover wipe branch
+         * without relying on `Field.modifiers` reflection (which is
+         * unreliable on JDK 17+). `null` = use the real `BuildConfig`
+         * value; `Boolean` = override for this JVM unit-test run.
+         */
+        @JvmStatic
+        internal var testIsMockOrSharedMockBuild: Boolean? = null
+
         fun getInstance(context: Context): DeviceAuthManager {
             return instance ?: synchronized(this) {
                 instance ?: DeviceAuthManager(context.applicationContext).also {
@@ -318,7 +330,8 @@ class DeviceAuthManager private constructor(
                 currentRefreshToken = restoredSession.refreshToken
                 sessionExpiresAt = restoredSession.expiresAt
                 _deviceId.value = restoredSession.deviceId
-                _sessionState.value = if (restoredSession.deviceId != null) SessionState.PAIRED else SessionState.ANONYMOUS
+                _sessionState.value =
+                    if (restoredSession.deviceId != null) SessionState.PAIRED else SessionState.ANONYMOUS
 
                 return@withContext AuthResult.Success(
                     deviceId = restoredSession.deviceId ?: "anonymous",
@@ -406,17 +419,26 @@ class DeviceAuthManager private constructor(
 
     suspend fun createAnonymousSession(): AuthResult = withContext(Dispatchers.IO) {
         try {
-            val response = httpClient.post("${SUPABASE_URL}/auth/v1/token?grant_type=password") {
+            // R1 — official Supabase anonymous-auth entry point:
+            // `POST /auth/v1/signup` with an empty JSON body returns a
+            // real anonymous AccessTokenResponse with access_token /
+            // refresh_token / expires_in. Per Supabase docs the project
+            // MUST have `enable_anonymous_sign_ins=true` (Dashboard →
+            // Authentication → Providers → Anonymous). The shared-mock
+            // backend mirrors the production shape via the
+            // `mock-supabase/auth-anonymous.json` fixture.
+            //
+            // We MUST NOT use the deprecated `/auth/v1/token?
+            // grant_type=password` flow because (a) it requires a
+            // server-side random email + password, which has no real
+            // anonymous-user record in `auth.users`, (b) the password
+            // grant is a synthetic shadow that cannot be later correlated
+            // with the agent-side `user.id` that the production pairing
+            // edge function validates against.
+            val response = httpClient.post("$SUPABASE_URL/auth/v1/signup") {
                 header("apikey", SUPABASE_ANON_KEY)
                 contentType(ContentType.Application.Json)
-                setBody(
-                    json.encodeToString(
-                        mapOf(
-                            "email" to "anonymous_${System.currentTimeMillis()}@placeholder.local",
-                            "password" to java.util.UUID.randomUUID().toString()
-                        )
-                    )
-                )
+                setBody("{}")
             }
 
             if (response.status.isSuccess()) {
@@ -460,7 +482,7 @@ class DeviceAuthManager private constructor(
 
     suspend fun completePairing(pairingCode: String): AuthResult = withContext(Dispatchers.IO) {
         try {
-            val response = httpClient.post("${SUPABASE_URL}/functions/v1/pairing") {
+            val response = httpClient.post("$SUPABASE_URL/functions/v1/pairing") {
                 header("Authorization", "Bearer $currentAccessToken")
                 header("Content-Type", "application/json")
                 setBody(json.encodeToString(mapOf("code" to pairingCode)))
@@ -470,8 +492,23 @@ class DeviceAuthManager private constructor(
                 return@withContext AuthResult.Error("Emparejamiento fallido: ${response.status}")
             }
 
+            // R1.5 — the production pairing response shape carries only
+            // { device_id, parent_id }. The agent's anon JWT (carried in
+            // the Authorization header) stays valid for the post-pairing
+            // session — `savePairedSession` below persists those
+            // CURRENT pre-pairing tokens to disk so the next cold start
+            // restores the real anon session without a second anon-auth
+            // round-trip.
+            //
+            // `ignoreUnknownKeys = true` tolerates real-fixture additions
+            // (e.g. `policy_version`, `created_at`) without a parser
+            // bump.
             @Serializable
-            data class PairingResponse(val device_id: String)
+            data class PairingResponse(
+                val device_id: String,
+                val parent_id: String? = null,
+                @Suppress("unused") val policy_version: Int? = null
+            )
 
             val responseBody: PairingResponse = response.body()
             val newDeviceId = responseBody.device_id
@@ -479,30 +516,23 @@ class DeviceAuthManager private constructor(
             _deviceId.value = newDeviceId
             _sessionState.value = SessionState.PAIRED
 
+            // Slice B1 — atomic child-pairing persistence. `role=CHILD`
+            // MUST be written in the same edit() block as `is_paired`
+            // + `device_id` so a crash mid-write cannot leave a half-
+            // state where the device looks paired but cold-start
+            // routing (resolveIsChildDevice) cannot prove it.
             context.getSharedPreferences("device_auth_prefs", Context.MODE_PRIVATE)
                 .edit()
                 .putBoolean("is_paired", true)
                 .putString("device_id", newDeviceId)
+                .putString("parent_id", responseBody.parent_id)
+                .putString("role", Role.CHILD.name)
                 .apply()
-
-            currentAccessToken?.let { access ->
-                currentRefreshToken?.let { refresh ->
-                    persistSession(
-                        StoredSession(
-                            accessToken = access,
-                            refreshToken = refresh,
-                            expiresAt = sessionExpiresAt,
-                            deviceId = newDeviceId,
-                            userId = ""
-                        )
-                    )
-                }
-            }
 
             AuthResult.Success(
                 deviceId = newDeviceId,
-                accessToken = currentAccessToken!!,
-                refreshToken = currentRefreshToken!!,
+                accessToken = currentAccessToken ?: "",
+                refreshToken = currentRefreshToken ?: "",
                 expiresAt = sessionExpiresAt
             )
         } catch (e: Exception) {
@@ -515,7 +545,7 @@ class DeviceAuthManager private constructor(
             ?: return@withContext AuthResult.NeedsPairing("No hay sesión")
 
         return@withContext try {
-            val response = httpClient.post("${SUPABASE_URL}/auth/v1/token?grant_type=refresh_token") {
+            val response = httpClient.post("$SUPABASE_URL/auth/v1/token?grant_type=refresh_token") {
                 header("apikey", SUPABASE_ANON_KEY)
                 header("Content-Type", "application/json")
                 setBody(json.encodeToString(mapOf("refresh_token" to refreshToken)))
@@ -753,11 +783,17 @@ class DeviceAuthManager private constructor(
         _deviceId.value = deviceId
         _sessionState.value = SessionState.PAIRED
 
+        // Slice B1 — atomic child-pairing persistence (see
+        // `completePairing` for the matching fix). Role=CHILD is
+        // written in the same edit() block as is_paired+device_id
+        // +parent_id so cold-start routing sees the child signal
+        // atomically with the paired session.
         context.getSharedPreferences("device_auth_prefs", Context.MODE_PRIVATE)
             .edit()
             .putBoolean("is_paired", true)
             .putString("device_id", deviceId)
             .putString("parent_id", parentId)
+            .putString("role", Role.CHILD.name)
             .apply()
 
         currentAccessToken?.let { access ->
@@ -822,7 +858,7 @@ class DeviceAuthManager private constructor(
                 IllegalStateException("No access token")
             )
 
-            val response = httpClient.request("${SUPABASE_URL}$path") {
+            val response = httpClient.request("$SUPABASE_URL$path") {
                 this.method = method
                 header("Authorization", "Bearer $token")
                 header("apikey", SUPABASE_ANON_KEY)
@@ -871,6 +907,22 @@ class DeviceAuthManager private constructor(
         val deviceId = prefs.getString("device_id", null)
         val isPaired = prefs.getBoolean("is_paired", false)
         val hasRole = prefs.contains("role")
+
+        // Slice B1 — child-install migration. Pre-fix paired-child
+        // installs persisted `is_paired=true` + `parent_id` but no
+        // `role`. On cold start we promote them to `role=CHILD` so the
+        // role-based routing discriminator (resolveIsChildDevice)
+        // classifies them correctly. Safe because in the current
+        // codebase `is_paired=true` is ONLY written by `savePairedSession`
+        // / `completePairing` (the child pairing paths); parent devices
+        // go through devLogin / magic-link which never set
+        // `is_paired=true`. PARENT wins over this migration — see the
+        // `hasRole` branch below which is preserved.
+        if (isPaired && !hasRole && deviceId != null) {
+            Log.i(TAG, "Migrating pre-fix paired-child install to role=CHILD")
+            prefs.edit().putString("role", Role.CHILD.name).apply()
+        }
+
         _deviceId.value = deviceId
         _sessionState.value = when {
             isPaired && (deviceId != null || hasRole) -> SessionState.PAIRED
@@ -958,36 +1010,101 @@ class DeviceAuthManager private constructor(
             }
         }
 
-        // Slice A — Clean Cutover (Q2=b). Replaces the PR-#28
-        // `migrateStaleParentId(prefs)` helper (which backfilled
-        // `parent_id = "parent-demo"` for pre-PR-#27 PARENT prefs).
-        // The new contract: any `parent_id` that is NOT a valid Supabase
-        // UUID (specifically: the legacy `"parent-demo"` sentinel or any
-        // other mock-engine value) is WIPED on cold start so the parent
-        // re-authenticates against real Supabase instead of carrying
-        // stale synthetic state into a cloud session.
+        // Slice A — Clean Cutover (Q2=b) — WU-1 + F1-scoped.
         //
-        // Wipes the ENTIRE prefs namespace (the legacy sentinel was
-        // intentionally narrow — every key in the legacy bundle is
-        // synthetic and invalid for cloud use). Real Supabase UUIDs are
-        // preserved (regex match against the canonical 8-4-4-4-12 hex
-        // pattern). The wipe is one-way: parents with stale prefs see
-        // the sign-in screen on the next cold start.
+        // Replaces the PR-#28 `migrateStaleParentId(prefs)` helper
+        // (which backfilled `parent_id = "parent-demo"` for pre-PR-#27
+        // PARENT prefs). The pre-fix contract wiped the ENTIRE prefs
+        // namespace when `parent_id` was non-null and not a valid
+        // Supabase UUID.
+        //
+        // WU-1 fixes the OPPO child bug: the pre-fix wipe clobbered a
+        // freshly-restored child session because `restoreSession()`
+        // populated `currentAccessToken` from `encrypted_session`,
+        // `savePairedSession(deviceId, parentId)` was called with the
+        // mock placeholder `"parent-uuid-aaaa-bbbb-cccc"` (non-UUID),
+        // and the wipe fired AFTER the restore.
+        //
+        // F1 extends the same protection to PARENT synthetic hotfix:
+        // the `authenticateOrCreate(Role.PARENT)` path writes a
+        // synthetic anon JWT + a `parent_id = "parent-demo"` sentinel.
+        // In debug/mock builds (USE_MOCK_SUPABASE || USE_SHARED_MOCK)
+        // the wipe may skip IF a synthetic_access_token is present —
+        // the OPPO child fix needs its symmetric PARENT case.
+        // In release-like builds the wipe still fires so a stale
+        // `parent-demo` sentinel cannot shadow a fresh sign-in.
+        //
+        // Real Supabase UUIDs are still preserved (regex match against
+        // the canonical 8-4-4-4-12 hex pattern) without needing this
+        // branch.
         val persistedParentId = prefs.getString("parent_id", null)
         if (persistedParentId != null && !isUuid(persistedParentId)) {
-            Log.w(
-                TAG,
-                "Clean cutover (Q2=b): wiping legacy parent_id=\"$persistedParentId\" " +
-                    "from device_auth_prefs; routing to sign-in screen"
-            )
-            prefs.edit().clear().apply()
-            // Reset in-memory state too — the wiped prefs means we have
-            // no valid session until the parent re-auths.
-            currentAccessToken = null
-            currentRefreshToken = null
-            sessionExpiresAt = 0
-            _sessionState.value = SessionState.NONE
-            _deviceId.value = null
+            val role = prefs.getString("role", null)
+            val hasEncryptedSession =
+                prefs.getString("encrypted_session", null) != null
+            val hasSyntheticToken =
+                prefs.getString(KEY_SYNTHETIC_ACCESS_TOKEN, null) != null
+            // F1 — release/build-mode gate. The narrow PARENT
+            // synthetic bypass MUST NOT fire in release builds so a
+            // stale `parent-demo` sentinel cannot leak into a real
+            // cloud session. Mirror CHILD's synthetic-fallback with
+            // the same gate.
+            //
+            // `testIsMockOrSharedMockBuild` (test seam) lets unit
+            // tests pin release/debug without mutating the final
+            // BuildConfig fields (JDK 17+ removed `Field.modifiers`
+            // reflection tricks — see companion kdoc).
+            val isDebugOrSharedMockBuild =
+                testIsMockOrSharedMockBuild
+                    ?: (BuildConfig.USE_MOCK_SUPABASE || BuildConfig.USE_SHARED_MOCK)
+            val isPairedChildSession =
+                role == Role.CHILD.name && hasEncryptedSession
+            val isPairedChildWithSyntheticFallback =
+                role == Role.CHILD.name && hasSyntheticToken
+            // F1 — NARROW PARENT synthetic bypass, debug/mock only.
+            // The release cutover still wipes; the OPPO PARENT analog
+            // only skips when (a) we're in a debug/mock build,
+            // (b) the install is role=PARENT, and (c) a
+            // synthetic_access_token is present so the cold start can
+            // re-hydrate the in-memory bearer.
+            val isPairedParentWithSyntheticFallbackInDebug =
+                role == Role.PARENT.name &&
+                    hasSyntheticToken &&
+                    isDebugOrSharedMockBuild
+
+            if (
+                !isPairedChildSession &&
+                !isPairedChildWithSyntheticFallback &&
+                !isPairedParentWithSyntheticFallbackInDebug
+            ) {
+                Log.w(
+                    TAG,
+                    "Clean cutover (Q2=b): wiping legacy parent_id=" +
+                        "\"$persistedParentId\" from device_auth_prefs; " +
+                        "routing to sign-in screen (role=$role, " +
+                        "encrypted_session=$hasEncryptedSession, " +
+                        "synthetic_token=$hasSyntheticToken, " +
+                        "debug_or_shared_mock=$isDebugOrSharedMockBuild)"
+                )
+                prefs.edit().clear().apply()
+                // Reset in-memory state too — the wiped prefs means
+                // we have no valid session until the parent re-auths.
+                currentAccessToken = null
+                currentRefreshToken = null
+                sessionExpiresAt = 0
+                _sessionState.value = SessionState.NONE
+                _deviceId.value = null
+            } else {
+                Log.i(
+                    TAG,
+                    "Clean cutover (Q2=b): skipping wipe for parent_id=" +
+                        "\"$persistedParentId\" because a restorable " +
+                        "session signal is present (role=$role, " +
+                        "encrypted_session=$hasEncryptedSession, " +
+                        "synthetic_token=$hasSyntheticToken, " +
+                        "debug_or_shared_mock=$isDebugOrSharedMockBuild)"
+                )
+            }
         }
     }
 

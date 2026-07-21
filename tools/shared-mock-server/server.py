@@ -117,10 +117,18 @@ def _send_json(
 # ---------------------------------------------------------------------------
 
 
-def handle_auth_token(handler: http.server.BaseHTTPRequestHandler, _body: dict) -> None:
-    """`POST /auth/v1/token` — anonymous auth. Returns a fake bearer token
-    and a user whose id matches our fixed PARENT_ID so subsequent calls
-    (which carry `Authorization: Bearer …`) can be correlated server-side."""
+def handle_auth_signup(handler: http.server.BaseHTTPRequestHandler, _body: dict) -> None:
+    """`POST /auth/v1/signup` — official Supabase anonymous-auth entry
+    point per the current docs. Empty body returns a real
+    AnonAccessTokenResponse. The returned `user.id` is the agent's
+    real auth.users UUID; the production pairing edge function will
+    pair the agent device against this UUID (no second auth user is
+    created — `enable_anonymous_sign_ins=true` must be set on the
+    Supabase project).
+
+    Mirrors the legacy `/auth/v1/token` shape so the Android client
+    can use a single response parser for both flows.
+    """
     token = "anon-" + secrets.token_urlsafe(16)
     _send_json(
         handler,
@@ -131,12 +139,24 @@ def handle_auth_token(handler: http.server.BaseHTTPRequestHandler, _body: dict) 
             "expires_in": 3600,
             "expires_at": int(_dt.datetime.now().timestamp()) + 3600,
             "user": {
-                "id": PARENT_ID,
+                # The agent's real Supabase auth.users UUID (NOT the
+                # parent's). R1.4 pins the pairing edge function to
+                # honour this when authorizing the device insert.
+                "id": "00000000-0000-0000-0000-000000000099",
                 "email": "anonymous@placeholder.local",
                 "app_metadata": {"device_id": "shared-mock-" + secrets.token_hex(4)},
             },
         },
     )
+
+
+def handle_auth_token(handler: http.server.BaseHTTPRequestHandler, _body: dict) -> None:
+    """`POST /auth/v1/token` — fallback for callers using the legacy
+    password-grant flow (the deprecated path the Android client no
+    longer issues; kept for compat with any leftover supabase-js
+    refresh-token callers). Returns the same envelope as
+    `/auth/v1/signup`."""
+    handle_auth_signup(handler, _body)
 
 
 def handle_magiclink(
@@ -502,7 +522,9 @@ class _Handler(http.server.BaseHTTPRequestHandler):
             flush=True,
         )
 
-        if method == "POST" and path.endswith("/auth/v1/token"):
+        if method == "POST" and path.endswith("/auth/v1/signup"):
+            handle_auth_signup(self, body)
+        elif method == "POST" and path.endswith("/auth/v1/token"):
             handle_auth_token(self, body)
         elif method == "POST" and path.endswith("/auth/v1/magiclink"):
             handle_magiclink(self, body)

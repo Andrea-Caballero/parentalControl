@@ -419,22 +419,26 @@ class ParentViewModel @Inject constructor(
 
     fun lockDevice(deviceId: String) {
         viewModelScope.launch {
-            try {
-                repository.lockDevice(deviceId)
+            // WU-2 — surface failure as a typed snackbar message so the
+            // parent sees the click failed rather than a silent reload
+            // (which was the OPPO bug: the pre-fix repo always returned
+            // true; the card simply reloaded the unchanged ACTIVE state).
+            val ok = repository.lockDevice(deviceId)
+            if (ok) {
                 loadDevices()
-            } catch (e: Exception) {
-                _error.value = "Error bloqueando dispositivo: ${e.message}"
+            } else {
+                _error.value = "Error bloqueando dispositivo: la solicitud falló"
             }
         }
     }
 
     fun unlockDevice(deviceId: String) {
         viewModelScope.launch {
-            try {
-                repository.unlockDevice(deviceId)
+            val ok = repository.unlockDevice(deviceId)
+            if (ok) {
                 loadDevices()
-            } catch (e: Exception) {
-                _error.value = "Error desbloqueando dispositivo: ${e.message}"
+            } else {
+                _error.value = "Error desbloqueando dispositivo: la solicitud falló"
             }
         }
     }

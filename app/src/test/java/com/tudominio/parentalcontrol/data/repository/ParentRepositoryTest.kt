@@ -112,13 +112,13 @@ class ParentRepositoryTest {
             {
                 "id":"req-1",
                 "device_id":"dev-1",
-                "device_name":"Galaxy S21 de Juan",
                 "package_name":"com.instagram.android",
                 "app_name":"Instagram",
                 "minutes_requested":15,
                 "reason":"homework",
                 "status":"PENDING",
-                "created_at":"2026-06-16T10:00:00Z"
+                "created_at":"2026-06-16T10:00:00Z",
+                "devices": {"device_name":"Galaxy S21 de Juan"}
             }
         ]"""
 
@@ -154,7 +154,7 @@ class ParentRepositoryTest {
                 "policy_version":3,
                 "last_seen_at":"2026-06-19T20:55:00Z",
                 "child_id":"child-lucas",
-                "child_first_name":"Lucas"
+                "child": {"id":"child-lucas","first_name":"Lucas"}
             },
             {
                 "id":"dev-002",
@@ -164,7 +164,9 @@ class ParentRepositoryTest {
                 "app_version":"1.0.0",
                 "device_state":"DOWNTIME",
                 "policy_version":1,
-                "last_seen_at":"2026-06-19T20:58:00Z"
+                "last_seen_at":"2026-06-19T20:58:00Z",
+                "child_id": null,
+                "child": null
             },
             {
                 "id":"dev-003",
@@ -176,7 +178,7 @@ class ParentRepositoryTest {
                 "policy_version":7,
                 "last_seen_at":"2026-06-19T20:59:30Z",
                 "child_id":"child-sofia",
-                "child_first_name":"Sofía"
+                "child": {"id":"child-sofia","first_name":"Sofía"}
             }
         ]"""
     }

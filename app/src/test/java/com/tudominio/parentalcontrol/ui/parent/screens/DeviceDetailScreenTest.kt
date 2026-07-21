@@ -53,6 +53,26 @@ class DeviceDetailScreenTest {
         // flow so the collector doesn't NPE on the relaxed mock.
         io.mockk.every { mockRepo.pendingRequestsFlow } returns
             kotlinx.coroutines.flow.MutableStateFlow(emptyList())
+        // WU-4 — DeviceDetailScreen now resolves the selected device
+        // from `viewModel.devices` rather than a hardcoded fake. Seed
+        // a real test fixture via the mocked `getDevices` so the
+        // existing PR-5 "Add to block list" navigation contract keeps
+        // working without fake data.
+        io.mockk.coEvery { mockRepo.getDevices() } returns Result.success(
+            listOf(
+                com.tudominio.parentalcontrol.domain.model.ChildDevice(
+                    id = "dev-1",
+                    name = "Moto G8 Plus",
+                    model = "moto g(8) plus",
+                    appVersion = "1.4.2",
+                    policyVersion = 7,
+                    state = com.tudominio.parentalcontrol.domain.model.DeviceState.ACTIVE,
+                    lastSeenAt = "2026-06-19T22:55:00Z",
+                    isOnline = true
+                )
+            )
+        )
+        io.mockk.coEvery { mockRepo.publishPendingRequests(any()) } returns Unit
         viewModel = ParentViewModel(
             mockRepo,
             mockk<com.tudominio.parentalcontrol.auth.DeviceAuthManager>(relaxed = true)

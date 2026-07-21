@@ -9,7 +9,7 @@
     "policy_version": 3,
     "last_seen_at": "2026-06-19T20:55:00Z",
     "child_id": "child-lucas",
-    "child_first_name": "Lucas"
+    "child": {"id": "child-lucas", "first_name": "Lucas"}
   },
   {
     "id": "dev-002",
@@ -19,7 +19,9 @@
     "app_version": "1.0.0",
     "device_state": "DOWNTIME",
     "policy_version": 1,
-    "last_seen_at": "2026-06-19T20:58:00Z"
+    "last_seen_at": "2026-06-19T20:58:00Z",
+    "child_id": null,
+    "child": null
   },
   {
     "id": "dev-003",
@@ -31,6 +33,6 @@
     "policy_version": 7,
     "last_seen_at": "2026-06-19T20:59:30Z",
     "child_id": "child-sofia",
-    "child_first_name": "Sofía"
+    "child": {"id": "child-sofia", "first_name": "Sofía"}
   }
 ]

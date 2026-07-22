@@ -544,23 +544,47 @@ class DeviceAuthManager private constructor(
         val refreshToken = currentRefreshToken
             ?: return@withContext AuthResult.NeedsPairing("No hay sesión")
 
-        return@withContext try {
+        // F2 — shared `performTokenRefresh` helper so the HTTP call +
+        // JSON parse live in exactly one place (also reused by the
+        // cold-start refresh path in `restoreSession`).
+        val result = performTokenRefresh(refreshToken)
+        return@withContext result.fold(
+            onSuccess = { authResponse -> handleAuthSuccess(authResponse) },
+            onFailure = { e ->
+                _sessionState.value = SessionState.INVALID
+                AuthResult.NeedsPairing("Error refreshing: ${e.message}")
+            }
+        )
+    }
+
+    /**
+     * F2 — shared refresh-token HTTP round-trip used by [refreshSession]
+     * (active-session refresh) and [restoreSession] (cold-start refresh
+     * after expiry detection). No state mutation — callers persist and
+     * update in-memory fields so each path's side effects stay
+     * localized. Returns [Result.success] on HTTP 2xx; [Result.failure]
+     * on any other status or network error.
+     */
+    private suspend fun performTokenRefresh(
+        refreshToken: String
+    ): Result<SupabaseAuthResponse> = withContext(Dispatchers.IO) {
+        try {
             val response = httpClient.post("$SUPABASE_URL/auth/v1/token?grant_type=refresh_token") {
                 header("apikey", SUPABASE_ANON_KEY)
-                header("Content-Type", "application/json")
+                contentType(ContentType.Application.Json)
                 setBody(json.encodeToString(mapOf("refresh_token" to refreshToken)))
             }
 
             if (!response.status.isSuccess()) {
-                _sessionState.value = SessionState.INVALID
-                return@withContext AuthResult.NeedsPairing("Sesión inválida")
+                return@withContext Result.failure(
+                    IllegalStateException("HTTP ${response.status.value}")
+                )
             }
 
             val authResponse: SupabaseAuthResponse = response.body()
-            return@withContext handleAuthSuccess(authResponse)
+            Result.success(authResponse)
         } catch (e: Exception) {
-            _sessionState.value = SessionState.INVALID
-            AuthResult.NeedsPairing("Error refreshing: ${e.message}")
+            Result.failure(e)
         }
     }
 
@@ -882,23 +906,82 @@ class DeviceAuthManager private constructor(
     }
 
     /**
-     * No network, no side effects; returns the stored session if any, null on missing/expired/decryption-failed.
+     * F2 — Restore the persisted [StoredSession], refreshing via the
+     * stored `refresh_token` if the persisted one has expired.
+     *
+     * # Contract
+     *  - **(a)** Unexpired → returned as today (no behavior change).
+     *  - **(b)** Expired + non-blank `refresh_token` → call
+     *    `performTokenRefresh(...)` and, on HTTP 2xx, persist the
+     *    refreshed [StoredSession] via [persistSession] (same
+     *    `masterKeyAlias` via the production path) and return it.
+     *  - **(c)** Expired + empty `refresh_token` (defensive — should
+     *    not happen for anon sessions) → return `null`.
+     *  - **(d)** Refresh HTTP failure (401/4xx/5xx/network) → log
+     *    `Log.w(TAG, "Refresh failed: …")` and return `null`. The
+     *    on-disk blob is NOT rewritten (pre-fix behavior preserved).
+     *
+     * # Dispatch
+     * HTTP work runs on `Dispatchers.IO` via [performTokenRefresh]. The
+     * `runBlocking` wrapper is required because [restoreSession] is
+     * called synchronously from `init { loadPersistedState() }` AND
+     * from [authenticateOrCreate] / [BootReceiver] / [PairingManager];
+     * converting to `suspend` would break the [BootReceiverTest] mockk
+     * stubs (`every { mockAuthManager.restoreSession() } returns …`).
+     * The unexpired path still returns synchronously without touching
+     * the network.
      */
     internal fun restoreSession(): StoredSession? {
         val encrypted = context.getSharedPreferences("device_auth_prefs", Context.MODE_PRIVATE)
             .getString("encrypted_session", null) ?: return null
 
-        return try {
+        val stored = try {
             val jsonString = decryptWithKeystore(encrypted)
-            val stored = json.decodeFromString<StoredSession>(jsonString)
-
-            if (stored.expiresAt > 0 && stored.expiresAt < System.currentTimeMillis() / 1000) {
-                return null
-            }
-
-            stored
+            json.decodeFromString<StoredSession>(jsonString)
         } catch (e: Exception) {
-            null
+            return null
+        }
+
+        // (a) Unexpired → return as today. The expiresAt==0 sentinel
+        // covers the synthetic-anon path (no expiry persisted).
+        if (stored.expiresAt <= 0 || stored.expiresAt >= System.currentTimeMillis() / 1000) {
+            return stored
+        }
+
+        // (c) Expired but no refresh_token → return null (defensive).
+        if (stored.refreshToken.isBlank()) {
+            return null
+        }
+
+        // (b) Expired + refresh_token → refresh round-trip via the
+        // shared helper (Dispatchers.IO inside). runBlocking bridges the
+        // non-suspend signature to the suspend HTTP call.
+        return runBlocking {
+            val refreshResult = performTokenRefresh(stored.refreshToken)
+            refreshResult.fold(
+                onSuccess = { authResponse ->
+                    val refreshedExpiresAt = authResponse.expires_at
+                        ?: (System.currentTimeMillis() / 1000 + authResponse.expires_in)
+                    val refreshed = StoredSession(
+                        accessToken = authResponse.access_token,
+                        refreshToken = authResponse.refresh_token,
+                        expiresAt = refreshedExpiresAt,
+                        // Preserve device identity — the refresh
+                        // endpoint does not necessarily echo back
+                        // `app_metadata.device_id`.
+                        deviceId = stored.deviceId,
+                        userId = authResponse.user?.id ?: stored.userId
+                    )
+                    persistSession(refreshed)
+                    refreshed
+                },
+                onFailure = { e ->
+                    // (d) Refresh failure → log and return null. The
+                    // on-disk blob is NOT rewritten.
+                    Log.w(TAG, "Refresh failed: ${e.message}")
+                    null
+                }
+            )
         }
     }
 

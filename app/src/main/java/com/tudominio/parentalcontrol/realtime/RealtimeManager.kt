@@ -193,11 +193,14 @@ class RealtimeManager private constructor(
 
     /**
      * Maneja mensajes entrantes del WebSocket.
+     *
+     * Marked `internal` so `RealtimeManagerTest` can drive the parser
+     * directly without spinning up a real WS/HTTP stack.
      */
-    private suspend fun handleMessage(message: String) {
+    internal suspend fun handleMessage(message: String) {
         try {
             val json = Json.parseToJsonElement(message).jsonObject
-            
+
             when (json["event"]?.jsonPrimitive?.content) {
                 "policy_updated" -> {
                     val payload = json["payload"]?.jsonObject
@@ -214,10 +217,15 @@ class RealtimeManager private constructor(
                     }
                     _grantChange.emit(GrantChangeEvent(event, grantId))
                 }
-                "request_approved", "request_denied" -> {
+                "request_created", "request_approved", "request_denied" -> {
                     val payload = json["payload"]?.jsonObject
                     val requestId = payload?.get("request_id")?.jsonPrimitive?.content
+                    // Parent-fix — a `request_created` event fires the
+                    // moment a child POSTs `/rest/v1/time_requests`,
+                    // matching the event name pushed by both production
+                    // Supabase Realtime and `tools/shared-mock-server`.
                     val event = when (json["event"]?.jsonPrimitive?.content) {
+                        "request_created" -> RequestChangeEvent.Type.CREATED
                         "request_approved" -> RequestChangeEvent.Type.APPROVED
                         "request_denied" -> RequestChangeEvent.Type.DENIED
                         else -> RequestChangeEvent.Type.UPDATED
@@ -289,6 +297,12 @@ data class RequestChangeEvent(
     enum class Type {
         APPROVED,
         DENIED,
-        UPDATED
+        UPDATED,
+        // Parent-fix — new realtime push fired by both production
+        // Supabase Realtime and the shared mock when a child posts
+        // `/rest/v1/time_requests`. The parent's dashboard uses this to
+        // surface the Solicitudes chip within seconds (was: up to 5
+        // min via SolicitudesPollingWorker).
+        CREATED
     }
 }

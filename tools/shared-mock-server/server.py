@@ -472,6 +472,7 @@ def handle_get_time_requests(handler: http.server.BaseHTTPRequestHandler) -> Non
 
     with _lock:
         rows = list(_time_requests)
+        device_by_id = {d["id"]: d for d in _devices}
 
     # `device_id=eq.X` → only rows owned by X. Multiple device filters are
     # OR'd (rare; covers `in.(a,b)` shape too if the client ever uses it).
